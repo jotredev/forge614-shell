@@ -1,6 +1,6 @@
 # 01 — Forge614-Shell scope and decisions
 
-Date: 2026-09-17 · Stage 01: product definition · Documentation revision: 1
+Date: 2026-09-17 · Stage 01: product definition · Documentation revision: 2 (updated scope)
 
 This document records agreements with the user. It describes the intended product, not implemented features. Its counterpart is [Alcance y decisiones](../es/01-alcance.md).
 
@@ -18,8 +18,8 @@ The experience will combine chat, tools, provider and model selection, reasoning
 | D-002 | Pi will be the underlying engine. Shell will have its own identity and interface. It will not build its own AI model. |
 | D-003 | The intended command to open the experience is `forge614-shell`. |
 | D-004 | Shell will open projects of any technology or structure without requiring Forge614 conventions. |
-| D-005 | A project may have several work items open simultaneously. Each work item will have its own chat and may have its own branch and worktree. |
-| D-006 | Switching work items in the interface must not stop other active work. |
+| D-005 | A project may have several work items open simultaneously in the user's terminal or IDE. Shell maintains one active session per instance within the directory or worktree where it is launched. For now, Shell will NOT build an internal project manager, tabs, or worktree manager like Orca; the user relies on their terminal or IDE for that. |
+| D-006 | Switching work items in the user's terminal does not stop other active work, as each instance runs independently. |
 | D-007 | Conversations can be saved and resumed without Engram. Chat history and knowledge memory are distinct capabilities. |
 | D-008 | Without Git, Shell will still provide chat and file-based work; branch and worktree operations will be unavailable. |
 | D-009 | Forge614-Engram will be optional for standalone Shell. Integration will be addressed last, when the Engram project is ready. |
@@ -29,10 +29,10 @@ The experience will combine chat, tools, provider and model selection, reasoning
 
 ## Expected working experience
 
-- Sidebar navigation for projects and their work items.
-- A separate chat for each work item, with session resumption.
-- Several active work items in one project, each with its own working copy when using a worktree.
-- Status, branch, and changes corresponding to the selected work item.
+- An active chat session per Shell instance, runnable inside Orca, another terminal, or IDE.
+- Reusing the user's terminal or environment (Orca, tabs, terminal multiplexers, or terminal windows) to organize projects, branches, and worktrees. Shell does not build its own project manager or tabs in this phase.
+- Several active work items on the same project by launching separate Shell instances in each worktree or path.
+- Status, session, and history corresponding to the current working directory (`cwd`).
 - Provider, model, and reasoning selection according to available capabilities.
 - Tools, results, errors, and interactive questions visible within the chat workflow.
 - Context, usage, and cost information when exposed by the engine or provider.
@@ -42,7 +42,7 @@ A user work item is not necessarily a subagent. A mandatory one-session-per-work
 
 ## References and boundaries
 
-The eight screenshots `IMG_0276.jpg` and `IMG_0277.PNG` through `IMG_0283.PNG` were reviewed as Gentle Shell references: main chat, bottom input, status panel, agents, tasks, and interactive controls. The subsequent Orca screenshot provides the reference for navigating projects and work items on different branches. The images have not been added to the repository.
+The eight screenshots `IMG_0276.jpg` and `IMG_0277.PNG` through `IMG_0283.PNG` were reviewed as Gentle Shell references: main chat, bottom input, status panel, agents, tasks, and interactive controls. The subsequent Orca screenshot provides the reference for navigating projects and work items on different branches in a host environment. It is clarified that Orca serves as an example host terminal where the user launches Shell instances, rather than an internal tabbed interface that Shell must duplicate. The images have not been added to the repository.
 
 Useful behaviors will inform the product without literally copying the visual identity. Screenshots alone do not establish isolation, persistence, or internal behavior guarantees.
 
@@ -93,6 +93,7 @@ Notion updates will use an explicit handoff. Preparing content is not publicatio
 
 - Scope and decisions documented in ES/EN in the repository.
 - Notion handoff prepared in [02-notion-handoff.md](02-notion-handoff.md).
-- Notion publication: pending confirmation.
-- User review: pending.
-- No implementation, dependencies, final architecture, or approved development plan.
+- Documentation revision: 2 (scope clarified: no built-in project manager or tabs; one active session per instance in the user's terminal).
+- Notion publication: synchronized to Notion.
+- User review: pending confirmation.
+- No orchestration plan or final architecture approved beyond the updated scope.

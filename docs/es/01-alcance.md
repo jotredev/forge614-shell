@@ -1,6 +1,6 @@
 # 01 — Alcance y decisiones de Forge614-Shell
 
-Fecha: 2026-09-17 · Etapa 01: definición del producto · Revisión documental: 1
+Fecha: 2026-09-17 · Etapa 01: definición del producto · Revisión documental: 2 (alcance actualizado)
 
 Este documento registra lo acordado con el usuario. Describe el producto deseado, no funcionalidades ya implementadas. Su equivalente es [Scope and agreed decisions](../en/01-scope.md).
 
@@ -18,8 +18,8 @@ La experiencia reunirá chat, herramientas, selección de proveedor y modelo, ni
 | D-002 | Pi será el motor base. Shell tendrá identidad e interfaz propias. No se construirá un modelo de IA propio. |
 | D-003 | El comando previsto para abrir la experiencia será `forge614-shell`. |
 | D-004 | Shell podrá abrir proyectos de cualquier tecnología y estructura, sin exigir convenciones de Forge614. |
-| D-005 | Un proyecto podrá tener varios trabajos abiertos simultáneamente. Cada trabajo tendrá su chat y podrá tener su rama y worktree propios. |
-| D-006 | Cambiar de trabajo en la interfaz no deberá detener los demás trabajos activos. |
+| D-005 | Un proyecto podrá tener varios trabajos abiertos simultáneamente en la terminal o IDE del usuario. Shell mantiene una sesión activa por instancia dentro del directorio o worktree donde se ejecute. Por ahora Shell NO construirá un gestor interno de proyectos, pestañas ni worktrees como Orca; el usuario utiliza su terminal o IDE para eso. |
+| D-006 | Cambiar de trabajo en la terminal del usuario no detiene los demás trabajos activos, ya que cada instancia se ejecuta de forma independiente. |
 | D-007 | Las conversaciones podrán conservarse y retomarse sin Engram. Historial de chat y memoria de conocimiento son capacidades distintas. |
 | D-008 | Sin Git, Shell seguirá ofreciendo chat y trabajo sobre archivos; las operaciones de ramas y worktrees no estarán disponibles. |
 | D-009 | Forge614-Engram será opcional para Shell independiente. Su integración se abordará al final, cuando el proyecto Engram esté listo. |
@@ -29,10 +29,10 @@ La experiencia reunirá chat, herramientas, selección de proveedor y modelo, ni
 
 ## Experiencia de trabajo esperada
 
-- Navegación lateral de proyectos y sus trabajos.
-- Chat propio por trabajo, con posibilidad de retomar la sesión.
-- Varios trabajos activos sobre un mismo proyecto, cada uno con su copia de trabajo cuando se use un worktree.
-- Estado, rama y cambios correspondientes al trabajo seleccionado.
+- Una sesión activa de chat por instancia de Shell, ejecutable dentro de Orca, otra terminal o IDE.
+- Reutilización de la terminal o entorno del usuario (Orca, pestañas, multiplexores o ventanas de terminal) para organizar proyectos, ramas y worktrees. Shell no construye un gestor de proyectos ni pestañas propio en esta fase.
+- Varios trabajos activos sobre un mismo proyecto ejecutando instancias separadas de Shell en cada worktree o ruta.
+- Estado, sesión e historial correspondientes al directorio de trabajo actual (`cwd`).
 - Selección de proveedor, modelo y razonamiento según las capacidades disponibles.
 - Herramientas, resultados, errores y preguntas interactivas visibles dentro del flujo del chat.
 - Información de contexto, uso y costo cuando el motor o proveedor la exponga.
@@ -42,7 +42,7 @@ Una tarea de usuario no es necesariamente un subagente. Tampoco se fija todavía
 
 ## Referencias y límites
 
-Las ocho capturas `IMG_0276.jpg` y `IMG_0277.PNG` a `IMG_0283.PNG` se revisaron como referencia de Gentle Shell: chat principal, entrada inferior, panel de estado, agentes, tareas y controles interactivos. La captura posterior de Orca muestra la referencia de navegación por proyectos y trabajos en distintas ramas. Las imágenes no se han incorporado al repositorio.
+Las ocho capturas `IMG_0276.jpg` y `IMG_0277.PNG` a `IMG_0283.PNG` se revisaron como referencia de Gentle Shell: chat principal, entrada inferior, panel de estado, agentes, tareas y controles interactivos. La captura posterior de Orca muestra la referencia de navegación por proyectos y trabajos en distintas ramas en un entorno anfitrión. Se aclara que Orca sirve como ejemplo de entorno terminal donde el usuario abre instancias de Shell, no como una interfaz de pestañas que Shell deba replicar internamente. Las imágenes no se han incorporado al repositorio.
 
 Se tomarán sus comportamientos útiles sin copiar literalmente la identidad visual. Las capturas no demuestran por sí mismas garantías de aislamiento, persistencia o funcionamiento interno.
 
@@ -93,6 +93,7 @@ La actualización de Notion se realizará mediante un traspaso explícito. Prepa
 
 - Alcance y decisiones documentados en ES/EN dentro del repositorio.
 - Traspaso a Notion preparado en [02-traspaso-notion.md](02-traspaso-notion.md).
-- Publicación en Notion: pendiente de confirmación.
-- Revisión del usuario: pendiente.
-- Sin implementación, dependencias, arquitectura definitiva ni plan de desarrollo aprobado.
+- Revisión documental: 2 (alcance delimitado: sin gestor interno de proyectos ni pestañas; una sesión activa por instancia dentro de la terminal del usuario).
+- Publicación en Notion: sincronizada en Notion.
+- Revisión del usuario: pendiente de confirmación.
+- Sin plan de orquestación ni arquitectura definitiva aprobada más allá del alcance actualizado.
