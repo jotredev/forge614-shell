@@ -11,7 +11,7 @@ This document details the preparation of the **Forge614-Shell 1.0.0 local releas
 Consider the delivery and installation of critical aerospace or military avionics equipment:
 - **The Factory Crate (The Standalone Bundle):** High-precision flight computers are never shipped to airfield hangars as loose schematics, nor do they require maintenance engineers to have heavy factory manufacturing equipment (`node_modules` or development compilers). They are delivered sealed inside an airtight, pressurized container (`forge614-shell-1.0.0.tar.gz`), accompanied by a cryptographic security seal (`.sha256`). The crate contains only what is strictly necessary to run: the bundled runtime, package metadata, and required system extensions.
 - **The Isolated Assembly Bay (`~/.forge614/shell/1.0.0/`):** The hangar installation script (`install.sh`) never blindly overwrites active flight instruments. It uncrates the package into an assembly bay reserved exclusively for that exact version. If preflight validation detects missing core files (`package.json` or `cli.js`), the procedure aborts immediately without touching the active aircraft.
-- **The Master Command Switch (`~/.forge614/bin/forge614-shell`):** Once bay 1.0.0 is verified, the installer atomically switches the main cockpit control link to the new module. Upgrading or rolling back versions consists simply of repointing this master switch.
+- **The Master Command Switch (`~/.forge614/bin/forge614-shell`):** Once bay 1.0.0 is verified, the installer repoints the main cockpit control link to the new module. Upgrading or rolling back versions consists simply of repointing this master switch.
 - **The Maintenance Test Bench (`FORGE614_HOME`):** When engineers need to test the installation workflow in an isolated sandbox before altering production systems, they direct the process to a temporary test bench without affecting standard user paths.
 - **The Cockpit Instrument Badge (The Status Bar):** In the bottom-right corner of the cockpit instrument panel, the pilot has a permanent, fixed indicator (`v1.0.0`) that remains visible at all times, even when flight path telemetry or engine status fills the rest of the display.
 
@@ -230,9 +230,9 @@ To create and publish the private GitHub Release from the pushed `1.0.0` tag:
    - `dist/release/forge614-shell-1.0.0.tar.gz.sha256`: Cryptographic checksum file for integrity verification.
    - `scripts/install.sh`: The macOS/Linux installation script.
 8. **Technical justification for each attached file:**
-   - `forge614-shell-1.0.0.tar.gz`: The self-contained, pre-bundled Node.js runtime archive. Allows collaborators to install and run Forge614 Shell without cloning the Git repository or needing development dependencies (`node_modules`, Bun).
-   - `forge614-shell-1.0.0.tar.gz.sha256`: Cryptographic checksum file containing the SHA-256 digest. Guarantees that the downloaded archive is authentic and has not been corrupted or tampered with in transit.
-   - `install.sh`: The helper installation script for macOS and Linux that handles safe extraction into `~/.forge614/shell/1.0.0/` and atomically configures the executable symlink `~/.forge614/bin/forge614-shell`.
+   - `forge614-shell-1.0.0.tar.gz`: The pre-bundled Forge614 Shell application archive. It lets collaborators install without cloning the Git repository or installing development dependencies (`node_modules`, Bun), but still requires Node.js on the target machine.
+   - `forge614-shell-1.0.0.tar.gz.sha256`: Checksum file containing the SHA-256 digest. It lets a collaborator detect accidental archive corruption after download; it is not a code-signing mechanism by itself.
+   - `install.sh`: The helper installation script for macOS and Linux that handles safe extraction into `~/.forge614/shell/1.0.0/` and repoints the executable symlink `~/.forge614/bin/forge614-shell`.
 9. **Release settings:**
    - **Do NOT check `Set as a pre-release`**. Leave it unchecked so it is published as a standard, stable release for private testers.
    - Leave `Set as the latest release` checked if prompted.

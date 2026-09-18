@@ -1,8 +1,8 @@
 # 00 — Instalación y prueba local del release
 
-2026-09-18 · Etapa 02: guía paso a paso para principiantes en macOS · [English](../en/00-installation-and-local-release-test.md) · [Índice](../../README.md) · [Detalles técnicos del bundle](06-preparacion-release-1.0.0-instalador.md)
+2026-09-18 · Etapa 02: guía paso a paso para principiantes en macOS y Linux · [English](../en/00-installation-and-local-release-test.md) · [Índice](../../README.md) · [Detalles técnicos del bundle](06-preparacion-release-1.0.0-instalador.md)
 
-Esta guía explica, paso a paso y desde cero en **macOS**, cómo empaquetar Forge614 Shell y probar su instalador en una carpeta aislada de tu computadora, sin necesidad de conocimientos previos sobre terminales, repositorios o variables de entorno.
+Esta guía explica, paso a paso y desde cero en **macOS o Linux**, cómo empaquetar Forge614 Shell y probar su instalador en una carpeta aislada de tu computadora, sin necesidad de conocimientos previos sobre terminales, repositorios o variables de entorno. Los comandos son iguales en ambos sistemas; macOS usa Spotlight para abrir Terminal y en Linux se abre la aplicación Terminal habitual.
 
 > [!IMPORTANT]
 > **Aviso de alcance:** Esta guía describe **únicamente la prueba local** del instalador en tu propia máquina. **NO es todavía el flujo de instalación para usuarios externos ni un flujo de descarga pública.** Actualmente no existen enlaces públicos de descarga ni comandos remotos.
@@ -66,7 +66,7 @@ Ejecuta el segundo comando:
 bun --version
 ```
 
-- **Versión de Node.js:** Debes ver un número que comience en `v22.19.0` o superior (por ejemplo, `v22.19.1` o `v23.x`). Si tu versión es más antigua, el instalador no continuará.
+- **Versión de Node.js:** Debes ver un número que comience en `v22.19.0` o superior (por ejemplo, `v22.19.1` o `v23.x`). Si tu versión es más antigua, detente y actualiza Node.js antes de continuar: la aplicación instalada necesita esa versión aunque el instalador actual solo comprueba que exista el comando `node`.
 - **Si aparece `"command not found"`:**
   - Si falta Node.js: descárgalo e instálalo desde su página oficial: [nodejs.org](https://nodejs.org).
   - Si falta Bun: sigue las instrucciones oficiales en su página: [bun.sh](https://bun.sh).
@@ -91,8 +91,8 @@ bun run bundle:release
 ### ¿Qué acaba de ocurrir?
 - La herramienta empaquetó el código en un ejecutable autónomo y creó una carpeta llamada `dist/release/` dentro del proyecto.
 - Si revisas esa carpeta, encontrarás dos archivos:
-  - `forge614-shell-1.0.0.tar.gz`: Es la "caja comprimida" que contiene el programa empaquetado, su configuración y sus extensiones. No contiene la carpeta pesada `node_modules` de desarrollo. Este es el archivo que en el futuro se distribuirá.
-  - `forge614-shell-1.0.0.tar.gz.sha256`: Es una firma criptográfica (suma de control) que permite comprobar que el archivo comprimido no se dañó ni fue alterado.
+  - `forge614-shell-1.0.0.tar.gz`: Es la "caja comprimida" que contiene el programa empaquetado, su configuración y sus extensiones. No contiene la carpeta pesada `node_modules` de desarrollo, pero la computadora destino sigue necesitando Node.js. Este es el archivo que en el futuro se distribuirá.
+  - `forge614-shell-1.0.0.tar.gz.sha256`: Es una suma de control SHA-256 para detectar corrupción accidental del archivo después de descargarlo.
 
 ---
 

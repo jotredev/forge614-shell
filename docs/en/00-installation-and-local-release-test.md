@@ -1,8 +1,8 @@
 # 00 — Installation and local release test
 
-2026-09-18 · Stage 02: step-by-step beginner guide for macOS · [Español](../es/00-instalacion-y-prueba-local-release.md) · [Index](../../README.md) · [Technical bundle details](06-release-1.0.0-bundle-installer.md)
+2026-09-18 · Stage 02: step-by-step beginner guide for macOS and Linux · [Español](../es/00-instalacion-y-prueba-local-release.md) · [Index](../../README.md) · [Technical bundle details](06-release-1.0.0-bundle-installer.md)
 
-This guide walks you through, step by step from scratch on **macOS**, how to build the Forge614 Shell release archive and test its installer inside an isolated folder on your computer—no prior experience with terminals, Git repositories, or environment variables required.
+This guide walks you through, step by step from scratch on **macOS or Linux**, how to build the Forge614 Shell release archive and test its installer inside an isolated folder on your computer—no prior experience with terminals, Git repositories, or environment variables required. The commands are the same on both systems; macOS opening instructions use Spotlight, while Linux users open their usual Terminal application.
 
 > [!IMPORTANT]
 > **Scope notice:** This guide documents **only the local test** of the installer on your own machine. **It is NOT yet the installation flow for external users and NOT yet a public download flow.** There are currently no public download links or remote installation commands.
@@ -66,7 +66,7 @@ Run the second command:
 bun --version
 ```
 
-- **Node.js version check:** You should see a version string starting with `v22.19.0` or newer (for instance, `v22.19.1` or `v23.x`). If your version is older, the installer will refuse to proceed.
+- **Node.js version check:** You should see a version string starting with `v22.19.0` or newer (for instance, `v22.19.1` or `v23.x`). If your version is older, stop here and update Node.js before continuing: the installed application requires that version even though the current installer checks only that `node` exists.
 - **If you see `"command not found"`:**
   - If Node.js is missing: download and install it from the official website: [nodejs.org](https://nodejs.org).
   - If Bun is missing: follow the official instructions on their website: [bun.sh](https://bun.sh).
@@ -91,8 +91,8 @@ bun run bundle:release
 ### What just happened?
 - The build script bundled the application into an optimized standalone executable and created a directory named `dist/release/` inside the project.
 - Inside that directory, you will find two files:
-  - `forge614-shell-1.0.0.tar.gz`: The self-contained package containing the compiled program, metadata, and runtime extensions. It excludes the heavy development `node_modules` directory. This is the exact archive that will eventually be distributed to users.
-  - `forge614-shell-1.0.0.tar.gz.sha256`: A cryptographic checksum verifying that the archive has not been damaged or altered.
+  - `forge614-shell-1.0.0.tar.gz`: The package containing the compiled program, metadata, and runtime extensions. It excludes the heavy development `node_modules` directory, but the target machine still needs Node.js. This is the exact archive that will eventually be distributed to users.
+  - `forge614-shell-1.0.0.tar.gz.sha256`: A SHA-256 checksum for detecting accidental corruption of the archive after download.
 
 ---
 
