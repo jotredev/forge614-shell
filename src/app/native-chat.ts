@@ -8,7 +8,7 @@ import { AntigravitySession } from "../engines/antigravity/session.ts";
 import { antigravityLogin, antigravityLoginState, antigravityModels, antigravityUsage, checkAntigravityAccountMode, runAntigravity } from "../engines/antigravity/process.ts";
 
 // Composition root: views render sessions; they do not construct transports.
-export async function startNativeUI(id: NativeId, executable: string, args: string[]): Promise<void> {
+export async function startNativeUI(id: NativeId, executable: string, args: string[], version?: string): Promise<void> {
   if (args.length) throw new Error(`${id} mode accepts no CLI options yet. Use the in-chat commands.`);
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error("Native chat requires an interactive terminal.");
   const cwd = process.cwd();
@@ -30,5 +30,5 @@ export async function startNativeUI(id: NativeId, executable: string, args: stri
     const rpc = startNativeProcess(id, executable, cwd, process.env, text => emit({ type: "text", text }));
     return id === "codex" ? new CodexSession(rpc, cwd, emit, approve)
       : new GeminiSession(rpc, cwd, emit, approve, () => checkGeminiConfiguration(cwd, process.env));
-  });
+  }, undefined, version);
 }

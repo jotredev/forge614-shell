@@ -19,7 +19,7 @@ import { workspaceLayout, workspaceTerminal } from "./workspace.ts";
 
 const clean = (text: string) => stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
 
-export async function startClaudeUI(args: string[], selectedExecutable?: string, terminal?: Terminal): Promise<void> {
+export async function startClaudeUI(args: string[], selectedExecutable?: string, terminal?: Terminal, version?: string): Promise<void> {
   if (args.length) throw new Error("Claude mode currently accepts no CLI options. Use the in-chat commands, or --engine pi for Pi options.");
   if (!terminal && (!process.stdin.isTTY || !process.stdout.isTTY)) throw new Error("Claude chat requires an interactive terminal.");
   const env = claudeEnvironment(process.env);
@@ -34,7 +34,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const shellState = new ShellState("Claude Code");
   shellState.checking();
   const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd);
-  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo());
+  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version);
   tui.setLayoutRoot(workspaceLayout(transcript, composer.component, sidebar, statusBar, surface, cwd));
   tui.setFocus(input);
   let telemetry = emptyTelemetry();

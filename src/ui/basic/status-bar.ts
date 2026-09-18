@@ -19,6 +19,7 @@ export class ShellStatusBar implements Component {
     private readonly cwd?: string,
     private readonly getProject?: () => ProjectInfo | undefined,
     private readonly home = process.env.HOME,
+    private readonly version?: string,
   ) {}
 
   invalidate(): void {}
@@ -33,8 +34,14 @@ export class ShellStatusBar implements Component {
       muted(homeRelativePath(this.cwd, this.home)),
       ...(projectInfo?.git ? [cyan(projectInfo.branch ?? "Detached HEAD"), projectInfo.changedFiles ? warning(`${projectInfo.changedFiles} changes`) : cyan("Clean")] : []),
     ] : [];
-    const line = [cyan("F614"), ...details, ...project].join(separator);
+    const left = [cyan("F614"), ...details, ...project].join(separator);
+    const release = this.version ? muted(`v${this.version}`) : undefined;
     const innerWidth = Math.max(0, width - 4);
+    const availableLeft = Math.max(1, innerWidth - (release ? visibleWidth(release) + 1 : 0));
+    const compactLeft = release ? truncateToWidth(left, availableLeft, "…") : left;
+    const line = release && visibleWidth(release) < innerWidth
+      ? `${compactLeft}${" ".repeat(Math.max(1, innerWidth - visibleWidth(compactLeft) - visibleWidth(release)))}${release}`
+      : left;
     return [" ".repeat(Math.min(2, width)) + (visibleWidth(line) <= innerWidth ? line : truncateToWidth(line, innerWidth, "…")), ""];
   }
 }

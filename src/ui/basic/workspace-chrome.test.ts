@@ -233,3 +233,17 @@ test("status bar gives path, branch and changes distinct semantic colors", () =>
   expect(line).toContain(accent("main"));
   expect(line).toContain(warning("7 changes"));
 });
+
+test("status bar pins the Shell version to the footer's right edge", () => {
+  const bar = new ShellStatusBar(
+    () => ({ account: "connected", provider: "Claude Code", model: "claude-opus-5" }),
+    "/Users/forge/project",
+    undefined,
+    "/Users/forge",
+    "1.0.0",
+  );
+
+  const line = plain(bar.render(100))[0]!;
+  expect(line).toEndWith("v1.0.0");
+  expect(line).toContain("Claude Code");
+});

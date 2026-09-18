@@ -17,6 +17,7 @@ const clean = (text: string) => stripVTControlCharacters(text).replace(/[\x00-\x
 export async function runNativeUI(
   id: NativeId, cwd: string, createSession: (emit: Emit, approve: Approve, withTerminal: (action: () => Promise<void>) => Promise<void>) => NativeSession,
   terminal: Terminal = new ProcessTerminal(),
+  version?: string,
 ): Promise<void> {
   const surface = workspaceTerminal(terminal);
   const tui = new TuiAltScreen(surface, true, undefined, { mouse: true });
@@ -26,7 +27,7 @@ export async function runNativeUI(
   const engineLabel = id === "codex" ? "Codex" : id === "antigravity" ? "Antigravity" : "Gemini CLI";
   const shellState = new ShellState(engineLabel);
   const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd);
-  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo());
+  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version);
   tui.setLayoutRoot(workspaceLayout(transcript, composer.component, sidebar, statusBar, surface, cwd));
   tui.setFocus(input);
   const providerCommands = [

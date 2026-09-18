@@ -58,12 +58,12 @@ The selected engine's project settings and permissions apply. This is not a sand
     }
     if (selected.engine === "claude") {
       const { startClaudeUI } = await import("./ui/basic/claude.ts");
-      await startClaudeUI(selected.args, selectedExecutable);
+      await startClaudeUI(selected.args, selectedExecutable, undefined, metadata.version);
     } else if (selected.engine === "codex" || selected.engine === "antigravity") {
       const executable = selectedExecutable ?? (await discoverEngines(process.env)).find(engine => engine.id === selected.engine)?.executable;
       if (!executable) throw new Error(`${selected.engine} is not installed on PATH.`);
       const { startNativeUI } = await import("./app/native-chat.ts");
-      await startNativeUI(selected.engine, executable, selected.args);
+      await startNativeUI(selected.engine, executable, selected.args, metadata.version);
     } else if (selected.engine === "pi") {
     const piModule = import.meta.resolve("@earendil-works/pi-coding-agent");
     const piRoot = new URL("../", piModule);
