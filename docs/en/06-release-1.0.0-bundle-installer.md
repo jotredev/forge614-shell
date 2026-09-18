@@ -27,7 +27,7 @@ Forge614-Shell maintains a deliberate technical distinction between package meta
 | **Visible UI Label** | `v1.0.0` | Rendered on the far-right edge of the bottom status bar for clear human readability. |
 | **Git Release Tag** | `1.0.0` | Git tag convention strictly **without the `v` prefix** (strict SemVer in the repository). |
 | **Release Archive Name** | `forge614-shell-1.0.0.tar.gz` | Filename of the packaged standalone distribution archive. |
-| **Publication Status** | **Local only** | Prepared and verified on the local development machine; **neither pushed nor published to any remote repository or registry**. |
+| **Publication Status** | **Private source tag pushed** | The `1.0.0` tag is pushed to the private `origin` repository. The archive remains a local test artifact; no GitHub Release asset or registry publication exists. |
 
 > [!IMPORTANT]
 > **Label Alignment:** The terminal UI displays `v1.0.0` for visual clarity, while Git tags use `1.0.0`. This separation follows industry best practices where user interfaces stylize versions with a leading "v", while package managers and release tags adhere to pure numeric SemVer.
@@ -167,8 +167,8 @@ To maintain absolute technical integrity and avoid premature assumptions, the fo
 - **No in-app `/update` command:** The composer does not have a slash command for self-updating.
 - **No Windows PowerShell installer:** There is no native `install.ps1` script for Windows.
 - **No remote release channels:** There are no remote *stable*, *beta*, or *nightly* update channels.
-- **No remote publishing has occurred:** The local repository has not been published or pushed (`git push` pending).
-- **No remote GitHub tag pushed:** Tag `1.0.0` exists only in the local Git repository.
+- **No GitHub Release asset publication:** No downloadable GitHub Release asset has been published for this tag.
+- **No registry publication:** The package is not published to npm or another package registry. The `1.0.0` source tag exists in the private `origin` repository.
 
 ---
 

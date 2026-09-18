@@ -27,7 +27,7 @@ Forge614-Shell aplica una distinción técnica deliberada entre la denominación
 | **Etiqueta en interfaz (UI)** | `v1.0.0` | Presentada al usuario final en el extremo derecho de la barra de estado inferior para lectura humana clara. |
 | **Git Tag** | `1.0.0` | Convención de etiquetado en Git estrictamente **sin el prefijo `v`** (cumplimiento semver puro en el repositorio). |
 | **Nombre del archivo tarball** | `forge614-shell-1.0.0.tar.gz` | Identificador del artefacto distribuible empaquetado. |
-| **Estado de publicación** | **Local únicamente** | Preparado y verificado en la máquina local; **no ha sido publicado ni enviado (`git push`) a ningún repositorio o registro remoto**. |
+| **Estado de publicación** | **Tag de código enviado a repositorio privado** | El tag `1.0.0` ya fue enviado al repositorio privado `origin`. El archivo de distribución sigue siendo un artefacto local de prueba; no existe un asset de GitHub Release ni publicación en un registro. |
 
 > [!IMPORTANT]
 > **Alineación de etiquetas:** En la interfaz gráfica/terminal se visualiza `v1.0.0`, mientras que en Git la etiqueta es `1.0.0`. Esta separación respeta los estándares de la industria donde las interfaces estilizan la versión con el prefijo "v", mientras que los sistemas de empaquetado y etiquetas de release utilizan la versión numérica pura.
@@ -167,8 +167,8 @@ Para preservar la absoluta veracidad técnica y evitar expectativas falsas sobre
 - **Sin comando `/update` en el chat:** El compositor no dispone de un comando slash para actualizarse en caliente.
 - **Sin instalador PowerShell para Windows:** No se incluye un script `install.ps1` nativo para Windows.
 - **Sin canales de release remotos:** No existen canales *stable*, *beta* o *nightly* alojados en servidores.
-- **Sin publicación remota efectuada:** El repositorio local no ha sido sincronizado ni publicado en la nube (`git push` pendiente).
-- **Sin tag de GitHub publicado:** El tag `1.0.0` reside exclusivamente en el repositorio Git local.
+- **Sin assets publicados en GitHub Releases:** No se ha publicado ningún asset descargable de GitHub Release para este tag.
+- **Sin publicación en registro:** El paquete no está publicado en npm ni en otro registro. El tag de código `1.0.0` existe en el repositorio privado `origin`.
 
 ---
 
