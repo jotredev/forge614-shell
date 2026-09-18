@@ -1,46 +1,50 @@
 # 02 — Notion handoff
 
-2026-09-17 · Stages 01 and 02 · Revision 4 · [Español](../es/02-traspaso-notion.md) · [Index](../../README.md)
+2026-09-17 · Stages 01 and 02 · Revision 6 · [Español](../es/02-traspaso-notion.md) · [Index](../../README.md)
 
-**Status: Documentation synchronization in progress with Notion.**
+**Status: Local documentation complete and verified (122 tests passing across 31 files). Notion synchronization for revisions 5 and 6 pending Notion MCP OAuth credential renewal.**
 
 ## Sources for this delivery
 
-- [README.md](../../README.md): bilingual overview, stage 02 status, and main index.
-- [01-alcance.md](../es/01-alcance.md): Spanish scope and decisions (revision 2: updated scope without internal project/worktree manager).
-- [01-scope.md](01-scope.md): equivalent English scope (revision 2: updated scope).
-- [02-traspaso-notion.md](../es/02-traspaso-notion.md) and [02-notion-handoff.md](02-notion-handoff.md): ES/EN synchronization instructions and record.
-- [03-etapa-2-primera-entrega.md](../es/03-etapa-2-primera-entrega.md): first technical delivery of Stage 2 in Spanish.
-- [03-stage-2-first-delivery.md](03-stage-2-first-delivery.md): first technical delivery of Stage 2 in English.
-- [04-arquitectura-motores.md](../es/04-arquitectura-motores.md): layered architecture, multi-engine adapters, shared profiles, local /logout, and /login reconnect in Spanish (revision 2).
-- [04-architecture-engines.md](04-architecture-engines.md): layered architecture, multi-engine adapters, shared profiles, local /logout, and /login reconnect in English (revision 2).
+- [README.md](../../README.md): bilingual presentation, stage 02 status, and general index (122 tests passing across 31 files).
+- [01-alcance.md](../es/01-alcance.md): scope and decisions in Spanish (revision 2: updated scope without internal workspace manager).
+- [01-scope.md](01-scope.md): equivalent scope in English (revision 2: updated scope).
+- [02-traspaso-notion.md](../es/02-traspaso-notion.md) and [02-notion-handoff.md](02-notion-handoff.md): sync instructions and record in ES/EN (revision 6).
+- [03-etapa-2-primera-entrega.md](../es/03-etapa-2-primera-entrega.md): first technical delivery for stage 2 in Spanish.
+- [03-stage-2-first-delivery.md](03-stage-2-first-delivery.md): first technical delivery for stage 2 in English.
+- [04-arquitectura-motores.md](../es/04-arquitectura-motores.md): layered architecture, multi-engine adapters, shared profiles, local /logout, and /login reconnect in Spanish (revision 2 with 122 tests).
+- [04-architecture-engines.md](04-architecture-engines.md): layered architecture, multi-engine adapters, shared profiles, local /logout, and /login reconnect in English (revision 2 with 122 tests).
+- [05-interfaz-basic-panel-cuotas.md](../es/05-interfaz-basic-panel-cuotas.md): Basic visual interface, contextual sidebar with braille metrics, bottom status bar with project identity, native work modes via `Shift+Tab`, Codex skill discovery via `$`, grouped command menu, RAM resources, and /refresh quota queries in Spanish (revision 2 with 122 tests).
+- [05-basic-ui-sidebar-quotas.md](05-basic-ui-sidebar-quotas.md): Basic visual interface, contextual sidebar with braille metrics, bottom status bar with project identity, native work modes via `Shift+Tab`, Codex skill discovery via `$`, grouped command menu, RAM resources, and /refresh quota queries in English (revision 2 with 122 tests).
 
-## Message for the AI connected to Notion
+## Prompt for Notion-connected agent
 
-> Publish and synchronize Stage 01 and 02 documentation for Forge614-Shell in the Notion workspace under AI Engineer / Librerías / Forge614-Shell.
+> Publish and synchronize documentation for stages 01 and 02 of Forge614-Shell inside the Notion workspace under AI Engineer / Librerías / Forge614-Shell.
 >
-> Maintain the bilingual main index on the “Forge614-Shell” master hub page and the corresponding subordinate ES/EN pages:
-> - “01 — Alcance y decisiones” / “01 — Scope and decisions” (updated to revision 2 with scope adjustment).
-> - “02 — Traspaso a Notion” / “02 — Notion handoff”.
-> - “03 — Primera entrega de la etapa 2” / “03 — Stage 2 first delivery”.
-> - “04 — Arquitectura y motores” / “04 — Architecture and engines” (revision 2: layered architecture, multi-engine adapters, shared profiles, local /logout, and /login reconnect).
+> Maintain the bilingual general index on the main "Forge614-Shell" page and the corresponding child ES/EN pages:
+> - "01 — Alcance y decisiones" / "01 — Scope and decisions" (revision 2).
+> - "02 — Traspaso a Notion" / "02 — Notion handoff" (revision 6).
+> - "03 — Primera entrega de la etapa 2" / "03 — Stage 2 first delivery" (revision 1).
+> - "04 — Arquitectura y motores" / "04 — Architecture and engines" (revision 2, 122 tests).
+> - "05 — Interfaz Basic, panel lateral y cuotas" / "05 — Basic UI, sidebar, and quotas" (revision 2: Forge614 styling, contextual sidebar, RAM resources, bottom status bar with project and Git, native modes with `Shift+Tab`, Codex skills with `$`, grouped menu, independent scrolling, and /refresh).
 >
-> Preserve shared numbers across languages and link each page to its translation and the main index. Convert relative repository links into links to the corresponding Notion pages.
+> Preserve shared numbers across languages and link each page with its translation and the index. Convert repository relative links to corresponding Notion page links.
 >
-> Strictly distinguish what was implemented by Shell from what is natively inherited from upstream CLIs/engines and outstanding tasks.
+> Strictly distinguish Shell implementation details from upstream engine CLI capabilities and pending tasks.
 >
-> Return the index link and every ES/EN page link, publication date, published documentation revision, and any differences from the supplied files.
+> Return the index link and each ES/EN page link, publication date, published revision, and any differences from local files.
 
-## Confirmation record
+## Verification record
 
 | Field | Value |
 | --- | --- |
-| Notion index | https://app.notion.com/p/3de21943d129818b9cd6ca4ab12c44ad |
+| Notion Index | https://app.notion.com/p/3de21943d129818b9cd6ca4ab12c44ad |
 | Page 01 ES / EN | https://app.notion.com/p/3de21943d129819c9bd2ee1d70d04087 / https://app.notion.com/p/3de21943d12981edad3bd48436fec691 |
 | Page 02 ES / EN | https://app.notion.com/p/3de21943d1298125a565e14fdcfca893 / https://app.notion.com/p/3de21943d12981bc916ffdd9e2da9e63 |
 | Page 03 ES / EN | https://app.notion.com/p/3de21943d1298141a7cee925a5670e49 / https://app.notion.com/p/3de21943d1298152b26be649f7a630e5 |
 | Page 04 ES / EN | https://app.notion.com/p/3de21943d12981ddb85dd51594c81217 / https://app.notion.com/p/3de21943d12981fd91a2e3d8b33d8e10 |
-| Published revision | 4 (Stage 01 Rev 2, Stage 02 Rev 2) |
-| Publication date | 2026-09-17 |
-| Differences from repository | Relative links adapted to Notion URLs; master analogy and technical indexation added per ai-engineer-docs standard. |
+| Page 05 ES / EN | Pending publication in Notion (OAuth token revoked) |
+| Revision published in Notion | 4 (Pages 01 to 04 synced); Page 05 and Rev 5-6 pending OAuth renewal |
+| Local publication date | 2026-09-17 |
+| Differences from repository | Relative links adapted to Notion URLs; master analogy and technical taxonomy added per ai-engineer-docs standard. |
 | User review | Pending confirmation |

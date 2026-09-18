@@ -1,5 +1,5 @@
 import type { RpcConnection } from "../../infrastructure/rpc.ts";
-import type { Approve, Emit, NativeModel, NativeSession } from "../types.ts";
+import type { Approve, Emit, NativeModel, NativeSession, NativeVisualState, NativeWorkMode } from "../types.ts";
 import { openLoginBrowser } from "../../infrastructure/browser.ts";
 import { confirmedLogout } from "../logout.ts";
 
@@ -12,6 +12,10 @@ export class CodexSession implements NativeSession {
   private auth = "Not logged in. Use /login.";
   private quotas = "Quota: not reported";
   private tokens = "Tokens / context: not reported";
+  private context?: { used: number; window: number };
+  private usage: NativeVisualState["usage"] = [];
+  private connected = false;
+  private user?: string;
   private loaded = false;
   private disconnected = false;
   private turnId?: string;
@@ -20,6 +24,8 @@ export class CodexSession implements NativeSession {
   private finishTurn?: (error?: Error) => void;
   private items = new Map<string, any>();
   private streamed = new Set<string>();
+  private modes: NativeWorkMode[] = [];
+  private selectedMode?: { approvalPolicy: string; sandboxPolicy: { type: string } };
 
   constructor(private rpc: RpcConnection, private cwd: string, private emit: Emit, private approve: Approve, private openBrowser: (url: string) => Promise<boolean> = openLoginBrowser) {
     rpc.onNotification = (method, params) => this.notification(method, params);
@@ -30,6 +36,7 @@ export class CodexSession implements NativeSession {
     await this.rpc.request("initialize", { clientInfo: { name: "forge614_shell", title: "Forge614-Shell", version: "0.1.0" }, capabilities: {} });
     this.rpc.notify("initialized");
     await this.readAccount();
+    await this.readWorkModes();
     let cursor: string | undefined;
     do {
       const response = await this.rpc.request("model/list", { limit: 100, includeHidden: false, ...(cursor ? { cursor } : {}) });
@@ -40,9 +47,28 @@ export class CodexSession implements NativeSession {
     } while (cursor);
     await this.readQuotas();
   }
+  private async readWorkModes(): Promise<void> {
+    try {
+      const result = await this.rpc.request("configRequirements/read", {});
+      const requirements = result.requirements;
+      const policies: string[] = requirements?.allowedApprovalPolicies ?? ["onRequest", "unlessTrusted"];
+      const sandboxes: string[] = requirements?.allowedSandboxModes ?? ["readOnly", "workspaceWrite"];
+      this.modes = policies.flatMap(policy => sandboxes.map(sandbox => ({ id: `${policy}:${sandbox}`, label: `${policy} · ${sandbox}` })));
+    } catch { this.modes = []; }
+  }
+  workModes(): NativeWorkMode[] { return this.modes; }
+  workMode(): string | undefined { return this.selectedMode ? `${this.selectedMode.approvalPolicy}:${this.selectedMode.sandboxPolicy.type}` : undefined; }
+  async setWorkMode(id: string): Promise<void> {
+    this.idle();
+    const [approvalPolicy, sandbox] = id.split(":");
+    if (!approvalPolicy || !sandbox || !this.modes.some(mode => mode.id === id)) throw new Error("Choose a mode reported by Codex.");
+    this.selectedMode = { approvalPolicy, sandboxPolicy: { type: sandbox } };
+  }
   private async readAccount(): Promise<boolean> {
     const response = await this.rpc.request("account/read", { refreshToken: false });
     const valid = response.account?.type === "chatgpt" && response.requiresOpenaiAuth !== false;
+    this.connected = valid;
+    this.user = valid && typeof response.account.email === "string" ? response.account.email : undefined;
     this.auth = valid ? `ChatGPT account · ${response.account.planType ?? "plan not reported"}` : "ChatGPT login required; API-key mode is not used. Type /login.";
     return valid;
   }
@@ -50,19 +76,27 @@ export class CodexSession implements NativeSession {
     try { this.updateQuotas(await this.rpc.request("account/rateLimits/read")); }
     catch { this.quotas = "Quota: not reported"; }
   }
+  async refreshUsage(): Promise<void> {
+    if (this.disconnected || !this.connected) throw new Error("Connect with /login before refreshing usage.");
+    this.updateQuotas(await this.rpc.request("account/rateLimits/read"));
+    this.emit({ type: "status", text: "" });
+  }
   private updateQuotas(data: any): void {
     const buckets = data.rateLimitsByLimitId ?? { codex: data.rateLimits };
     const lines: string[] = [];
+    const usage: NonNullable<NativeVisualState["usage"]> = [];
     for (const [label, bucket] of Object.entries(buckets) as [string, any][]) {
       for (const name of ["primary", "secondary"]) {
         const window = bucket?.[name];
         if (typeof window?.usedPercent === "number") {
-          const reset = typeof window.resetsAt === "number" ? new Date(window.resetsAt * 1000).toLocaleString() : "not reported";
+          const reset = typeof window.resetsAt === "number" ? new Date(window.resetsAt * 1000).toISOString() : "not reported";
           lines.push(`${label} ${name}: ${window.usedPercent}% used · resets ${reset} (last report)`);
+          usage.push({ label: `${label} ${name}`, usedPercent: window.usedPercent, ...(typeof window.resetsAt === "number" ? { reset } : {}) });
         }
       }
     }
     this.quotas = lines.join("\n") || "Quota: not reported";
+    this.usage = usage;
   }
   async login(): Promise<void> {
     this.idle();
@@ -95,10 +129,11 @@ export class CodexSession implements NativeSession {
       const done = await confirmedLogout("Codex", this.approve, this.aborted.signal, async () => {
         this.disconnected = true;
         this.quotas = "Quota: not reported";
+        this.context = undefined; this.usage = [];
       });
       if (!done) { this.emit({ type: "text", text: "Logout cancelled. No account changes were requested." }); return; }
       this.auth = "Disconnected locally · use /login to reconnect Shell";
-      this.sessionId = undefined; this.loaded = false; this.tokens = "Tokens / context: not reported";
+      this.sessionId = undefined; this.loaded = false; this.tokens = "Tokens / context: not reported"; this.context = undefined;
       this.items.clear(); this.streamed.clear();
       this.emit({ type: "text", text: "Disconnected locally from Codex in this Shell session. Your native account and other applications are unchanged. Use /login to reconnect." });
     } finally { this.busy = false; this.emit({ type: "status", text: "" }); }
@@ -107,6 +142,18 @@ export class CodexSession implements NativeSession {
   status(): string[] {
     if (this.disconnected) return ["Disconnected locally · use /login to reconnect Shell. Native account unchanged."];
     return [this.auth, `Model: ${this.model ?? "engine default"} · effort: ${this.effort ?? "engine default"}`, this.tokens, this.quotas, "Cost: not reported by the engine; plan billing remains with OpenAI."];
+  }
+  visual(): NativeVisualState {
+    if (this.disconnected || !this.connected) return { account: "disconnected", provider: "Codex" };
+    return {
+      account: "connected",
+      provider: "Codex",
+      user: this.user,
+      ...(this.model ? { model: this.model } : {}),
+      ...(this.effort ? { reasoning: this.effort } : {}),
+      ...(this.context ? { context: this.context } : {}),
+      ...(this.usage?.length ? { usage: this.usage } : {}),
+    };
   }
   async setModel(id: string): Promise<void> {
     this.idle(); const model = this.models.find(model => model.id === id);
@@ -119,7 +166,7 @@ export class CodexSession implements NativeSession {
     if (!model?.efforts?.includes(effort)) throw new Error("Choose a supported reasoning level shown by /model.");
     this.effort = effort;
   }
-  reset(): void { this.idle(); this.sessionId = undefined; this.loaded = false; this.tokens = "Tokens / context: not reported"; }
+  reset(): void { this.idle(); this.sessionId = undefined; this.loaded = false; this.tokens = "Tokens / context: not reported"; this.context = undefined; }
   async listSessions(): Promise<{ id: string; title: string }[]> {
     this.idle();
     const result = await this.rpc.request("thread/list", { cwd: this.cwd, limit: 100, sortKey: "updated_at" });
@@ -145,7 +192,9 @@ export class CodexSession implements NativeSession {
       if (!await this.readAccount()) throw new Error("Use /login with ChatGPT before sending a message. No API fallback was used.");
       if (this.aborted.signal.aborted) return;
       if (!this.loaded) {
-        const config = { cwd: this.cwd, model: this.model, modelProvider: "openai", approvalPolicy: "untrusted", approvalsReviewer: "user", sandbox: "workspace-write" };
+        const config = this.selectedMode
+          ? { cwd: this.cwd, model: this.model, modelProvider: "openai", ...this.selectedMode }
+          : { cwd: this.cwd, model: this.model, modelProvider: "openai", approvalPolicy: "untrusted", approvalsReviewer: "user", sandbox: "workspace-write" };
         const result = await this.rpc.request(this.sessionId ? "thread/resume" : "thread/start", { ...config, ...(this.sessionId ? { threadId: this.sessionId } : {}) });
         if (result.modelProvider !== "openai") throw new Error("Expected the official OpenAI provider; refusing to send a prompt.");
         this.sessionId = result.thread.id; this.loaded = true; this.model = result.model; this.effort ??= result.reasoningEffort;
@@ -153,7 +202,7 @@ export class CodexSession implements NativeSession {
       if (this.aborted.signal.aborted) return;
       const finished = new Promise<void>((resolve, reject) => { this.finishTurn = error => error ? reject(error) : resolve(); });
       void finished.catch(() => {});
-      const result = await this.rpc.request("turn/start", { threadId: this.sessionId, input: [{ type: "text", text }], model: this.model, effort: this.effort, approvalPolicy: "untrusted", approvalsReviewer: "user" });
+      const result = await this.rpc.request("turn/start", { threadId: this.sessionId, input: [{ type: "text", text }], model: this.model, effort: this.effort, ...(this.selectedMode ? { approvalPolicy: this.selectedMode.approvalPolicy, sandboxPolicy: this.selectedMode.sandboxPolicy } : { approvalPolicy: "untrusted", approvalsReviewer: "user" }) });
       this.turnId = result.turn.id;
       if (this.aborted.signal.aborted) await this.rpc.request("turn/interrupt", { threadId: this.sessionId, turnId: this.turnId });
       await finished;
@@ -193,6 +242,7 @@ export class CodexSession implements NativeSession {
     if (method === "thread/tokenUsage/updated") {
       const usage = params.tokenUsage;
       this.tokens = `Session tokens: input ${usage.total.inputTokens} · cached ${usage.total.cachedInputTokens} · output ${usage.total.outputTokens}\nLast context: ${usage.last.totalTokens} / ${usage.modelContextWindow ?? "not reported"}`;
+      if (typeof usage.last?.totalTokens === "number" && typeof usage.modelContextWindow === "number") this.context = { used: usage.last.totalTokens, window: usage.modelContextWindow };
       this.emit({ type: "status", text: "" });
     }
     if (method === "turn/completed") {

@@ -27,6 +27,22 @@ export async function antigravityModels(executable: string, cwd: string, env: No
   } catch { throw new Error("Could not load Antigravity models. Use /login to authenticate, then retry."); }
 }
 
+export async function antigravityUsage(executable: string, cwd: string, env: NodeJS.ProcessEnv, signal?: AbortSignal, run: typeof runAccountCommand = runAccountCommand) {
+  await checkAntigravityAccountMode(env);
+  const { stdout } = await run(executable, ["-p", "/usage"], { cwd, env: antigravityEnvironment(env), signal, timeout: 15000, maxBuffer: 65536 });
+  const usage = stdout.split(/\r?\n/).flatMap(line => {
+    const fields = line.split("\t");
+    const index = fields.findIndex(field => /Limit Remaining$/.test(field));
+    if (index < 0 || !/^\d+(?:\.\d+)?%$/.test(fields[index + 1] ?? "")) return [];
+    const remaining = Number(fields[index + 1]!.slice(0, -1));
+    if (remaining < 0 || remaining > 100) return [];
+    const reset = fields[index + 2];
+    return [{ label: fields.slice(0, index + 1).join(" · ").replace(/ Remaining$/, ""), usedPercent: 100 - remaining, ...(reset && Number.isFinite(Date.parse(reset)) ? { reset: new Date(reset).toISOString() } : {}) }];
+  });
+  if (!usage.length) throw new Error("Antigravity did not report readable plan usage.");
+  return usage;
+}
+
 export async function antigravityLoginState(executable: string, cwd: string, env: NodeJS.ProcessEnv, signal?: AbortSignal, run: typeof runAccountCommand = runAccountCommand): Promise<"connected" | "required" | "unknown"> {
   await checkAntigravityAccountMode(env);
   try {

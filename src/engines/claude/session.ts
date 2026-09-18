@@ -1,6 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { EffortLevel, ModelInfo, Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { EffortLevel, ModelInfo, Options, PermissionMode, SDKMessage, SDKUserMessage, SlashCommand } from "@anthropic-ai/claude-agent-sdk";
 import { checkAuthentication, claudeEnvironment } from "./auth.ts";
+import { loadClaudeCatalog, readPlanUsage } from "./catalog.ts";
 
 type RunInput = { prompt: string; options: Options };
 type Dependencies = {
@@ -9,6 +10,7 @@ type Dependencies = {
   env: NodeJS.ProcessEnv;
   authenticate?: () => Promise<void>;
   run?: (input: RunInput) => AsyncIterable<SDKMessage>;
+  connect?: typeof query;
 };
 
 export class ClaudeSession {
@@ -17,6 +19,24 @@ export class ClaudeSession {
   model?: string;
   effort?: EffortLevel;
   models: ModelInfo[] = [];
+  commands: SlashCommand[] = [];
+  user?: string;
+  usage: { label: string; usedPercent: number; reset?: string }[] = [];
+  context?: { used: number; window: number };
+  private permissionMode: PermissionMode = "default";
+  private static readonly permissionModes: { id: PermissionMode; label: string }[] = [
+    { id: "default", label: "default" }, { id: "acceptEdits", label: "acceptEdits" },
+    { id: "plan", label: "plan" }, { id: "dontAsk", label: "dontAsk" },
+    { id: "auto", label: "auto" }, { id: "bypassPermissions", label: "bypassPermissions" },
+  ];
+  async initialize(signal?: AbortSignal): Promise<void> {
+    const catalog = await loadClaudeCatalog(this.dependencies, signal);
+    this.models = catalog.models;
+    this.commands = catalog.commands;
+    this.user = catalog.account.email;
+    this.usage = catalog.usage;
+    this.model ??= catalog.models.find(model => model.value === "default")?.value;
+  }
   private abort?: AbortController;
 
   constructor(private readonly dependencies: Dependencies) {}
@@ -29,9 +49,18 @@ export class ClaudeSession {
   reset(): void {
     if (this.busy) throw new Error("Stop the current turn before starting a new chat.");
     this.sessionId = undefined;
+    this.context = undefined;
   }
 
   stop(): void { this.abort?.abort(); }
+
+  workModes(): { id: string; label: string }[] { return ClaudeSession.permissionModes; }
+  workMode(): string { return this.permissionMode; }
+  async setWorkMode(mode: string): Promise<void> {
+    if (!ClaudeSession.permissionModes.some(item => item.id === mode)) throw new Error("Claude Code did not report that permission mode.");
+    if (this.busy) throw new Error("Finish or /stop the current turn first.");
+    this.permissionMode = mode as PermissionMode;
+  }
 
   async send(
     prompt: string,
@@ -52,7 +81,8 @@ export class ClaudeSession {
         abortController: this.abort,
         systemPrompt: { type: "preset", preset: "claude_code" },
         settingSources: ["user", "project", "local"],
-        permissionMode: "default", persistSession: true, includePartialMessages: true,
+        permissionMode: this.permissionMode, persistSession: true, includePartialMessages: true,
+        ...(this.permissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
         ...(this.sessionId ? { resume: this.sessionId } : {}),
         ...(this.model ? { model: this.model } : {}),
         ...(this.effort ? { effort: this.effort } : {}),
@@ -67,6 +97,7 @@ export class ClaudeSession {
       let resultSeen = false;
       for await (const event of run({ prompt, options })) {
         if (event.type === "system" && event.subtype === "init") this.sessionId = event.session_id;
+        if (event.type === "system" && event.subtype === "commands_changed") this.commands = event.commands;
         if (event.type === "result") resultSeen = true;
         onEvent(event);
       }
@@ -78,11 +109,31 @@ export class ClaudeSession {
   }
 
   private async *officialRun(input: RunInput): AsyncGenerator<SDKMessage> {
-    const session = query(input);
+    // Keep stdin open until post-turn control requests finish. A string prompt
+    // closes it immediately, allowing the native process to exit at the result.
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    async function* messages(): AsyncGenerator<SDKUserMessage> {
+      yield { type: "user", message: { role: "user", content: input.prompt }, parent_tool_use_id: null };
+      await gate;
+    }
+    const session = (this.dependencies.connect ?? query)({ ...input, prompt: messages() });
     try {
       // This control request is a model catalog, not a separate model prompt.
       this.models = await session.supportedModels();
-      for await (const event of session) yield event;
-    } finally { session.close(); }
+      for await (const event of session) {
+        if (event.type === "result") {
+          // Summary is local/last-response accounting; no token-count API request.
+          try {
+            const context = await session.getContextUsage({ detail: "summary" });
+            if (Number.isFinite(context.totalTokens) && context.rawMaxTokens > 0) this.context = { used: context.totalTokens, window: context.rawMaxTokens };
+          } catch { /* Older native versions do not expose this control. */ }
+          const usage = await readPlanUsage(session);
+          if (usage.length) this.usage = usage;
+        }
+        yield event;
+        if (event.type === "result") break;
+      }
+    } finally { release(); session.close(); }
   }
 }

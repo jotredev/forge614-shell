@@ -5,7 +5,7 @@ import { checkGeminiConfiguration } from "../engines/gemini/config.ts";
 import type { NativeId } from "../engines/types.ts";
 import { runNativeUI } from "../ui/basic/native.ts";
 import { AntigravitySession } from "../engines/antigravity/session.ts";
-import { antigravityLogin, antigravityLoginState, antigravityModels, checkAntigravityAccountMode, runAntigravity } from "../engines/antigravity/process.ts";
+import { antigravityLogin, antigravityLoginState, antigravityModels, antigravityUsage, checkAntigravityAccountMode, runAntigravity } from "../engines/antigravity/process.ts";
 
 // Composition root: views render sessions; they do not construct transports.
 export async function startNativeUI(id: NativeId, executable: string, args: string[]): Promise<void> {
@@ -17,6 +17,7 @@ export async function startNativeUI(id: NativeId, executable: string, args: stri
   await runNativeUI(id, cwd, (emit, approve, withTerminal) => {
     if (id === "antigravity") return new AntigravitySession(emit, {
       checkLogin: signal => antigravityLoginState(executable, cwd, process.env, signal),
+      usage: () => antigravityUsage(executable, cwd, process.env),
       confirmLogout: approve,
       confirmLogin: signal => approve("Google sign-in is required. Antigravity only offers interactive login through native agy. Open it temporarily? Sign in there, then exit agy to return to Shell.", signal),
       models: () => antigravityModels(executable, cwd, process.env),

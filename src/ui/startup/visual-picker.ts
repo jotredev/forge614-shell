@@ -1,22 +1,22 @@
-import { ProcessTerminal, SelectList, Text, TuiMainScreen, matchesKey } from "@earendil-works/pi-tui";
+import { ProcessTerminal, SelectList, Text, matchesKey } from "@earendil-works/pi-tui";
 import type { Terminal } from "@earendil-works/pi-tui";
 import type { InstalledEngine } from "../../engines/discovery.ts";
 import { chooseEngine } from "./engine-picker.ts";
+import { startupFrame } from "./frame.ts";
+import { accent, muted } from "../basic/theme.ts";
 
 async function chooseVisual(terminal: Terminal): Promise<"basic" | undefined> {
-  const tui = new TuiMainScreen(terminal);
   const plain = (text: string) => text;
   const list = new SelectList([
     { value: "basic", label: "Basic — Minimal interface" },
     { value: "full", label: "Full — Coming later (disabled)" },
   ], 4, {
-    selectedPrefix: plain,
-    selectedText: text => text.startsWith("Full") ? `\x1b[90m${text}\x1b[0m` : `\x1b[36m${text}\x1b[0m`,
+    selectedPrefix: accent,
+    selectedText: text => text.startsWith("Full") ? muted(text) : accent(text),
     description: plain, scrollInfo: plain, noMatch: plain,
   });
   const hint = new Text("Choose Basic to continue. Full is not available yet.");
-  tui.addChild(new Text("Forge614-Shell\nChoose your visual interface\n↑/↓ navigate · Enter select · Esc cancel"));
-  tui.addChild(list); tui.addChild(hint); tui.setFocus(list);
+  const tui = startupFrame(terminal, "Choose your visual interface", list, hint);
   let finish!: (mode?: "basic") => void;
   const selection = new Promise<"basic" | undefined>(resolve => { finish = resolve; });
   list.onSelect = item => {
@@ -31,7 +31,7 @@ async function chooseVisual(terminal: Terminal): Promise<"basic" | undefined> {
   const terminate = () => finish();
   process.once("SIGTERM", terminate);
   try { tui.start(); return await selection; }
-  finally { process.removeListener("SIGTERM", terminate); tui.stop(); }
+  finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
 }
 
 // No stored defaults: each interactive launch has two explicit selections.

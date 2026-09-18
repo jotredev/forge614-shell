@@ -11,6 +11,18 @@ function codexFixture() {
   return rpc;
 }
 
+test("manual quota refresh reads account limits without starting a model turn", async () => {
+  const rpc = codexFixture();
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.replies.set("account/rateLimits/read", { rateLimits: { primary: { usedPercent: 0, resetsAt: 1900000000, windowDurationMins: 10080 } } });
+  const before = rpc.calls.length;
+  await session.refreshUsage();
+  expect(rpc.calls.slice(before).map(call => call.method)).toEqual(["account/rateLimits/read"]);
+  expect(session.visual().usage?.[0]?.usedPercent).toBe(0);
+  expect(session.visual().usage?.[0]?.reset).toBe(new Date(1900000000000).toISOString());
+});
+
 test("Codex logout is local and reconnect reuses the untouched native account", async () => {
   for (const allow of [false, true]) {
     const rpc = codexFixture(); const events: any[] = [];
@@ -32,6 +44,22 @@ test("Codex logout is local and reconnect reuses the untouched native account", 
       expect(rpc.calls.some(c => c.method === "account/logout" || c.method === "account/login/start")).toBe(false);
     }
   }
+});
+
+test("Codex visual state clears reported model and context after local logout", async () => {
+  const rpc = new FixtureRpc();
+  rpc.replies.set("initialize", {});
+  rpc.replies.set("account/read", { account: { type: "chatgpt", planType: "plus" }, requiresOpenaiAuth: true });
+  rpc.replies.set("model/list", { data: [{ model: "gpt-5.6", displayName: "GPT-5.6", isDefault: true, defaultReasoningEffort: "medium" }], nextCursor: null });
+  rpc.replies.set("account/rateLimits/read", { rateLimits: { primary: { usedPercent: 74, resetsAt: 1_789_000_000 } } });
+  const session = new CodexSession(rpc, "/project", () => {}, async () => true);
+
+  await session.initialize();
+  rpc.onNotification("thread/tokenUsage/updated", { tokenUsage: { total: { inputTokens: 10_000, cachedInputTokens: 2_000, outputTokens: 1_000 }, last: { totalTokens: 18_000 }, modelContextWindow: 128_000 } });
+  expect(session.visual()).toMatchObject({ account: "connected", provider: "Codex", model: "gpt-5.6", reasoning: "medium", context: { used: 18_000, window: 128_000 } });
+
+  await session.logout();
+  expect(session.visual()).toEqual({ account: "disconnected", provider: "Codex" });
 });
 
 test("Codex logout can be cancelled before consent and is blocked during a turn", async () => {
@@ -90,6 +118,22 @@ test("Codex streams a turn, scopes events and never grants denied permissions", 
   expect(events.some(event => event.text === "hello")).toBe(true);
   expect(events.some(event => event.text === "IGNORE")).toBe(false);
   expect(session.busy).toBe(false);
+});
+
+test("Codex applies only a mode allowed by its native app-server requirements", async () => {
+  const rpc = codexFixture();
+  rpc.replies.set("configRequirements/read", { requirements: { allowedApprovalPolicies: ["onRequest"], allowedSandboxModes: ["readOnly", "workspaceWrite"] } });
+  rpc.replies.set("thread/start", { thread: { id: "t" }, model: "test-model", modelProvider: "openai" });
+  rpc.replies.set("turn/start", { turn: { id: "u", status: "inProgress" } });
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  expect(session.workModes?.()).toEqual(expect.arrayContaining([{ id: "onRequest:readOnly", label: "onRequest · readOnly" }]));
+  await session.setWorkMode?.("onRequest:readOnly");
+  const pending = session.send("inspect");
+  await new Promise(resolve => setImmediate(resolve));
+  expect(rpc.calls.find(call => call.method === "thread/start")?.params).toMatchObject({ approvalPolicy: "onRequest", sandboxPolicy: { type: "readOnly" } });
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await pending;
 });
 
 test("Codex resume only restores history and waits for a message", async () => {

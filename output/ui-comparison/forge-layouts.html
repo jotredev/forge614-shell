@@ -1,0 +1,82 @@
+<div id="forge-layout-study" aria-label="Propuestas de estructura de Forge614-Shell">
+  <style>
+    #forge-layout-study{--f-bg:light-dark(#f8fafb,#10151b);--f-panel:light-dark(#edf1f4,#171f28);--f-text:light-dark(#172634,#dce5ee);--f-muted:light-dark(#536575,#a0afbd);--f-line:light-dark(#c6d2dc,#334454);--f-accent:light-dark(#006c70,#65d4cc);color:var(--f-text);font:14px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace}
+    #forge-layout-study *{box-sizing:border-box}
+    #forge-layout-study .choices{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+    #forge-layout-study button{font:inherit;color:var(--f-text);background:var(--f-panel);border:1px solid var(--f-line);padding:8px 12px;cursor:pointer}
+    #forge-layout-study button[aria-pressed=true]{border-color:var(--f-accent);color:var(--f-accent)}
+    #forge-layout-study .terminal{background:var(--f-bg);border:1px solid var(--f-line)}
+    #forge-layout-study header{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--f-line);padding:15px 20px}
+    #forge-layout-study .brand{color:var(--f-accent);font-weight:600}
+    #forge-layout-study .muted{color:var(--f-muted)}
+    #forge-layout-study .workspace{display:grid;grid-template-columns:minmax(0,1fr)}
+    #forge-layout-study .workspace.inspect{grid-template-columns:minmax(0,1fr) 220px}
+    #forge-layout-study .chat{min-width:0;display:flex;flex-direction:column}
+    #forge-layout-study .history{padding:24px;min-height:315px;overflow-wrap:anywhere}
+    #forge-layout-study .message{margin-bottom:26px}
+    #forge-layout-study .speaker{color:var(--f-accent);margin-bottom:7px}
+    #forge-layout-study .user{border-left:2px solid var(--f-line);padding-left:14px}
+    #forge-layout-study details{margin:12px 0;background:var(--f-panel);padding:10px 14px}
+    #forge-layout-study summary{cursor:pointer}
+    #forge-layout-study .tool-output{white-space:pre-wrap;margin:12px 0 0;color:var(--f-muted)}
+    #forge-layout-study .activity{padding:10px 24px;color:var(--f-accent);border-top:1px solid var(--f-line)}
+    #forge-layout-study .composer{padding:12px 24px 18px}
+    #forge-layout-study textarea{width:100%;resize:vertical;min-height:72px;border:1px solid var(--f-line);border-left:3px solid var(--f-accent);background:var(--f-panel);color:var(--f-text);font:inherit;padding:14px}
+    #forge-layout-study .hints{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:7px;color:var(--f-muted);font-size:12px}
+    #forge-layout-study aside{padding:20px;border-left:1px solid var(--f-line);background:var(--f-panel)}
+    #forge-layout-study aside section{margin-bottom:26px}
+    #forge-layout-study aside h3{font:inherit;color:var(--f-accent);margin:0 0 8px}
+    #forge-layout-study footer{padding:10px 20px;border-top:1px solid var(--f-line);display:flex;gap:14px;flex-wrap:wrap;color:var(--f-muted);font-size:12px}
+    #forge-layout-study .caption{margin:12px 0;font-size:12px;color:var(--f-muted)}
+    #forge-layout-study [hidden]{display:none!important}
+    @media(max-width:600px){#forge-layout-study .workspace.inspect{grid-template-columns:minmax(0,1fr)}#forge-layout-study aside{border-left:0;border-top:1px solid var(--f-line)}#forge-layout-study .history{padding:16px;min-height:260px}#forge-layout-study .composer{padding:12px 16px}#forge-layout-study textarea{font-size:16px}}
+  </style>
+  <div class="choices" aria-label="Distribución propuesta">
+    <button type="button" data-layout="focus" aria-pressed="true">A · Chat amplio</button>
+    <button type="button" data-layout="inspect" aria-pressed="false">B · Chat + inspector</button>
+  </div>
+  <div class="terminal">
+    <header><span class="brand">FORGE614 / SHELL</span><span class="muted">forge614-shell · main</span></header>
+    <div class="workspace">
+      <div class="chat">
+        <div class="history" aria-label="Área de historial desplazable en la propuesta">
+          <div class="message user"><div class="speaker">YOU</div>Check that logout only disconnects this Shell session.</div>
+          <div class="message"><div class="speaker">ASSISTANT</div>I’ll inspect the connector and its tests. Your account credentials will not be changed.</div>
+          <details><summary>✓ Read · 3 files <span class="muted">— expand</span></summary><div class="tool-output">src/engines/logout.ts
+src/engines/codex/session.ts
+src/engines/codex/session.test.ts</div></details>
+          <details><summary>✓ Test · local disconnect <span class="muted">— expand</span></summary><div class="tool-output">Example result:
+✓ Does not call native account logout
+✓ Waits for explicit reconnection</div></details>
+          <div class="message" style="margin-top:22px;margin-bottom:0">The connector disconnects locally. It does not clear the native account.</div>
+        </div>
+        <div class="activity">● Ready · waiting for your message</div>
+        <div class="composer"><textarea aria-label="Entrada de ejemplo, no envía mensajes" placeholder="Ask anything, or / for commands…"></textarea><div class="hints"><span>Enter send · Shift+Enter newline</span><span>Preview only</span></div></div>
+      </div>
+      <aside hidden aria-label="Inspector de sesión">
+        <section><h3>SESSION</h3><div>Engine · Codex</div><div>Model · selected model</div><div>Effort · medium</div></section>
+        <section><h3>USAGE</h3><div>Context · not reported</div><div>Tokens · not reported</div><div>Quota · not reported</div><div class="muted">No estimated bill</div></section>
+        <section><h3>ACTIVITY</h3><div>✓ Read · 3 files</div><div>✓ Test · completed</div><div class="muted">Waiting for input</div></section>
+      </aside>
+    </div>
+    <footer><span>Codex · selected model · medium</span><span>Account connected</span><span id="forge-extra">Details on demand</span></footer>
+  </div>
+  <p class="caption" id="forge-layout-caption" aria-live="polite">A · Historial protagonista; actividad, entrada y estado al pie. Herramientas desplegables.</p>
+  <script>
+    (()=>{
+      const root=document.getElementById('forge-layout-study');
+      const state={layout:'focus',expanded:false};
+      function render(){
+        const inspect=state.layout==='inspect';
+        root.querySelector('.workspace').classList.toggle('inspect',inspect);
+        root.querySelector('aside').hidden=!inspect;
+        root.querySelectorAll('[data-layout]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.layout===state.layout)));
+        root.querySelector('#forge-extra').textContent=inspect?'Session inspector open':'Details on demand';
+        root.querySelector('#forge-layout-caption').textContent=inspect?'B · La misma conversación con inspector lateral. En ventanas estrechas, los detalles pasan debajo.':'A · Historial protagonista; actividad, entrada y estado al pie. Herramientas desplegables.';
+      }
+      root.querySelectorAll('[data-layout]').forEach(b=>b.addEventListener('click',()=>{state.layout=b.dataset.layout;render();}));
+      render();
+      if(globalThis.Tweak){const tweak=new Tweak({container:root,onChange:()=>{render();root.querySelectorAll('details').forEach(d=>d.open=state.expanded);}});tweak.addSelect(state,'layout',{label:'Distribución',options:[{label:'Chat amplio',value:'focus'},{label:'Chat + inspector',value:'inspect'}]});tweak.addToggle(state,'expanded',{label:'Herramientas expandidas'});}
+    })();
+  </script>
+</div>

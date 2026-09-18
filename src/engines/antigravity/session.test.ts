@@ -42,6 +42,7 @@ test("login reuses a verified account without opening native agy or sending a pr
     login: async () => { opened = true; }, run: async () => { throw new Error("No inference allowed"); },
   });
   await session.login();
+  expect(session.visual()).toEqual({ account: "connected", provider: "Antigravity" });
   expect(opened).toBe(false);
   expect(session.status().join(" ")).toContain("Connected");
 });

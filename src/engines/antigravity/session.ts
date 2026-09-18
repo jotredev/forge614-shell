@@ -1,8 +1,9 @@
 import { stripVTControlCharacters } from "node:util";
-import type { Emit, NativeModel, NativeSession } from "../types.ts";
+import type { Emit, NativeModel, NativeSession, NativeVisualState } from "../types.ts";
 import { confirmedLogout } from "../logout.ts";
 
 export interface AntigravityOperations {
+  usage?(): Promise<NonNullable<NativeVisualState["usage"]>>;
   checkLogin?(signal: AbortSignal): Promise<"connected" | "required" | "unknown">;
   confirmLogin?(signal: AbortSignal): Promise<boolean>;
   confirmLogout?(description: string, signal: AbortSignal): Promise<boolean>;
@@ -23,6 +24,13 @@ export class AntigravitySession implements NativeSession {
   private signedOut = false;
   private account = "Account not checked · /login checks your existing session";
   private usage = "Tokens / context / quota / cost: not reported yet";
+  private planUsage: NativeVisualState["usage"] = [];
+  async refreshUsage(): Promise<void> {
+    if (this.closed || this.signedOut || !this.account.startsWith("Connected")) throw new Error("Connect with /login first.");
+    if (!this.operations.usage) throw new Error("Usage query unavailable.");
+    this.planUsage = await this.operations.usage();
+    this.emit({ type: "status", text: "" });
+  }
   constructor(private emit: Emit, private operations: AntigravityOperations) {}
   private idle(): void {
     if (this.closed) throw new Error("Antigravity session is closed.");
@@ -62,7 +70,7 @@ export class AntigravitySession implements NativeSession {
     try {
       if (!this.operations.confirmLogout) throw new Error("Logout is unavailable in this connector.");
       if (!await confirmedLogout("Antigravity", this.operations.confirmLogout, this.control.signal, async () => {
-        this.signedOut = true;
+        this.signedOut = true; this.planUsage = [];
         this.sessionId = undefined; this.models = []; this.model = undefined; this.effort = undefined;
         this.usage = "Tokens / context / quota / cost: not reported yet";
       })) {
@@ -102,6 +110,16 @@ export class AntigravitySession implements NativeSession {
   reset(): void { this.idle(); this.sessionId = undefined; this.usage = "Tokens / context / quota / cost: not reported yet"; }
   status(): string[] {
     return [this.account, `Model: ${this.model ?? "native default (not reported)"} · effort: ${this.effort ?? "native default"}`, this.usage];
+  }
+  visual(): NativeVisualState {
+    if (this.signedOut || !this.account.startsWith("Connected")) return { account: "disconnected", provider: "Antigravity" };
+    return {
+      account: "connected",
+      provider: "Antigravity",
+      ...(this.planUsage?.length ? { usage: this.planUsage } : {}),
+      ...(this.model ? { model: this.model } : {}),
+      ...(this.effort ? { reasoning: this.effort } : {}),
+    };
   }
   async send(text: string): Promise<void> {
     this.idle(); if (!text.trim()) return;

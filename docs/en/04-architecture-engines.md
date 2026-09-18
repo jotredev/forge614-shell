@@ -87,8 +87,9 @@ An automated architectural test (`tests/architecture/layers.test.ts`) enforces t
 | **Engine Gemini** | `src/engines/gemini/` | Drives Google Gemini CLI via `gemini --acp --approval-mode default` using Agent Client Protocol (ACP v1) with `oauth-personal` authentication. |
 | **Engine Pi** | `src/engines/pi/` | Legacy connector wrapping `@earendil-works/pi-coding-agent`, preserving isolated profile storage in `~/.forge614-shell/agent`. |
 | **UI Startup** | `src/ui/startup/` | Interactive terminal selectors shown before chat: visual interface picker (`visual-picker.ts`) and engine picker (`engine-picker.ts`). |
-| **UI Basic** | `src/ui/basic/` | Interactive terminal chat built with `@earendil-works/pi-tui` primitives: `native.ts` (for Codex, agy, and Gemini) and `claude.ts` (for Claude Code). |
+| **UI Basic** | `src/ui/basic/` | AI-first split terminal interface: workspace (`workspace.ts`), contextual sidebar (`sidebar.ts`), framed composer (`composer.ts`), activity cards (`transcript.ts`), braille metrics (`metrics.ts`), session state (`shell-state.ts`), condensed status bar (`status-bar.ts`), and Forge614 theme (`theme.ts`). Detailed in [05-basic-ui-sidebar-quotas.md](05-basic-ui-sidebar-quotas.md). |
 | **Infrastructure Browser** | `src/infrastructure/browser.ts` | Safely opens the default operating system browser (`open`, `rundll32`, or `xdg-open`) strictly for verified OAuth endpoints (`auth.openai.com` and `accounts.google.com`) without shell interpolation. |
+| **Infrastructure Project** | `src/infrastructure/project-info.ts` | Non-blocking Git branch and changed files resolution, with graceful fallback when Git is unavailable. |
 | **Infrastructure RPC** | `src/infrastructure/rpc.ts` | `JsonRpcPeer`: bidirectional JSON-RPC client and server over standard streams (`stdin`/`stdout`), featuring request correlation, timeouts, and buffer protection. |
 
 ---
@@ -178,7 +179,7 @@ The `/login` command restores connectivity in Forge614-Shell with comprehensive 
 
 ## 7. Testing conventions and verified test suite (*Colocated Tests*)
 
-### Test suite layout
+### Test suite layout (30 colocated test files)
 
 ```
 src/
@@ -192,13 +193,15 @@ src/
 │   ├── logout.test.ts                # Consent, cancellation, and error bounds
 │   ├── claude/
 │   │   ├── auth.test.ts              # Preflight, login states, and cancellation safety
-│   │   ├── session.test.ts
+│   │   ├── catalog.test.ts           # Model and quota queries without prompt emission
+│   │   ├── session.test.ts           # Turns, context stream, and concurrent write locks
 │   │   └── telemetry.test.ts
 │   ├── codex/
-│   │   └── session.test.ts           # Local logout, reconnect without OAuth, turn locking
+│   │   ├── session.test.ts           # Local logout, reconnect, /refresh quotas, visual state
+│   │   └── skills.test.ts            # Discovery of project, user, and plugin SKILL.md files
 │   ├── antigravity/
 │   │   ├── account-command.test.ts   # Headless probes without TTY and buffer bounds
-│   │   ├── process.test.ts           # Stream-json protocol, cancel, and API key rejection
+│   │   ├── process.test.ts           # Stream-json protocol, /usage quota, and cancel
 │   │   └── session.test.ts           # Local logout, agy reconnect, and message blocking
 │   ├── gemini/
 │   │   ├── config.test.ts
@@ -208,11 +211,17 @@ src/
 │       └── launcher.test.ts
 ├── infrastructure/
 │   ├── browser.test.ts
+│   ├── project-info.test.ts          # Non-blocking Git checks and no-repo fallback
 │   └── rpc.test.ts
 └── ui/
     ├── basic/
+    │   ├── claude.test.ts            # Claude logout consent, cancel, and reconnect
+    │   ├── metrics.test.ts           # Neutral quota titles, bar limits, and braille ring
     │   ├── native.test.ts            # Command loop, local /logout, and /login
-    │   └── claude.test.ts            # Claude logout consent, cancel, and reconnect
+    │   ├── shell-state.test.ts       # Disconnect state cleanup and data isolation
+    │   ├── sidebar.test.ts           # /refresh deduplication, telemetry, and sections
+    │   ├── transcript.test.ts        # Role labels, timestamps, and collapsible tool cards
+    │   └── workspace-chrome.test.ts  # Independent scroll, hidden scrollbars, composer
     └── startup/
         ├── engine-picker.test.ts
         └── visual-picker.test.ts
@@ -233,11 +242,11 @@ bun run check
 ```
 
 - **Strict Typecheck:** `tsc --noEmit` passes with 0 errors.
-- **Automated Tests:** **74 tests passing across 23 files** (0 failures, 344 `expect()` assertions).
-- **Production Build:** `dist/cli.js` bundled cleanly (94.1 KB).
+- **Automated Tests:** **122 tests passing across 31 files** (0 failures, 559 `expect()` assertions).
+- **Production Build:** `dist/cli.js` bundled cleanly (148.84 KB).
 
 > [!WARNING]
-> **Verification boundaries:** These 74 automated tests verify logical contracts, state machines, local disconnection semantics, buffer bounds, and mock transports. **They do NOT constitute full manual validation of live accounts across all operating systems (Windows, Linux)**.
+> **Verification boundaries:** These 122 automated tests verify logical contracts, state machines, local disconnection semantics, independent scroll, prompt-free quota queries, buffer bounds, and mock transports. **They do NOT constitute full manual validation of live accounts across all operating systems (Windows, Linux)**. See [05-basic-ui-sidebar-quotas.md](05-basic-ui-sidebar-quotas.md) for detailed UI and contextual sidebar specifications.
 
 ---
 

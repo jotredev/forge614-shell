@@ -21,6 +21,8 @@ test("every startup waits for Basic then separately waits for an AI selection", 
     const result = chooseStartup(engines, terminal).then(value => { settled = true; return value; });
     await tick();
     expect(terminal.output).toContain("Choose your visual interface");
+    expect(terminal.output).toContain("\x1b[?1049h");
+    expect(terminal.output).toContain("48;2;12;19;24");
     expect(terminal.output).toContain("Full — Coming later");
     expect(terminal.output).not.toContain("Choose your AI engine");
     expect(settled).toBe(false);
@@ -29,6 +31,12 @@ test("every startup waits for Basic then separately waits for an AI selection", 
     expect(settled).toBe(false);
     terminal.input("\r");
     expect(await result).toEqual(engines[0]);
+    // Leaving the alternate screen must not print the selector into shell history.
+    for (const segment of terminal.output.split("\x1b[?1049l").slice(1)) {
+      const mainScreen = segment.split("\x1b[?1049h")[0]!;
+      expect(mainScreen).not.toContain("Choose your");
+      expect(mainScreen).not.toContain("Claude Code");
+    }
   }
 });
 

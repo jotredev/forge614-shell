@@ -12,6 +12,7 @@ test("Gemini authenticates only through Google and uses native ACP permissions",
   await session.initialize();
   expect(rpc.calls.map(call => call.method)).toEqual(["initialize"]);
   await session.login();
+  expect(session.visual()).toEqual({ account: "connected", provider: "Gemini CLI", model: "auto" });
   expect(rpc.calls.find(call => call.method === "authenticate")?.params).toEqual({ methodId: "oauth-personal" });
   const decision = await rpc.onRequest("session/request_permission", { sessionId: "g", toolCall: { title: "edit" }, options: [{ optionId: "proceed_once", kind: "allow_once" }] });
   expect(decision).toEqual({ outcome: { outcome: "cancelled" } });

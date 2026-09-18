@@ -87,8 +87,9 @@ La prueba arquitectónica automatizada (`tests/architecture/layers.test.ts`) gar
 | **Engine Gemini** | `src/engines/gemini/` | Conecta con Gemini CLI vía ACP v1 (`--acp --approval-mode default`) y captura controlada de `stderr` (`login-feedback.ts`). |
 | **Engine Pi** | `src/engines/pi/` | Conector heredado (*legacy*) que encapsula `@earendil-works/pi-coding-agent`, manteniendo aislamiento de perfil en `~/.forge614-shell/agent`. |
 | **UI Startup** | `src/ui/startup/` | Selectores de interfaz visual (`visual-picker.ts`) y de motor (`engine-picker.ts`). |
-| **UI Basic** | `src/ui/basic/` | Terminal interactiva construida con componentes `@earendil-works/pi-tui`: `native.ts` (para Codex, agy y Gemini) y `claude.ts` (para Claude Code). |
+| **UI Basic** | `src/ui/basic/` | Experiencia AI-first dividida en terminal: workspace (`workspace.ts`), barra lateral contextual (`sidebar.ts`), compositor enmarcado (`composer.ts`), tarjetas de actividad (`transcript.ts`), métricas braille (`metrics.ts`), estado de sesión (`shell-state.ts`), barra de estado condensada (`status-bar.ts`) y paleta Forge614 (`theme.ts`). Detallado en [05-interfaz-basic-panel-cuotas.md](05-interfaz-basic-panel-cuotas.md). |
 | **Infrastructure Browser** | `src/infrastructure/browser.ts` | Abre el navegador del sistema operativo de forma segura solo para endpoints oficiales (`auth.openai.com` y `accounts.google.com`) sin interpolación en shell. |
+| **Infrastructure Project** | `src/infrastructure/project-info.ts` | Consulta no bloqueante de rama y archivos modificados vía Git, con detección de entornos sin Git. |
 | **Infrastructure RPC** | `src/infrastructure/rpc.ts` | `JsonRpcPeer`: transporte JSON-RPC bidireccional sobre `stdin`/`stdout` con manejo de timeouts, fragmentación y cancelación. |
 
 ---
@@ -178,7 +179,7 @@ El comando `/login` reactiva la sesión en Forge614-Shell con validaciones rigur
 
 ## 7. Pruebas y verificación técnica (*Colocated Tests*)
 
-### Distribución de la suite de pruebas
+### Distribución de la suite de pruebas (30 archivos coubicados)
 
 ```
 src/
@@ -192,13 +193,15 @@ src/
 │   ├── logout.test.ts                # Consentimiento de logout, cancelación y límites
 │   ├── claude/
 │   │   ├── auth.test.ts              # Preflight, estados de login y cancelación segura
-│   │   ├── session.test.ts
+│   │   ├── catalog.test.ts           # Consulta de modelos y cuota sin emitir prompts
+│   │   ├── session.test.ts           # Turnos, stream de contexto y bloqueo concurrente
 │   │   └── telemetry.test.ts
 │   ├── codex/
-│   │   └── session.test.ts           # Logout local, reconexión sin OAuth y bloqueo de turnos
+│   │   ├── session.test.ts           # Logout local, reconexión, cuotas /refresh y visual state
+│   │   └── skills.test.ts            # Descubrimiento de SKILL.md de proyecto, usuario y plugins
 │   ├── antigravity/
 │   │   ├── account-command.test.ts   # Sondas de cuenta sin TTY y límites de buffer
-│   │   ├── process.test.ts           # Protocolo stream-json, cancelación y rechazo de API keys
+│   │   ├── process.test.ts           # Protocolo stream-json, cuota /usage y cancelación
 │   │   └── session.test.ts           # Logout local, reconexión agy y bloqueo de mensajes
 │   ├── gemini/
 │   │   ├── config.test.ts
@@ -208,11 +211,17 @@ src/
 │       └── launcher.test.ts
 ├── infrastructure/
 │   ├── browser.test.ts
+│   ├── project-info.test.ts          # Consulta Git no bloqueante y fallback sin repo
 │   └── rpc.test.ts
 └── ui/
     ├── basic/
+    │   ├── claude.test.ts            # Consentimiento de logout en Claude y reconexión
+    │   ├── metrics.test.ts           # Cuotas neutrales, límites de barra y anillo braille
     │   ├── native.test.ts            # Bucle de comandos, /logout local y /login
-    │   └── claude.test.ts            # Consentimiento de logout en Claude y reconexión
+    │   ├── shell-state.test.ts       # Limpieza de estado en desconexión y aislamiento
+    │   ├── sidebar.test.ts           # Deduplicación de /refresh, telemetría y grupos
+    │   ├── transcript.test.ts        # Rol, hora y tarjetas colapsables de herramientas
+    │   └── workspace-chrome.test.ts  # Scroll independiente, scrollbars ocultos y compositor
     └── startup/
         ├── engine-picker.test.ts
         └── visual-picker.test.ts
@@ -233,11 +242,11 @@ bun run check
 ```
 
 - **Typecheck estricto:** `tsc --noEmit` completado sin errores.
-- **Pruebas automatizadas:** **74 pruebas superadas en 23 archivos** (0 fallos, 344 aserciones `expect()`).
-- **Compilación de producción:** `dist/cli.js` generado correctamente (94.1 KB).
+- **Pruebas automatizadas:** **122 pruebas superadas en 31 archivos** (0 fallos, 559 aserciones `expect()`).
+- **Compilación de producción:** `dist/cli.js` generado correctamente (148.84 KB).
 
 > [!WARNING]
-> **Límite de verificación:** Estas 74 pruebas automatizadas validan con rigor los contratos lógicos, máquinas de estado, desconexión local, buffers y dobles de transporte RPC. **NO representan una validación manual completa con cuentas reales ni en todos los sistemas operativos (Windows, Linux)**.
+> **Límite de verificación:** Estas 122 pruebas automatizadas validan con rigor los contratos lógicos, máquinas de estado, desconexión local, scroll independiente, refresco de cuotas sin prompt, buffers y dobles de transporte RPC. **NO representan una validación manual completa con cuentas comerciales reales ni en todos los sistemas operativos (Windows, Linux)**. Consultar [05-interfaz-basic-panel-cuotas.md](05-interfaz-basic-panel-cuotas.md) para detalles exhaustivos de la interfaz y panel contextual.
 
 ---
 

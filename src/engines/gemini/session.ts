@@ -1,5 +1,5 @@
 import type { RpcConnection } from "../../infrastructure/rpc.ts";
-import type { Approve, Emit, NativeModel, NativeSession } from "../types.ts";
+import type { Approve, Emit, NativeModel, NativeSession, NativeVisualState } from "../types.ts";
 
 export class GeminiSession implements NativeSession {
   busy = false;
@@ -52,6 +52,10 @@ export class GeminiSession implements NativeSession {
   }
   status(): string[] {
     return [this.authenticated ? "Google account · authentication owned by Gemini CLI" : "Use /login to connect your Google account.", `Model: ${this.model ?? "engine default"} · reasoning: managed by Gemini (no ACP selector exposed)`, this.usage];
+  }
+  visual(): NativeVisualState {
+    if (!this.authenticated) return { account: "disconnected", provider: "Gemini CLI" };
+    return { account: "connected", provider: "Gemini CLI", ...(this.model ? { model: this.model } : {}) };
   }
   async setModel(id: string): Promise<void> {
     this.idle(); await this.ensureSession();

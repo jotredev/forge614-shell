@@ -1,8 +1,16 @@
 import { expect, test } from "bun:test";
-import { antigravityEnvironment, antigravityLogin, antigravityLoginState, checkAntigravityAccountMode, runAntigravity } from "./process.ts";
+import { antigravityEnvironment, antigravityLogin, antigravityLoginState, antigravityUsage, checkAntigravityAccountMode, runAntigravity } from "./process.ts";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+test("usage refresh converts remaining percentage without a chat prompt", async () => {
+  const result = await antigravityUsage("agy", "/tmp", { HOME: "/nonexistent-forge-test" }, undefined, async (_file, args) => {
+    expect(args).toEqual(["-p", "/usage"]);
+    return { stdout: "Gemini Models\tWeekly Limit Remaining\t70%\t2026-09-24T00:00:00Z\n" };
+  });
+  expect(result).toEqual([{ label: "Gemini Models · Weekly Limit", usedPercent: 30, reset: "2026-09-24T00:00:00.000Z" }]);
+});
 
 
 test("login check uses a CLI-local quota query and does not confuse outages with signed-out accounts", async () => {
