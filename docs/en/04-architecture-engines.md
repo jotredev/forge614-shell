@@ -229,6 +229,7 @@ tests/
 ├── architecture/
 │   └── layers.test.ts                # Layer boundaries and session.ts ownership
 ├── integration/
+│   ├── release-bundle.test.ts        # Isolated tarball bundle installation and version reporting
 │   └── runtime.test.ts               # Subprocess Pi integration test
 └── support/
     └── rpc-fixture.ts
@@ -242,11 +243,11 @@ bun run check
 ```
 
 - **Strict Typecheck:** `tsc --noEmit` passes with 0 errors.
-- **Automated Tests:** **122 tests passing across 31 files** (0 failures, 559 `expect()` assertions).
-- **Production Build:** `dist/cli.js` bundled cleanly (148.84 KB).
+- **Automated Tests:** **124 tests passing across 32 files** (0 failures, 566 `expect()` assertions).
+- **Production Build:** `dist/cli.js` bundled cleanly (149.48 KB).
 
 > [!WARNING]
-> **Verification boundaries:** These 122 automated tests verify logical contracts, state machines, local disconnection semantics, independent scroll, prompt-free quota queries, buffer bounds, and mock transports. **They do NOT constitute full manual validation of live accounts across all operating systems (Windows, Linux)**. See [05-basic-ui-sidebar-quotas.md](05-basic-ui-sidebar-quotas.md) for detailed UI and contextual sidebar specifications.
+> **Verification boundaries:** These 124 automated tests verify logical contracts, state machines, local disconnection semantics, independent scroll, prompt-free quota queries, buffer bounds, mock transports, and 1.0.0 release bundling. **They do NOT constitute full manual validation of live accounts across all operating systems (Windows, Linux)**. See [05-basic-ui-sidebar-quotas.md](05-basic-ui-sidebar-quotas.md) and [06-release-1.0.0-bundle-installer.md](06-release-1.0.0-bundle-installer.md) for detailed specifications.
 
 ---
 

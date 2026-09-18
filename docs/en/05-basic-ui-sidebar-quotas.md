@@ -1,8 +1,8 @@
 # 05 — Basic UI, sidebar, and quotas
 
-2026-09-17 · Stage 02: base environment implementation (in progress) · Documentation revision: 2 · [Español](../es/05-interfaz-basic-panel-cuotas.md) · [Index](../../README.md)
+2026-09-18 · Stage 02: base environment implementation (in progress) · Documentation revision: 3 · [Español](../es/05-interfaz-basic-panel-cuotas.md) · [Index](../../README.md)
 
-This document details the implementation of the **Basic visual interface**, the **contextual sidebar**, the **bottom status bar with project identity**, the **grouped command menu and keyboard selection system**, **Codex native skill discovery (`$`)**, **switchable work modes (`Shift+Tab`)**, **independent scroll control**, **non-invasive quota refreshing (`/refresh`)**, and verified software quality backed by **122 automated tests across 31 files** in Forge614-Shell.
+This document details the implementation of the **Basic visual interface**, the **contextual sidebar**, the **bottom status bar with project identity and pinned version badge (`v1.0.0`)**, the **grouped command menu and keyboard selection system**, **Codex native skill discovery (`$`)**, **switchable work modes (`Shift+Tab`)**, **independent scroll control**, **non-invasive quota refreshing (`/refresh`)**, and verified software quality backed by **124 automated tests across 32 files** in Forge614-Shell.
 
 ---
 
@@ -123,22 +123,25 @@ The interactive `↻ Refresh · /refresh` button previously embedded in the side
 
 ## 4. Bottom Status Bar (`ShellStatusBar`)
 
-The status bar (`status-bar.ts`) is positioned at the bottom edge of the terminal below the chat area, consolidating session identity and repository status into a single horizontal workspace row:
+The status bar (`status-bar.ts`) is positioned at the bottom edge of the terminal below the chat area, consolidating session identity, repository status, and pinned product version into a single horizontal workspace row:
 
-```
-F614 · Claude Code · claude-3-7-sonnet · ctx 18% · ~/Desktop/forge614-shell · main · Clean
+```text
+F614 · Claude Code · <model> · ~/project · main · 3 changes             v1.0.0
 ```
 
 ### Elements and Semantic Colors:
 1. **Shell Indicator:** `F614` prefix in cyan accent (`accent`).
 2. **Condensed Telemetry:** Connected provider, active model, reasoning level, and context occupancy percentage (`ctx XX%`), shown only when confirmed.
 3. **Project Identity:**
-   - **Compact Path:** Current working directory formatted relative to the user's home directory via `homeRelativePath` (e.g. `~/Desktop/forge614-shell`) in muted gray (`muted`).
+   - **Compact Path:** Current working directory formatted relative to the user's home directory via `homeRelativePath` (e.g. `~/project`) in muted gray (`muted`).
    - **Git Branch:** Active branch name in cyan (`accent`, e.g. `main` or `Detached HEAD`), retrieved using non-blocking checks (`GIT_OPTIONAL_LOCKS=0`).
    - **Change Status:**
      - Clean working tree: `Clean` in cyan (`accent`).
-     - Modified or untracked files: `X changes` (e.g. `7 changes`) in warning amber (`warning`).
+     - Modified or untracked files: `X changes` (e.g. `3 changes`) in warning amber (`warning`).
    - **Non-Git Directories:** If Git is not installed or the directory is not a repository, branch and change sections are omitted cleanly without printing error text.
+4. **Right-Edge Pinned Version Badge (`v1.0.0`):**
+   - The visible label `v1.0.0` is rendered in muted gray (`muted`), anchored permanently to the far-right boundary of the footer.
+   - **Protective Truncation:** On narrow viewports, the left-side telemetry is compressed and truncated with ellipsis (`…`) so the product version remains fully visible without wrapping.
 
 ---
 
@@ -274,17 +277,18 @@ Forge614-Shell standardizes manual usage refreshing without consuming AI tokens:
 The project enforces strict layer separation (UI, Application, Engines, Infrastructure) with **colocated tests**.
 
 ### Automated Verification Summary (`bun run check`):
-- **122 passing tests (0 failures)** across **31 test files**, with **559 assertions (`expect()`)**.
+- **124 passing tests (0 failures)** across **32 test files**, with **566 assertions (`expect()`)**.
 - **Strict typecheck:** `tsc --noEmit` passed with 0 errors.
-- **Production build:** `bun build src/cli.ts -> dist/cli.js` (148.84 KB).
+- **Production build:** `bun build src/cli.ts -> dist/cli.js` (149.48 KB).
 
 ### Key Regression Suites Verified:
 | Test File | Key Scenarios Verified |
 | :--- | :--- |
-| `src/ui/basic/workspace-chrome.test.ts` | Framed composer as primary writing surface; native work modes with English labels and matching semantic colors; preservation of pasted newlines; narrow and wide viewport fit; rich Markdown rendering; condensed single-line status bar; compact project identity below chat; distinct semantic colors for path, branch, and Git changes. |
+| `src/ui/basic/workspace-chrome.test.ts` | Framed composer as primary writing surface; native work modes with English labels and matching semantic colors; preservation of pasted newlines; narrow and wide viewport fit; rich Markdown rendering; condensed single-line status bar; compact project identity below chat; distinct semantic colors for path, branch, and Git changes; right-edge pinning of `v1.0.0` with protective truncation. |
 | `src/ui/basic/sidebar.test.ts` | Usage refresh callable without rendering a sidebar button; connected sidebar displays real telemetry and hides fabricated data; grouping of session, context, and provider usage; strict exclusion of internal Nimbus Quill bucket; disconnected sidebar hides stale engine details; per-window Shell RAM display without repeating project identity; delegation of project status to the footer. |
 | `src/ui/basic/shell-state.test.ts` | Disconnecting clears engine details while preserving no stale usage; connected state exposes only Shell-owned properties; preserved Shell RAM measurement without inventing engine RAM. |
-| `src/ui/basic/status-bar.ts` (tested) | Home-relative path formatting (`homeRelativePath`); Git branch and change calculations with semantic colors (cyan for clean branch, amber for modifications). |
+| `src/ui/basic/status-bar.ts` (tested) | Home-relative path formatting (`homeRelativePath`); Git branch and change calculations with semantic colors; right-pinned `v1.0.0` badge. |
+| `tests/integration/release-bundle.test.ts` | Standalone bundle generation outside the repository, installation with `scripts/install.sh`, and isolated verification of `forge614-shell 1.0.0`. |
 | `src/engines/codex/skills.test.ts` | Codex skill discovery reading named `SKILL.md` files from project `.agents/skills`; discovery of skills installed through plugins (`.codex/plugins/cache`). |
 | `src/engines/codex/session.test.ts` | Manual quota refresh reading account limits without starting a model turn; local logout and reconnect re-using untouched accounts; visual state cleanup; applying strictly allowed app-server modes; streaming turns and respecting denied permissions. |
 | `src/engines/claude/session.test.ts` | Applying selected native permission mode to the next turn; reading context summary before closing stream; locking concurrent writers; denied and cancelled tools cannot become approvals. |
@@ -310,4 +314,4 @@ To maintain technical integrity and avoid overpromising:
 5. **Deferred Full Interface:**
    - Advanced multi-tabbing, visual worktree management, and multi-window workspace features remain outside the scope of this delivery and remain disabled in the startup picker.
 6. **Live Production Authentication:**
-   - The 122 automated tests thoroughly verify contracts and state machines through mocks and headless execution; live commercial tokens have not been manually validated across every operating system (macOS, Windows, Linux).
+   - The 124 automated tests thoroughly verify contracts and state machines through mocks and headless execution; live commercial tokens have not been manually validated across every operating system (macOS, Windows, Linux). See [06-release-1.0.0-bundle-installer.md](06-release-1.0.0-bundle-installer.md) for installer packaging details.

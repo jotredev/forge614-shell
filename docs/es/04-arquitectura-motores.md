@@ -229,6 +229,7 @@ tests/
 ├── architecture/
 │   └── layers.test.ts                # Fronteras entre capas y propiedad de session.ts
 ├── integration/
+│   ├── release-bundle.test.ts        # Instalación aislada de bundle tarball y reporte de versión
 │   └── runtime.test.ts               # Integración real con subproceso Pi
 └── support/
     └── rpc-fixture.ts
@@ -242,11 +243,11 @@ bun run check
 ```
 
 - **Typecheck estricto:** `tsc --noEmit` completado sin errores.
-- **Pruebas automatizadas:** **122 pruebas superadas en 31 archivos** (0 fallos, 559 aserciones `expect()`).
-- **Compilación de producción:** `dist/cli.js` generado correctamente (148.84 KB).
+- **Pruebas automatizadas:** **124 pruebas superadas en 32 archivos** (0 fallos, 566 aserciones `expect()`).
+- **Compilación de producción:** `dist/cli.js` generado correctamente (149.48 KB).
 
 > [!WARNING]
-> **Límite de verificación:** Estas 122 pruebas automatizadas validan con rigor los contratos lógicos, máquinas de estado, desconexión local, scroll independiente, refresco de cuotas sin prompt, buffers y dobles de transporte RPC. **NO representan una validación manual completa con cuentas comerciales reales ni en todos los sistemas operativos (Windows, Linux)**. Consultar [05-interfaz-basic-panel-cuotas.md](05-interfaz-basic-panel-cuotas.md) para detalles exhaustivos de la interfaz y panel contextual.
+> **Límite de verificación:** Estas 124 pruebas automatizadas validan con rigor los contratos lógicos, máquinas de estado, desconexión local, scroll independiente, refresco de cuotas sin prompt, buffers, dobles de transporte RPC y empaquetado del release 1.0.0. **NO representan una validación manual completa con cuentas comerciales reales ni en todos los sistemas operativos (Windows, Linux)**. Consultar [05-interfaz-basic-panel-cuotas.md](05-interfaz-basic-panel-cuotas.md) y [06-preparacion-release-1.0.0-instalador.md](06-preparacion-release-1.0.0-instalador.md) para especificaciones detalladas.
 
 ---
 

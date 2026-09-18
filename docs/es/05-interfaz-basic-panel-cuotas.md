@@ -1,8 +1,8 @@
 # 05 — Interfaz Basic, panel lateral y cuotas
 
-2026-09-17 · Etapa 02: implementación del entorno base (en curso) · Revisión documental: 2 · [English](../en/05-basic-ui-sidebar-quotas.md) · [Índice](../../README.md)
+2026-09-18 · Etapa 02: implementación del entorno base (en curso) · Revisión documental: 3 · [English](../en/05-basic-ui-sidebar-quotas.md) · [Índice](../../README.md)
 
-Este documento detalla la implementación de la **interfaz visual Basic**, el **panel contextual lateral**, la **barra de estado inferior con identidad de proyecto**, el **sistema de comandos agrupados y selección por teclado**, el **descubrimiento de habilidades nativas en Codex (`$`)**, los **modos de trabajo conmutable (`Shift+Tab`)**, el **control de scroll independiente**, la **consulta no invasiva de cuotas (`/refresh`)** y la calidad garantizada mediante **122 pruebas automatizadas en 31 archivos** en Forge614-Shell.
+Este documento detalla la implementación de la **interfaz visual Basic**, el **panel contextual lateral**, la **barra de estado inferior con identidad de proyecto y fijación de versión (`v1.0.0`)**, el **sistema de comandos agrupados y selección por teclado**, el **descubrimiento de habilidades nativas en Codex (`$`)**, los **modos de trabajo conmutable (`Shift+Tab`)**, el **control de scroll independiente**, la **consulta no invasiva de cuotas (`/refresh`)** y la calidad garantizada mediante **124 pruebas automatizadas en 32 archivos** en Forge614-Shell.
 
 ---
 
@@ -123,22 +123,25 @@ El antiguo botón interactivo `↻ Refresh · /refresh` que se mostraba en el si
 
 ## 4. Barra de Estado Inferior (`ShellStatusBar`)
 
-La barra de estado inferior (`status-bar.ts`) se ubica en el pie de la terminal, debajo del área de chat, condensando en una única línea horizontal la identidad de la sesión y el estado del repositorio:
+La barra de estado inferior (`status-bar.ts`) se ubica en el pie de la terminal, debajo del área de chat, condensando en una única línea horizontal la identidad de la sesión, el estado del repositorio y la versión fija de producto:
 
 ```
-F614 · Claude Code · claude-3-7-sonnet · ctx 18% · ~/Desktop/forge614-shell · main · Clean
+F614 · Claude Code · <model> · ~/project · main · 3 changes             v1.0.0
 ```
 
 ### Elementos y colores semánticos:
 1. **Identificador del Shell:** Prefijo `F614` en acento cian (`accent`).
 2. **Telemetría condensada:** Proveedor, modelo activo, nivel de razonamiento y porcentaje de ocupación de contexto (`ctx XX%`), visibles únicamente cuando están confirmados.
 3. **Identidad del proyecto:**
-   - **Ruta compacta:** La ruta de trabajo (`cwd`) se presenta en formato relativo al directorio de usuario mediante `homeRelativePath` (e.g. `~/Desktop/forge614-shell`) en color gris atenuado (`muted`).
+   - **Ruta compacta:** La ruta de trabajo (`cwd`) se presenta en formato relativo al directorio de usuario mediante `homeRelativePath` (e.g. `~/project`) en color gris atenuado (`muted`).
    - **Rama Git:** Nombre de la rama activa en cian (`accent`, e.g. `main` o `Detached HEAD`), consultada de forma no bloqueante (`GIT_OPTIONAL_LOCKS=0`).
    - **Estado de cambios:**
      - Si el árbol de trabajo está limpio: `Clean` en cian (`accent`).
-     - Si existen archivos modificados o sin seguimiento: `X changes` (e.g. `7 changes`) en ámbar de advertencia (`warning`).
+     - Si existen archivos modificados o sin seguimiento: `X changes` (e.g. `3 changes`) en ámbar de advertencia (`warning`).
    - **Directorios sin Git:** Si Git no está instalado o la carpeta no es un repositorio, la sección de rama y cambios se omite limpiamente sin imprimir mensajes de error ficticios.
+4. **Fijación de versión en extremo derecho (`v1.0.0`):**
+   - La etiqueta visible `v1.0.0` se renderiza en gris atenuado (`muted`) anclada de forma fija al borde derecho de la fila.
+   - **Truncamiento protector:** En terminales con ancho reducido, la telemetría del lado izquierdo se compacta y trunca con elipsis (`…`) para asegurar que la versión de producto permanezca visible y sin cortes a la derecha.
 
 ---
 
@@ -274,17 +277,18 @@ Forge614-Shell estandariza la capacidad de actualización manual de consumo:
 El proyecto mantiene la separación estricta en capas (UI, Aplicación, Motores e Infraestructura) con **pruebas coubicadas (*colocated tests*)**.
 
 ### Resumen de la suite de verificación automatizada (`bun run check`):
-- **122 pruebas pasando (0 fallos)** en **31 archivos de prueba**, con **559 aserciones (`expect()`)**.
+- **124 pruebas pasando (0 fallos)** en **32 archivos de prueba**, con **566 aserciones (`expect()`)**.
 - **Typecheck estricto:** `tsc --noEmit` superado sin advertencias ni tipos inseguros.
-- **Build de producción:** `bun build src/cli.ts -> dist/cli.js` (148.84 KB).
+- **Build de producción:** `bun build src/cli.ts -> dist/cli.js` (149.48 KB).
 
 ### Principales pruebas de regresión verificadas:
 | Archivo de Test | Casos Clave Verificados |
 | :--- | :--- |
-| `src/ui/basic/workspace-chrome.test.ts` | Compositor enmarcado como superficie de escritura; modos de trabajo nativos con etiquetas en inglés y colores semánticos correspondientes; preservación de saltos de línea y adaptación a terminales estrechas y anchas; renderizado de Markdown enriquecido; status bar compacta en una sola línea; identidad de proyecto bajo el chat; colores semánticos de ruta, rama y cambios Git. |
+| `src/ui/basic/workspace-chrome.test.ts` | Compositor enmarcado como superficie de escritura; modos de trabajo nativos con etiquetas en inglés y colores semánticos correspondientes; preservación de saltos de línea y adaptación a terminales estrechas y anchas; renderizado de Markdown enriquecido; status bar compacta en una sola línea; identidad de proyecto bajo el chat; colores semánticos de ruta, rama y cambios Git; fijación de versión `v1.0.0` a la derecha con truncamiento protector. |
 | `src/ui/basic/sidebar.test.ts` | El refresco de cuotas es invocable sin renderizar un botón en el sidebar; sidebar conectado muestra telemetría real y oculta datos inventados; agrupación de sesión, contexto y cuotas; exclusión estricta de la cubeta interna Nimbus Quill; sidebar desconectado oculta datos del motor anterior; visualización de RAM de Shell sin repetir identidad de proyecto; delegación del estado de proyecto al pie de página. |
 | `src/ui/basic/shell-state.test.ts` | Desconexión limpia detalles del motor en memoria; estado conectado expone únicamente datos propiedad de Shell; conservación de memoria RAM de Shell medida sin inventar memoria del motor. |
-| `src/ui/basic/status-bar.ts` (en tests) | Formato relativo de ruta (`homeRelativePath`); cálculo de cambios y rama Git con colores semánticos (cian para rama limpia, ámbar para modificaciones). |
+| `src/ui/basic/status-bar.ts` (en tests) | Formato relativo de ruta (`homeRelativePath`); cálculo de cambios y rama Git con colores semánticos; fijación de `v1.0.0` al extremo derecho. |
+| `tests/integration/release-bundle.test.ts` | Creación de bundle autónomo fuera del repositorio, instalación con `scripts/install.sh` y reporte exacto de versión `forge614-shell 1.0.0`. |
 | `src/engines/codex/skills.test.ts` | Descubrimiento de habilidades Codex mediante ficheros `SKILL.md` con nombre y descripción en `.agents/skills` de proyecto; descubrimiento de habilidades instaladas a través de plugins (`.codex/plugins/cache`). |
 | `src/engines/codex/session.test.ts` | Refresco manual de cuotas sin iniciar turno; logout local y reconexión reutilizando cuenta intacta; limpieza de telemetría visual tras logout; aplicación estricta de modos permitidos por el app-server; streaming de turnos y respeto a permisos denegados. |
 | `src/engines/claude/session.test.ts` | Aplicación del modo de permisos nativo al turno siguiente; lectura de resumen de contexto antes del cierre del canal; bloqueo de escritores concurrentes; herramientas denegadas y canceladas no se convierten en aprobaciones. |
@@ -310,4 +314,4 @@ Para mantener la honestidad técnica y delimitar con precisión el estado actual
 5. **Interfaz Full diferida:**
    - La interfaz avanzada con pestañas múltiples, gestor visual de worktrees y soporte multi-ventana estilo IDE permanece fuera del alcance de esta entrega y se mantiene deshabilitada en el selector de arranque.
 6. **Validación en entornos reales:**
-   - Las 122 pruebas automatizadas garantizan exhaustivamente los contratos y máquinas de estado mediante mocks rigurosos y ejecución headless; no se han consumido tokens comerciales en vivo en todos los sistemas operativos (macOS, Windows, Linux).
+   - Las 124 pruebas automatizadas garantizan exhaustivamente los contratos y máquinas de estado mediante mocks rigurosos y ejecución headless; no se han consumido tokens comerciales en vivo en todos los sistemas operativos (macOS, Windows, Linux). Consultar [06-preparacion-release-1.0.0-instalador.md](06-preparacion-release-1.0.0-instalador.md) para detalles del empaquetado del instalador.
