@@ -1,349 +1,286 @@
 # 00 — Installation and local release test
 
-2026-09-18 · Stage 02: step-by-step beginner guide for macOS and Linux · [Español](../es/00-instalacion-y-prueba-local-release.md) · [Index](../../README.md) · [Technical bundle details](06-release-1.0.0-bundle-installer.md)
+2026-09-18 · Stage 02: collaborator guide for macOS and Linux · Revision: 4 · [Español](../es/00-instalacion-y-prueba-local-release.md) · [Index](../../README.md) · [Technical bundle details](06-release-1.0.0-bundle-installer.md)
 
-This guide walks you through, step by step from scratch on **macOS or Linux**, how to build the Forge614 Shell release archive and test its installer inside an isolated folder on your computer—no prior experience with terminals, Git repositories, or environment variables required. The commands are the same on both systems; macOS opening instructions use Spotlight, while Linux users open their usual Terminal application.
-
-> [!IMPORTANT]
-> **Scope notice:** This guide documents **only the local test** of the installer on your own machine. **It is NOT yet the installation flow for external users and NOT yet a public download flow.** There are currently no public download links or remote installation commands.
+This guide provides a comprehensive, step-by-step walkthrough for individuals **starting from zero with no technical or command-line background**. It details the definitive installation workflow of **Forge614 Shell** for authorized collaborators of a private repository on **macOS or Linux**, using release **`1.0.1`** (`Forge614 Shell v1.0.1`) as the active reference version.
 
 ---
 
-## 1. What this guide is for
+## Requirements
 
-When a developer builds software, the program typically runs directly inside the project folder where the source code was written. However, an end user should not need to download the developer's source code folder just to run the program.
+Before starting, ensure you have the following ready:
 
-This guide verifies one essential question: **can Forge614 Shell be installed and launched outside its project folder as a standalone application, without relying on the source repository?**
-
-To perform this test:
-- **Do not open Orca or Forge614 Shell first.**
-- **First open the standard macOS Terminal application.**
-
----
-
-## 2. What is and is not being tested
-
-To prevent confusion, we strictly distinguish three stages of distribution:
-
-1. **Current local installer test (What we are doing today):** We build a standalone archive on your machine and confirm that the installer script unpacks it, automatically configures your shell profile, and prepares it for execution in an isolated test folder. **This is our base technical verification.**
-2. **Private collaborator installation through GitHub Releases:** Team members invited as collaborators to the private repository can download the package (`.tar.gz`), its checksum (`.sha256`), and the installer (`install.sh`) directly from GitHub Release Assets, without needing the source repository, Git, GitHub CLI, or Bun installed.
-3. **Public installation through a hosted installer (In the future):** Anyone will be able to install the program with a single terminal command from the internet or via a website (`forge614.dev`). *(Not yet available).*
-
-### What is explicitly NOT available yet:
-- No remote `curl ... | bash` installation command.
-- No hosted installer on `forge614.dev`.
-- No in-app `/update` command inside the chat composer.
-- No public npm package (`npm install -g forge614-shell` does not exist).
-- No Windows PowerShell installer (`install.ps1`). Windows is explicitly not supported yet.
-- No automatic background update mechanisms.
+- **macOS or Linux:** Compatible operating system (commands are identical on both platforms; macOS uses the standard Terminal app, and Linux uses any standard terminal emulator).
+- **Terminal:** The built-in command-line application on your computer.
+- **Bash:** The standard shell scripting interpreter present in macOS and Linux.
+- **Compatible Node.js installed:** Requires Node.js version `>=22.19.0`.
+- **GitHub account with accepted access to the private repository:** Your GitHub account must have received and accepted the invitation as a collaborator on the private Forge614 Shell repository.
+- **Internet access:** To log in to GitHub and download the release package assets.
+- **One or more AI CLIs installed and authenticated:** Depending on which AI engines you plan to use (e.g., Claude Code, OpenAI Codex, Google Gemini CLI, or Antigravity CLI).
 
 ---
 
-## 3. Before starting
+## What collaborators cannot do yet
 
-### 3.1 Opening macOS Terminal using Spotlight
-1. On your Mac keyboard, press **Command (⌘)** and the **Spacebar** simultaneously. The Spotlight search bar will appear in the center of your screen.
-2. Type: `Terminal`
-3. Press **Enter**. A window will open with a blinking cursor: this is your command line.
+To prevent confusion and set precise expectations, keep in mind what is not currently available:
 
-### 3.2 What a command is and how to run it
-A **command** is a line of text that instructs your computer to perform an action.
-- To use the commands in this guide: highlight the text in each gray code block, copy it (**Command + C**), click on the Terminal window, and paste it (**Command + V**).
-- **Run one command at a time.**
-- After pasting each command, press **Enter** to execute it.
+- **People without repository access cannot download or install:** Because the repository is private, uninvited users cannot access the code, release pages, or assets.
+- **Windows is not supported yet:** There is no Windows PowerShell installer script (`install.ps1`). Support is currently limited to macOS and Linux using Bash.
+- **No public installer exists:** There are no public web downloads or hosted endpoints on the `forge614.dev` domain.
+- **No automatic updates exist:** The application does not poll or download updates in the background, and there is no in-app `/update` command.
+- **No installation via npm or curl exists:** Commands like `npm install -g forge614-shell` and pipe commands like `curl -fsSL ... | bash` do not exist.
 
-### 3.3 Verifying required tools
-Before packaging, we need to make sure your Mac has **Node.js** and **Bun** installed:
+---
 
-Run the first command:
+## Definitive Installation Workflow for Authorized Collaborators
+
+Follow these 15 steps in exact sequential order. No prior coding experience is needed.
+
+### Step 1: Accept the private repository invitation
+Ensure your GitHub account has been invited as a collaborator to the private Forge614 Shell repository and that you have clicked **Accept invitation** from the email notification or your GitHub notification inbox.
+
+### Step 2: Log in to GitHub
+Open your preferred web browser (Safari, Chrome, Firefox, etc.) and log in to [github.com](https://github.com) using the account that was granted access.
+
+### Step 3: Open the private repository and navigate to Releases
+1. In your browser's address bar, navigate to the private repository URL:
+   `https://github.com/<owner>/forge614-shell`
+2. In the right-hand sidebar of the main repository page, click on **Releases** (or navigate directly to `/releases`).
+
+### Step 4: Open the latest published release
+Locate the most recent published release, titled:
+```text
+Forge614 Shell v1.0.1
+```
+*(Linked to the pure numeric Git tag `1.0.1`). Click on the title to open the release details page.*
+
+### Step 5: Download exactly the three Assets
+Scroll to the bottom of the release notes and expand the **Assets** section. Download exactly these **3 files** to your computer:
+
+1. `forge614-shell-1.0.1.tar.gz`: The pre-bundled application archive.
+2. `forge614-shell-1.0.1.tar.gz.sha256`: The cryptographic checksum file to verify download integrity.
+3. `install.sh`: The automated installer script.
+
+> [!NOTE]
+> Save all three files directly into your standard **Downloads** folder (`~/Downloads`). Ignore the additional *Source code (zip)* and *Source code (tar.gz)* files; those contain raw development code that you do not need.
+
+### Step 6: Open the Terminal application
+- **On macOS:** Press **Command (⌘) + Spacebar** simultaneously to open Spotlight search. Type `Terminal` and press **Enter**. A command-line window will open.
+- **On Linux:** Open the **Terminal** app from your system application launcher or press **Ctrl + Alt + T**.
+
+### Step 7: Check that Node.js is installed
+Forge614 Shell requires Node.js to execute. In your Terminal window, type or paste the following command and press **Enter**:
+
 ```bash
 node --version
 ```
 
-Run the second command:
-```bash
-bun --version
-```
+- **What does a correct response mean?**
+  You will see text starting with a `v` followed by three numbers separated by periods, for example:
+  `v22.19.0`, `v22.19.1`, or `v23.x`.
+  If the reported number is `v22.19.0` or higher, your machine is ready to proceed.
+- **What to do if `command not found` or an older version appears?**
+  - If Terminal responds with `command not found`, Node.js is not installed on your system.
+  - If it prints an older version (such as `v18.x` or `v20.x`), your version is out of date.
+  - **Required Action:** Stop and install or update Node.js before continuing. Go to [nodejs.org](https://nodejs.org), download the official installer recommended for your operating system, and run it. Once installed, quit Terminal, open a fresh Terminal window, and run `node --version` again until a compatible version is reported.
 
-- **Node.js version check:** You should see a version string starting with `v22.19.0` or newer (for instance, `v22.19.1` or `v23.x`). If your version is older, stop here and update Node.js before continuing: the installed application requires that version even though the current installer checks only that `node` exists.
-- **If you see `"command not found"`:**
-  - If Node.js is missing: download and install it from the official website: [nodejs.org](https://nodejs.org).
-  - If Bun is missing: follow the official instructions on their website: [bun.sh](https://bun.sh).
-
----
-
-## 4. Create the release archive
-
-To test the installer, we first build the standalone archive for version `1.0.0`.
-
-1. Navigate to the project folder. If your repository is located on your Desktop, run:
-```bash
-cd ~/Desktop/forge614-shell
-```
-*(If your repository is stored in another location, replace `~/Desktop/forge614-shell` with your actual directory path).*
-
-2. Generate the release archive:
-```bash
-bun run bundle:release
-```
-
-### What just happened?
-- The build script bundled the application into an optimized standalone executable and created a directory named `dist/release/` inside the project.
-- Inside that directory, you will find two files:
-  - `forge614-shell-1.0.0.tar.gz`: The package containing the compiled program, metadata, and runtime extensions. It excludes the heavy development `node_modules` directory, but the target machine still needs Node.js. This is the exact archive that will eventually be distributed to users.
-  - `forge614-shell-1.0.0.tar.gz.sha256`: A SHA-256 checksum for detecting accidental corruption of the archive after download.
-
----
-
-## 5. Safe isolated installation test
-
-Now we will test installing Forge614 Shell into an isolated test folder (`.forge614-test`) inside your user home directory. This ensures nothing in your system is modified.
-
-Run this exact command (all on a single line):
+### Step 8: Change directory into Downloads
+In your Terminal window, run the following command and press **Enter**:
 
 ```bash
-FORGE614_HOME="$HOME/.forge614-test" bash scripts/install.sh --archive "$PWD/dist/release/forge614-shell-1.0.0.tar.gz"
+cd ~/Downloads
 ```
 
-### Explaining every part of the command:
-- `FORGE614_HOME="$HOME/.forge614-test"`: Instructs the installer: *"Install into a temporary test directory named `.forge614-test` in my home folder, rather than the default location"*.
-- `bash`: The macOS system program that runs installation scripts.
-- `scripts/install.sh`: The installer script that extracts files and validates the setup.
-- `--archive`: The flag indicating we are passing a path to a `.tar.gz` package.
-- `"$PWD/dist/release/forge614-shell-1.0.0.tar.gz"`: The absolute path to the archive created in step 4 (`$PWD` means *"the directory I am currently in"*).
+*(The `cd` command stands for "change directory", and `~/Downloads` points Terminal directly to your Downloads folder where the three downloaded files reside).*
 
-### Expected output:
-If the installation succeeded, Terminal will display:
+### Step 9: List files to verify their presence
+Run the following command and press **Enter**:
+
+```bash
+ls
+```
+
+Inspect the output list in Terminal. Visually verify that all three files are listed:
+- `forge614-shell-1.0.1.tar.gz`
+- `forge614-shell-1.0.1.tar.gz.sha256`
+- `install.sh`
+
+### Step 10: Verify the cryptographic integrity of the archive
+Before installing, verify that the downloaded archive was downloaded completely without corruption or missing bytes. Run this command:
+
+```bash
+shasum -a 256 -c forge614-shell-1.0.1.tar.gz.sha256
+```
+
+- **Correct and expected result:**
+  ```text
+  forge614-shell-1.0.1.tar.gz: OK
+  ```
+- **What does this mean?** Your computer computed the mathematical fingerprint of the downloaded file and confirmed that it matches the official cryptographic hash generated by the development team.
+- If it reports `FAILED` or shows an error, the download was interrupted. Delete the file from `~/Downloads`, download it again from the GitHub Releases page, and repeat the command.
+
+### Step 11: Run the installer
+Once cryptographic integrity is verified, run the installation script pointing to the archive:
+
+```bash
+bash install.sh --archive forge614-shell-1.0.1.tar.gz
+```
+
+Press **Enter**. The script will unpack the package and configure your profile, outputting:
+
 ```text
-Installed Forge614 Shell v1.0.0
-Configured /Users/<user>/.zshrc so forge614-shell is available in new Terminal windows.
+Installed Forge614 Shell v1.0.1
+Configured /Users/<your-user>/.zshrc so forge614-shell is available in new Terminal windows.
 Close and reopen Terminal, then run: forge614-shell
 ```
 
----
+### Step 12: What the installer does automatically (and what you do NOT need to do)
+The automated installer handles all system configuration behind the scenes:
 
-## 6. Verify and launch
+- **Installs into `~/.forge614`:** It extracts the application into an isolated version directory (`~/.forge614/shell/1.0.1/`) and links the active binary into `~/.forge614/bin/forge614-shell`.
+- **Automatically configures the `forge614-shell` command:** It detects your shell profile (`~/.zshrc` on macOS or `~/.bashrc` on Linux) and injects the `PATH` variable idempotently (never creating duplicates upon reinstalling).
+- **Does NOT require Git:** You do not need Git installed on your computer.
+- **Does NOT require GitHub CLI (`gh`):** You do not need command-line GitHub tools.
+- **Does NOT require Bun:** The bundled release runs on standard Node.js without needing Bun.
+- **Does NOT require cloning the repository:** You do not need to download development source code.
+- **Does NOT require editing PATH or copying `export PATH=...`:** The installer configured your profile for you; you do not need to manually edit shell configuration files.
 
-### 6.1 Check the installed version
-Ask the newly installed binary to report its version:
+### Step 13: Close Terminal completely, open a new window, and verify
+Existing terminal windows cannot automatically absorb environment changes applied by child scripts. Therefore:
+
+1. **Quit the Terminal application completely** (on macOS press **Command + Q**; on Linux close the window).
+2. **Open a fresh Terminal window.**
+3. Verify that the command is available by running:
 
 ```bash
-~/.forge614-test/bin/forge614-shell --version
+forge614-shell --version
 ```
 
-**Expected exact output:**
-```text
-forge614-shell 1.0.0
-```
-
-### 6.2 Launch the installed application
-Now launch the interactive terminal interface from the isolated installation:
-
-```bash
-~/.forge614-test/bin/forge614-shell
-```
-
-### What you should observe:
-- The Forge614 Shell terminal interface will start, prompting you to choose an interface mode and connected engine.
-- **Look at the bottom-right corner of the terminal (the footer row below the chat):** you will see the visible version label:
+- **Expected output:**
   ```text
-  v1.0.0
+  forge614-shell 1.0.1
   ```
-- To exit the program, type `/quit` and press **Enter**, or press **Control + C**.
 
-**What does this prove?** This proves conclusively that Forge614 Shell was successfully unpacked into a separate filesystem location and runs as a standalone program without relying on the development repository.
+### Step 14: Launch Forge614 Shell
+To start the workspace, type in Terminal and press **Enter**:
+
+```bash
+forge614-shell
+```
+
+- An interactive menu will appear prompting you to choose the visual interface (select **Basic**) and your preferred AI engine.
+- **Look at the far-right edge of the bottom status bar:** You will clearly see the version badge:
+  ```text
+  v1.0.1
+  ```
+- To exit the program at any time, type `/quit` and press **Enter**, or press **Control + C**.
+
+### Step 15: Required pre-authentication of AI tools
+> [!IMPORTANT]
+> **Forge614 Shell relies on your existing, local AI sessions:**
+> Forge614 Shell is a unified cockpit and terminal workspace for AI programming, but **it does not include bundled AI accounts, subscriptions, or pre-configured API keys**.
+>
+> It connects exclusively to the AI CLIs and accounts that **you already have installed and authenticated locally on your computer**:
+> - **For Claude Code:** You must have the official Claude Code CLI (`claude`) installed on your computer and be actively signed in (`claude login` or web browser OAuth) with an active Anthropic plan (Claude Pro or Claude Max).
+> - **For OpenAI Codex:** You must have the Codex CLI installed and signed in to your ChatGPT / OpenAI account.
+> - **For Google Gemini CLI / Antigravity CLI:** You must have completed the Google account authentication flow on your machine.
+>
+> If you select an AI engine whose CLI is not installed or whose login session has expired, Forge614 Shell will display a helpful message indicating that you must install or sign in to that tool before sending prompts.
 
 ---
 
-### 7. Normal installation and collaborator workflow
+## Automatic PATH Configuration (Zero Manual Steps)
 
-### 7.1 Local normal installation (Optional after validating isolated test)
+Unlike traditional guides requiring manual shell configuration, Forge614 Shell **requires no manual PATH exports or profile editing**:
 
-> [!NOTE]
-> This step is **optional**. Only proceed if the isolated test in step 6 succeeded and you wish to have Forge614 Shell installed in its standard user directory (`~/.forge614/`).
-
-1. Remove the test override variable:
-```bash
-unset FORGE614_HOME
-```
-
-2. Ensure you are in the project folder:
-```bash
-cd ~/Desktop/forge614-shell
-```
-
-3. Run the standard installer:
-```bash
-bash scripts/install.sh --archive "$PWD/dist/release/forge614-shell-1.0.0.tar.gz"
-```
-
-The application is now installed at `~/.forge614/bin/forge614-shell` and your shell profile is automatically configured.
-
-### 7.2 Collaborator installation workflow (Direct download from GitHub Releases)
-
-If you are an invited collaborator on the private repository without access to the source code, Git, GitHub CLI, or Bun, here is the complete end-to-end workflow:
-
-1. **Download the three release assets from GitHub Releases:**
-   Log in to GitHub with your authorized account, open the repository Releases page, and under the **Assets** section of the desired release (`v1.0.0` or `v1.0.1`), download these **3 files** to your Downloads folder (`~/Downloads`):
-   - `forge614-shell-1.0.0.tar.gz` (the application bundle)
-   - `forge614-shell-1.0.0.tar.gz.sha256` (cryptographic checksum file)
-   - `install.sh` (the installation helper script)
-
-2. **Open Terminal and navigate to Downloads:**
-   ```bash
-   cd ~/Downloads
-   ```
-
-3. **Verify archive integrity:**
-   Verify that the archive was not corrupted or truncated during download:
-   ```bash
-   shasum -a 256 -c forge614-shell-1.0.0.tar.gz.sha256
-   ```
-   **Expected output:**
-   ```text
-   forge614-shell-1.0.0.tar.gz: OK
-   ```
-
-4. **Run the installer:**
-   ```bash
-   bash install.sh --archive ./forge614-shell-1.0.0.tar.gz
-   ```
-
-5. **Expected output:**
-   The installer extracts files to `~/.forge614/shell/1.0.0/`, creates the active launcher `~/.forge614/bin/forge614-shell`, and automatically configures your shell profile (`~/.zshrc` on macOS or `~/.bashrc` on Linux):
-   ```text
-   Installed Forge614 Shell v1.0.0
-   Configured /Users/<user>/.zshrc so forge614-shell is available in new Terminal windows.
-   Close and reopen Terminal, then run: forge614-shell
-   ```
-
-6. **Launch:**
-   **Close the current Terminal window**, open a new Terminal window, and simply run:
-   ```bash
-   forge614-shell
-   ```
-
----
-
-## 8. Automatic PATH configuration (Zero manual steps)
-
-### No manual PATH commands
-Unlike traditional tools that require copying complex commands or editing hidden dotfiles, **`install.sh` handles environment setup 100% automatically**:
-- You **DO NOT** need to run `export PATH=...`.
-- You **DO NOT** need to edit `~/.zshrc`, `~/.bashrc`, or `~/.profile` manually.
-- You **DO NOT** need deep command-line knowledge.
-
-### How automatic PATH configuration works:
-1. **Shell Detection:** The script inspects your active shell (`$SHELL`):
-   - On **macOS** (where `zsh` is default), it automatically selects `~/.zshrc`.
-   - On **Linux** (where `bash` is default), it automatically selects `~/.bashrc`.
-   - In other Unix-compatible environments, it selects `~/.profile`.
-2. **Idempotent Injection:** It cleanly appends the PATH configuration:
+1. **Intelligent shell detection:**
+   - On macOS, the installer detects `zsh` and automatically updates `~/.zshrc`.
+   - On Linux, it detects `bash` and automatically updates `~/.bashrc`.
+   - On other Unix-compatible environments, it updates `~/.profile`.
+2. **Idempotent safeguard:**
+   Before appending:
    ```bash
    # Forge614 Shell
    export PATH="$HOME/.forge614/bin:$PATH"
    ```
-   If you rerun the installer to reinstall or update, it checks with `grep` and **never duplicates entries**.
-3. **The Only User Step:**
-   Because a running terminal window cannot absorb environment modifications made by an external child process, the only action needed after installation is:
-   - **Close the current Terminal window.**
-   - **Open a brand-new Terminal window.**
-   - Type:
-     ```bash
-     forge614-shell
-     ```
-   To verify that your system recognizes it, run:
-   ```bash
-   forge614-shell --version
-   ```
-   Expected output: `forge614-shell 1.0.0`.
+   The installer uses `grep` to check if the line already exists. If present, it skips adding it again, keeping your configuration file clean.
+3. **Sole user action:**
+   Simply quit Terminal completely and open a new window for the updated configuration to take effect.
 
 ---
 
-## 9. Troubleshooting
+## Troubleshooting Common Issues
 
-### 1. `cd: no such file or directory: ~/Desktop/forge614-shell`
-- **Cause:** The project folder is not located on your Desktop or has a different name.
-- **Fix:** Type `pwd` to check your current directory, or drag the project folder directly from Finder into the Terminal window after typing `cd `.
+### 1. `node: command not found` or version below `22.19.0`
+- **Cause:** Node.js is not installed or an outdated version is present.
+- **Solution:** Visit [nodejs.org](https://nodejs.org), download the official LTS or Current installer for your platform, and complete installation. Reopen Terminal before continuing.
 
-### 2. `bun: command not found`
-- **Cause:** Bun is not installed or not in your terminal's PATH.
-- **Fix:** Only needed if bundling from source (step 4). Install it following [bun.sh](https://bun.sh). Collaborators downloading release archives do not need Bun.
+### 2. `shasum: forge614-shell-1.0.1.tar.gz: FAILED`
+- **Cause:** The archive was corrupted or only partially downloaded by the browser.
+- **Solution:** Navigate to `~/Downloads`, delete `forge614-shell-1.0.1.tar.gz`, re-download it from GitHub Releases, and re-run `shasum -a 256 -c forge614-shell-1.0.1.tar.gz.sha256`.
 
-### 3. `node: command not found`
-- **Cause:** Node.js is not installed on your system.
-- **Fix:** Download and install the recommended version (>= 22.19) from [nodejs.org](https://nodejs.org).
+### 3. `forge614-shell: command not found` after installing
+- **Cause:** You are still using the same Terminal window where the installer was executed.
+- **Solution:** Quit Terminal completely (**Command + Q** on macOS) and open a new window. Run `forge614-shell` again.
 
-### 4. `Forge614 Shell requires Node.js 22.19 or newer`
-- **Cause:** An older version of Node.js is active.
-- **Fix:** Visit [nodejs.org](https://nodejs.org) and install the latest package for your system.
+### 4. `Release archive not found: ...`
+- **Cause:** Terminal is not located in the folder where the files were saved.
+- **Solution:** Run `cd ~/Downloads` followed by `ls` to ensure you are in the correct directory containing the downloaded files.
 
-### 5. `Release archive not found: ...`
-- **Cause:** Packaging was not run before installing, or the downloaded archive is not in the current folder.
-- **Fix:** Verify that `forge614-shell-1.0.0.tar.gz` exists in your current folder by running `ls -la`.
+### 5. `Permission denied` when running `install.sh`
+- **Cause:** You attempted to run `./install.sh` directly without granting executable permissions.
+- **Solution:** Always invoke the script with `bash`:
+  ```bash
+  bash install.sh --archive forge614-shell-1.0.1.tar.gz
+  ```
 
-### 6. `Permission denied`
-- **Cause:** You ran `./scripts/install.sh` directly without execution permissions.
-- **Fix:** Prefix the command with `bash`, as shown throughout this guide: `bash install.sh --archive ...`.
-
-### 7. The command says `forge614-shell: command not found` after install
-- **Cause:** You are still typing in the same Terminal window where the installer ran, so the updated shell profile has not been loaded.
-- **Fix:** Close that Terminal window completely (**Command + Q** or **Command + W**) and open a new Terminal window. Type `forge614-shell` directly.
-
-### 8. I accidentally closed the Terminal window
-- **Fix:** No problem. Re-open Terminal, navigate to the target directory, and resume your step.
-
-### 9. I want to clean up and repeat the isolated test
-- **Fix:** Delete the temporary test folder:
-```bash
-rm -rf ~/.forge614-test
-```
-Then rerun step 5.
+### 6. Authentication errors when launching Claude Code or Codex
+- **Cause:** You have not logged in to the underlying AI tool on your computer.
+- **Solution:** Open a separate terminal window and run the provider's native login command (e.g. `claude login` for Claude Code). Once verified, return to Forge614 Shell.
 
 ---
 
-## 10. Files created by the test
+## Filesystem Layout on Your Machine (`~/.forge614/`)
 
-When the installation completes, it creates the following hierarchy in your user directory:
+After installation, the application resides under your user home directory:
 
 ```text
-~/.forge614-test/ (or ~/.forge614/ for normal install)
+~/.forge614/
 ├── bin/
-│   └── forge614-shell       <- Active symlink (executable launcher)
+│   └── forge614-shell -> ~/.forge614/shell/1.0.1/dist/cli.js   # Active symlink
 └── shell/
-    └── 1.0.0/               <- Isolated version 1.0.0 directory
+    └── 1.0.1/                                                 # Isolated 1.0.1 release directory
         ├── dist/
-        │   └── cli.js       <- Bundled Node.js executable
-        ├── extensions/      <- Runtime environment extensions
-        └── package.json     <- Version metadata manifest
+        │   └── cli.js                                         # Pre-bundled Node.js entry point
+        ├── extensions/                                        # Runtime extension hooks
+        └── package.json                                       # Release 1.0.1 metadata
 ```
-
-- `bin/`: Contains the symlink that macOS/Linux runs when launching `forge614-shell`.
-- `shell/1.0.0/`: Holds the exact files for version 1.0.0. Future updates can install side-by-side in separate version folders without overwriting previous releases.
-- `dist/cli.js`: The unified Forge614 Shell JavaScript bundle ready to execute with Node.js without development compilers.
 
 ---
 
-## 11. Next steps and versioning policy
+## Developer Local Packaging and Verification (Optional)
 
-Now that the installation has been verified on your Mac or Linux machine:
+> [!NOTE]
+> This section is **intended only for repository maintainers or developers** who cloned the full source repository and wish to bundle or test packages locally in a sandbox. Collaborators do not need to run these commands.
 
-### 11.1 Immutable releases and patch policy
-- **Immutability of published releases:** Version `1.0.0` is an already published stable private release on GitHub with attached assets. In accordance with software engineering best practices, **a published release is never modified, replaced, or retagged**.
-- **Publishing patch releases (e.g., `1.0.1`):** Post-release improvements (such as automatic PATH configuration in `install.sh` or future bugfixes) are released as a new semantic patch version (`1.0.1`).
-- **The publishing workflow for `1.0.1` consists of:**
-  1. Update `"version": "1.0.1"` in `package.json`.
-  2. Run the test suite: `bun run check`.
-  3. Package the standalone bundle: `bun run bundle:release` (creates `forge614-shell-1.0.1.tar.gz` and `.sha256`).
-  4. Create numeric Git tag `1.0.1` and push to origin (`git tag 1.0.1 && git push origin 1.0.1`).
-  5. Create and publish GitHub Release visible as `Forge614 Shell v1.0.1` linked to tag `1.0.1` (stable release, not pre-release).
-  6. Attach the 3 assets (`.tar.gz`, `.sha256`, and updated `install.sh`).
+1. **Build the release bundle:**
+   ```bash
+   bun run bundle:release
+   ```
+   Produces `dist/release/forge614-shell-1.0.1.tar.gz` and companion `.sha256`.
+2. **Test in an isolated sandbox (`~/.forge614-test`):**
+   ```bash
+   FORGE614_HOME="$HOME/.forge614-test" bash scripts/install.sh --archive "$PWD/dist/release/forge614-shell-1.0.1.tar.gz"
+   ```
+3. **Verify installed version:**
+   ```bash
+   ~/.forge614-test/bin/forge614-shell --version
+   # Expected output: forge614-shell 1.0.1
+   ```
+4. **Clean up the sandbox:**
+   ```bash
+   rm -rf ~/.forge614-test
+   ```
 
-### 11.2 Collaborator access and platform scope
-- **Private repository:** Only users explicitly added as collaborators to the private GitHub repository can access and download release assets.
-- **No developer tooling required:** Collaborators do not need `git`, GitHub CLI (`gh`), or Bun. They only need Node.js `>=22.19.0`, Terminal, and Bash.
-- **Operating system support:** The current installer supports **macOS and Linux**. Windows **is not yet supported** (requires a PowerShell `install.ps1` script to be implemented in a future milestone).
-- **No false claims:** Public `curl | bash` installation, npm publishing, and automatic background updates are not available yet.
-
-For technical details on the maintainer workflow and bundle architecture, see:
+For detailed information on the packaging pipeline and the maintainer release publishing workflow on GitHub, see:
 👉 [06 — Release 1.0.0 preparation and installer bundle](06-release-1.0.0-bundle-installer.md)

@@ -1,19 +1,19 @@
-# 06 — Release 1.0.0 preparation and installer bundle
+# 06 — Release preparation and installer bundle
 
-2026-09-18 · Stage 02: packaging and local installation · Documentation revision: 3 · [Español](../es/06-preparacion-release-1.0.0-instalador.md) · [Index](../../README.md) · [Practical installation guide](00-installation-and-local-release-test.md)
+2026-09-18 · Stage 02: packaging and local installation · Documentation revision: 4 · [Español](../es/06-preparacion-release-1.0.0-instalador.md) · [Index](../../README.md) · [Practical installation guide](00-installation-and-local-release-test.md)
 
-This document details the preparation of the **Forge614-Shell 1.0.0 local release**: the **versioning conventions and product identity**, the **pinned version display in the status bar (`v1.0.0`)**, the standalone package bundle builder (`scripts/release-bundle.mjs`), the filesystem-based local installer (`scripts/install.sh`), **isolated installation under `~/.forge614/`**, **automatic idempotent PATH configuration in shell profiles**, the **maintainer workflow for creating a private GitHub Release**, the **collaborator download workflow**, integrity guarantees backed by **SHA-256 checksums**, and software quality verified by **124 automated tests across 32 files (567 assertions)**. For the beginner-friendly step-by-step installation guide on macOS, see [00 — Installation and local release test](00-installation-and-local-release-test.md).
+This document details the engineering and preparation of the **packaging and installation** of Forge614-Shell: **versioning conventions and product identity**, **pinned version display in the status bar (`v1.0.1`)**, the standalone package bundle builder (`scripts/release-bundle.mjs`), the filesystem installer with automatic PATH injection (`scripts/install.sh`), **isolated installation under `~/.forge614/`**, the **maintainer workflow for publishing private GitHub Releases**, cryptographic integrity guarantees backed by **SHA-256 checksums**, and software quality verified by **124 automated tests across 32 files (567 assertions)**. For the step-by-step collaborator and beginner guide on macOS/Linux, see [00 — Installation and local release test](00-installation-and-local-release-test.md).
 
 ---
 
 ## 1. The Master Analogy: The Sealed Avionics Crate and Assembly Bay
 
 Consider the delivery and installation of critical aerospace or military avionics equipment:
-- **The Factory Crate (The Standalone Bundle):** High-precision flight computers are never shipped to airfield hangars as loose schematics, nor do they require maintenance engineers to have heavy factory manufacturing equipment (`node_modules` or development compilers). They are delivered sealed inside an airtight, pressurized container (`forge614-shell-1.0.0.tar.gz`), accompanied by a cryptographic security seal (`.sha256`). The crate contains only what is strictly necessary to run: the bundled runtime, package metadata, and required system extensions.
-- **The Isolated Assembly Bay (`~/.forge614/shell/1.0.0/`):** The hangar installation script (`install.sh`) never blindly overwrites active flight instruments. It uncrates the package into an assembly bay reserved exclusively for that exact version. If preflight validation detects missing core files (`package.json` or `cli.js`), the procedure aborts immediately without touching the active aircraft.
-- **The Master Command Switch (`~/.forge614/bin/forge614-shell`):** Once bay 1.0.0 is verified, the installer repoints the main cockpit control link to the new module. Upgrading or rolling back versions consists simply of repointing this master switch.
+- **The Factory Crate (The Standalone Bundle):** High-precision flight computers are never shipped to airfield hangars as loose schematics, nor do they require maintenance engineers to have heavy factory manufacturing equipment (`node_modules` or development compilers). They are delivered sealed inside an airtight, pressurized container (`forge614-shell-1.0.1.tar.gz`), accompanied by a cryptographic security seal (`.sha256`). The crate contains only what is strictly necessary to run: the bundled runtime, package metadata, and required system extensions.
+- **The Isolated Assembly Bay (`~/.forge614/shell/1.0.1/`):** The hangar installation script (`install.sh`) never blindly overwrites active flight instruments. It uncrates the package into an assembly bay reserved exclusively for that exact version. If preflight validation detects missing core files (`package.json` or `cli.js`), the procedure aborts immediately without touching the active aircraft.
+- **The Master Command Switch (`~/.forge614/bin/forge614-shell`):** Once the bay is verified, the installer repoints the main cockpit control link to the new module. Upgrading or rolling back versions consists simply of repointing this master switch.
 - **The Maintenance Test Bench (`FORGE614_HOME`):** When engineers need to test the installation workflow in an isolated sandbox before altering production systems, they direct the process to a temporary test bench without affecting standard user paths.
-- **The Cockpit Instrument Badge (The Status Bar):** In the bottom-right corner of the cockpit instrument panel, the pilot has a permanent, fixed indicator (`v1.0.0`) that remains visible at all times, even when flight path telemetry or engine status fills the rest of the display.
+- **The Cockpit Instrument Badge (The Status Bar):** In the bottom-right corner of the cockpit instrument panel, the pilot has a permanent, fixed indicator (`v1.0.1`) that remains visible at all times, even when flight path telemetry or engine status fills the rest of the display.
 
 ---
 
@@ -21,17 +21,17 @@ Consider the delivery and installation of critical aerospace or military avionic
 
 Forge614-Shell maintains a deliberate technical distinction between package metadata, user-facing UI labels, Git version tags, and GitHub Releases:
 
-| Attribute | Value | Scope and Purpose |
+| Attribute | Reference Value | Scope and Purpose |
 | :--- | :--- | :--- |
-| **Package Version** | `1.0.0` | Specified in `package.json` and parsed by Node.js / Bun runtimes (`metadata.version`). |
-| **Visible UI Label** | `v1.0.0` | Rendered on the far-right edge of the bottom status bar for clear human readability. |
-| **Git Release Tag** | `1.0.0` | Git tag convention strictly **without the `v` prefix** (strict SemVer in the repository). |
-| **GitHub Release** | `Forge614 Shell v1.0.0` | Private web release record and downloadable asset page on GitHub linked to numeric tag `1.0.0`. |
-| **Release Archive Name** | `forge614-shell-1.0.0.tar.gz` | Filename of the packaged standalone distribution archive. |
-| **Publication Status** | **Private release published (`Forge614 Shell v1.0.0`)** | The `1.0.0` source tag is pushed to `origin` and the private web release with its 3 assets has been published on GitHub by the maintainer. Tag `1.0.0` is immutable; any subsequent installer enhancements (such as automatic shell profile injection) will be published in a patch release (`1.0.1`). |
+| **Package Version** | `1.0.1` | Specified in `package.json` and parsed by Node.js / Bun runtimes (`metadata.version`). |
+| **Visible UI Label** | `v1.0.1` | Rendered on the far-right edge of the bottom status bar for clear human readability. |
+| **Git Release Tag** | `1.0.1` | Git tag convention strictly **without the `v` prefix** (strict SemVer in the repository). |
+| **GitHub Release** | `Forge614 Shell v1.0.1` | Private web release record and downloadable asset page on GitHub linked to numeric tag `1.0.1`. |
+| **Release Archive Name** | `forge614-shell-1.0.1.tar.gz` | Filename of the packaged standalone distribution archive. |
+| **Publication Status** | **Private release published (`Forge614 Shell v1.0.1`)** | The `1.0.1` source tag is in `origin` and the private web release with its 3 assets is published on GitHub for authorized collaborators. |
 
 > [!IMPORTANT]
-> **Label Alignment:** The terminal UI displays `v1.0.0` for visual clarity, while Git tags use `1.0.0`. This separation follows industry best practices where user interfaces stylize versions with a leading "v", while package managers and release tags adhere to pure numeric SemVer.
+> **Label Alignment:** The terminal UI displays `v1.0.1` for visual clarity, while Git tags use `1.0.1`. This separation follows industry best practices where user interfaces stylize versions with a leading "v", while package managers and release tags adhere to pure numeric SemVer.
 
 ---
 
@@ -40,16 +40,16 @@ Forge614-Shell maintains a deliberate technical distinction between package meta
 Forge614-Shell displays its version at the bottom edge of the terminal, integrated into the compact footer row below the chat (`status-bar.ts`):
 
 ```text
-F614 · Claude Code · <model> · ~/project · main · 3 changes             v1.0.0
+F614 · Claude Code · <model> · ~/project · main · 3 changes             v1.0.1
 ```
 
 ### Rendering Behavior and Priority:
-1. **Right-Edge Pinning:** The label `v1.0.0` is rendered in muted gray (`muted`), anchored to the far-right boundary of the status bar.
+1. **Right-Edge Pinning:** The label `v1.0.1` is rendered in muted gray (`muted`), anchored to the far-right boundary of the status bar.
 2. **Protective Truncation on Narrow Viewports:**
    - The left side aggregates Shell telemetry (`F614`), connected engine, model, context usage, home-relative project directory (`homeRelativePath`), Git branch, and pending changes.
    - When terminal width is constrained, `ShellStatusBar` computes the remaining space by subtracting the width of the version badge:
      `availableLeft = innerWidth - visibleWidth(release) - 1`
-   - The left side is then truncated with ellipsis (`…`), **guaranteeing that the `v1.0.0` badge is never clipped, hidden, or wrapped to a new line**.
+   - The left side is then truncated with ellipsis (`…`), **guaranteeing that the `v1.0.1` badge is never clipped, hidden, or wrapped to a new line**.
 
 ---
 
@@ -62,16 +62,16 @@ bun run bundle:release
 ```
 
 ### Architecture of the Bundler (`scripts/release-bundle.mjs`):
-1. **Metadata Ingestion:** Reads the version string (`1.0.0`) directly from `package.json`.
+1. **Metadata Ingestion:** Reads the version string (`1.0.1`) directly from `package.json`.
 2. **Runtime Compilation:** Runs `bun build src/cli.ts --target=node --outdir <staging>/dist`, producing an optimized, self-contained Node.js executable.
 3. **Extension and Metadata Ingestion:**
    - Copies `package.json` into the staging root.
    - Copies the `extensions/` directory (required for the legacy Pi bridge and runtime extension hooks).
    - Grants executable permissions (`0o755`) to `dist/cli.js`.
 4. **Archive Packaging:** Compresses the staging directory into a tarball using `tar -czf`:
-   - `dist/release/forge614-shell-1.0.0.tar.gz`
+   - `dist/release/forge614-shell-1.0.1.tar.gz`
 5. **Cryptographic Integrity:** Computes the SHA-256 digest of the archive and generates a companion checksum file:
-   - `dist/release/forge614-shell-1.0.0.tar.gz.sha256`
+   - `dist/release/forge614-shell-1.0.1.tar.gz.sha256`
 6. **Zero Repository Dependency:** The archive does not require cloning the git repository and completely excludes development `node_modules`.
 7. **Runtime Requirement:** Requires Node.js `>=22.19.0` on the target machine.
 
@@ -79,12 +79,12 @@ bun run bundle:release
 
 ## 5. Local Installation Test Flow
 
-The initial installer for Forge614-Shell is intentionally archive-based (`--archive`). Its purpose is to validate the real directory layout, file permissions, and active symlinks on the host operating system before deploying remote distribution mechanisms.
+The installer for Forge614-Shell is intentionally archive-based (`--archive`). Its purpose is to validate the real directory layout, file permissions, and active symlinks on the host operating system before deploying remote distribution mechanisms.
 
 ### 5.1 Running the Installer
 
 ```bash
-bash scripts/install.sh --archive "$PWD/dist/release/forge614-shell-1.0.0.tar.gz"
+bash scripts/install.sh --archive "$PWD/dist/release/forge614-shell-1.0.1.tar.gz"
 ```
 
 ### 5.2 Target Filesystem Hierarchy (`~/.forge614/`)
@@ -94,13 +94,13 @@ By default, the installer populates the following structure under the user's hom
 ```text
 ~/.forge614/
 ├── bin/
-│   └── forge614-shell -> <FORGE614_HOME>/shell/1.0.0/dist/cli.js   # Active symlink
+│   └── forge614-shell -> <FORGE614_HOME>/shell/1.0.1/dist/cli.js   # Active symlink
 └── shell/
-    └── 1.0.0/                                         # Isolated version directory
+    └── 1.0.1/                                                     # Isolated version directory
         ├── dist/
-        │   └── cli.js                                 # Bundled Node.js entry point
-        ├── extensions/                                # Runtime extension hooks
-        └── package.json                               # Release metadata
+        │   └── cli.js                                             # Bundled Node.js entry point
+        ├── extensions/                                            # Runtime extension hooks
+        └── package.json                                           # Release metadata
 ```
 
 ### 5.3 Verifying the Installation
@@ -110,7 +110,7 @@ After running the installer script, verify that the binary executes properly:
 ```bash
 # Check installed version
 ~/.forge614/bin/forge614-shell --version
-# Output: forge614-shell 1.0.0
+# Output: forge614-shell 1.0.1
 
 # Interactive startup
 ~/.forge614/bin/forge614-shell
@@ -137,7 +137,7 @@ The `scripts/install.sh` installer configures your environment completely automa
 For automated testing, CI pipelines, or isolated environments, the `FORGE614_HOME` environment variable overrides the default `~/.forge614` destination:
 
 ```bash
-FORGE614_HOME=/tmp/test-forge614 bash scripts/install.sh --archive dist/release/forge614-shell-1.0.0.tar.gz
+FORGE614_HOME=/tmp/test-forge614 bash scripts/install.sh --archive dist/release/forge614-shell-1.0.1.tar.gz
 ```
 
 ---
@@ -165,7 +165,7 @@ The installer (`scripts/install.sh`) includes defensive mechanisms to ensure res
      2. Runs `scripts/install.sh --archive <archive>` pointing to a temporary `FORGE614_HOME`.
      3. Asserts that the shell profile contains the PATH export without duplicates.
      4. Executes `<temp-home>/bin/forge614-shell --version`.
-     5. Asserts that exit code is `0` and stdout exactly matches `forge614-shell 1.0.0`.
+     5. Asserts that exit code is `0` and stdout exactly matches `forge614-shell 1.0.1`.
 
 ---
 
@@ -191,45 +191,45 @@ To maintain absolute technical integrity and avoid premature assumptions, the fo
 
 > [!NOTE]
 > **Maintainer-Only Workflow:**
-> This section documents the manual steps required by a repository administrator in the GitHub web interface to create a private Release and attach downloadable installation packages. End users and testers do not execute these steps.
+> This section documents the manual steps required by a repository administrator in the GitHub web interface to create a private Release and attach downloadable installation packages. End users and collaborators do not execute these steps.
 
 ### 8.1 Critical Distinction: Git Tag vs. GitHub Release
 
 It is vital to understand the technical boundary between a Git tag and a GitHub Release:
 
-1. **The Git Tag (`1.0.0`):** An immutable reference in Git history pointing to an exact source commit. Pushing a tag to origin (`git push origin 1.0.0`) registers the tag on the Git remote server, **but does NOT automatically create a GitHub Release page or attach downloadable assets**.
-2. **The GitHub Release (`Forge614 Shell v1.0.0`):** A distinct web record on GitHub associated with an existing Git tag. It provides release notes and a downloadable files section (*Assets*). It must be manually drafted and published by a repository maintainer.
-3. **Naming Convention:** The Git tag strictly uses numeric SemVer `1.0.0` (without a `v` prefix), whereas the visible GitHub Release title uses the human-oriented product brand `Forge614 Shell v1.0.0` (with the `v` prefix).
+1. **The Git Tag (`1.0.1`):** An immutable reference in Git history pointing to an exact source commit. Pushing a tag to origin (`git push origin 1.0.1`) registers the tag on the Git remote server, **but does NOT automatically create a GitHub Release page or attach downloadable assets**.
+2. **The GitHub Release (`Forge614 Shell v1.0.1`):** A distinct web record on GitHub associated with an existing Git tag. It provides release notes and a downloadable files section (*Assets*). It must be manually drafted and published by a repository maintainer.
+3. **Naming Convention:** The Git tag strictly uses numeric SemVer `1.0.1` (without a `v` prefix), whereas the visible GitHub Release title uses the human-oriented product brand `Forge614 Shell v1.0.1` (with the `v` prefix).
 4. **Meaning of "Stable":** In this private environment, "stable" denotes a **maintainer-approved normal release** (the *Set as a pre-release* checkbox is left unchecked) intended for internal testing by authorized collaborators. It **does not** imply an automated background update channel or in-app `/update` command.
 
 ### 8.2 Terminology and Naming Conventions Table
 
 | Term | Example | Scope and Technical Meaning |
 | :--- | :--- | :--- |
-| **Package version** | `1.0.0` | Internal product version declared in `package.json` (`metadata.version`). |
-| **UI label** | `v1.0.0` | Visual label pinned to the far right of the bottom status bar (`ShellStatusBar`). |
-| **Git Tag** | `1.0.0` | Immutable source-code commit identifier in Git (strictly numeric, without `v`). |
-| **GitHub Release** | `Forge614 Shell v1.0.0` | Private web release record and downloadable asset page on GitHub. |
+| **Package version** | `1.0.1` | Internal product version declared in `package.json` (`metadata.version`). |
+| **UI label** | `v1.0.1` | Visual label pinned to the far right of the bottom status bar (`ShellStatusBar`). |
+| **Git Tag** | `1.0.1` | Immutable source-code commit identifier in Git (strictly numeric, without `v`). |
+| **GitHub Release** | `Forge614 Shell v1.0.1` | Private web release record and downloadable asset page on GitHub. |
 | **Stable release** | Normal published release (not marked as pre-release) | Maintainer-approved release for internal collaborator testing; does not imply an automated update channel or `/update` command. |
 
 ### 8.3 Step-by-Step GitHub Web Interface Workflow
 
-To create and publish the private GitHub Release from the pushed `1.0.0` tag:
+To create and publish the private GitHub Release from the pushed `1.0.1` tag:
 
 1. **Open the private repository on GitHub in a browser:** Navigate to `https://github.com/<owner>/forge614-shell` while logged into an account with maintainer/admin permissions.
 2. **Navigate to the Releases page:** Click on **Releases** in the right-hand sidebar of the code repository view (or navigate to `/releases`).
 3. **Initiate release creation:** Click **Create a new release** (or **Draft a new release** if no prior release exists).
 4. **Select the existing tag (`Choose a tag`):**
    - Click the **Choose a tag** dropdown menu.
-   - Select the existing tag **`1.0.0`**.
-   - ⚠️ **Strict Rule:** Do NOT type or generate a new tag in this box. **Never create a tag named `v1.0.0`**. The numeric tag `1.0.0` is already pushed and must be chosen directly from the list.
+   - Select the existing tag **`1.0.1`**.
+   - ⚠️ **Strict Rule:** Do NOT type or generate a new tag in this box. **Never create a tag named `v1.0.1`**. The numeric tag `1.0.1` is already pushed and must be chosen directly from the list.
 5. **Set the Release title:** Enter the exact title:
    ```text
-   Forge614 Shell v1.0.0
+   Forge614 Shell v1.0.1
    ```
 6. **Add the release notes:** In the main description box (*Describe this release*), paste this exact markdown text:
    ```markdown
-   Initial private testing release for Forge614 Shell.
+   Testing release for Forge614 Shell.
 
    macOS and Linux local/archive installation only.
    Requires Node.js 22.19.0 or newer.
@@ -238,13 +238,13 @@ To create and publish the private GitHub Release from the pushed `1.0.0` tag:
    ```
 7. **Attach the three release assets:**
    Drag and drop (or browse to upload) exactly the following **3 files**:
-   - `dist/release/forge614-shell-1.0.0.tar.gz`: The installable standalone archive bundle.
-   - `dist/release/forge614-shell-1.0.0.tar.gz.sha256`: Cryptographic checksum file for integrity verification.
+   - `dist/release/forge614-shell-1.0.1.tar.gz`: The installable standalone archive bundle.
+   - `dist/release/forge614-shell-1.0.1.tar.gz.sha256`: Cryptographic checksum file for integrity verification.
    - `scripts/install.sh`: The macOS/Linux installation script.
 8. **Technical justification for each attached file:**
-   - `forge614-shell-1.0.0.tar.gz`: The pre-bundled Forge614 Shell application archive. It lets collaborators install without cloning the Git repository or installing development dependencies (`node_modules`, Bun), but still requires Node.js on the target machine.
-   - `forge614-shell-1.0.0.tar.gz.sha256`: Checksum file containing the SHA-256 digest. It lets a collaborator detect accidental archive corruption after download; it is not a code-signing mechanism by itself.
-   - `install.sh`: The helper installation script for macOS and Linux that handles safe extraction into `~/.forge614/shell/1.0.0/` and repoints the executable symlink `~/.forge614/bin/forge614-shell`.
+   - `forge614-shell-1.0.1.tar.gz`: The pre-bundled Forge614 Shell application archive. It lets collaborators install without cloning the Git repository or installing development dependencies (`node_modules`, Bun), but still requires Node.js on the target machine.
+   - `forge614-shell-1.0.1.tar.gz.sha256`: Checksum file containing the SHA-256 digest. It lets a collaborator detect accidental archive corruption after download; it is not a code-signing mechanism by itself.
+   - `install.sh`: The helper installation script for macOS and Linux that handles safe extraction into `~/.forge614/shell/1.0.1/` and repoints the executable symlink `~/.forge614/bin/forge614-shell`.
 9. **Release settings:**
    - **Do NOT check `Set as a pre-release`**. Leave it unchecked so it is published as a standard, stable release for private testers.
    - Leave `Set as the latest release` checked if prompted.
@@ -257,79 +257,43 @@ To create and publish the private GitHub Release from the pushed `1.0.0` tag:
 ### 8.4 Release Publication Status
 
 The maintainer has completed publication on the GitHub web interface:
-- The private release `Forge614 Shell v1.0.0` is published and linked to immutable tag `1.0.0`.
-- All three assets (`forge614-shell-1.0.0.tar.gz`, `forge614-shell-1.0.0.tar.gz.sha256`, and `install.sh`) are available for download by invited collaborators.
+- The private release `Forge614 Shell v1.0.1` is published and linked to immutable tag `1.0.1`.
+- All three assets (`forge614-shell-1.0.1.tar.gz`, `forge614-shell-1.0.1.tar.gz.sha256`, and `install.sh`) are available for download by invited collaborators.
 
-### 8.5 Collaborator Download and Installation Workflow from GitHub Releases
+### 8.5 Collaborator Download and Installation Workflow
 
-For invited collaborators testing or using Forge614 Shell on macOS or Linux:
+For the comprehensive 15-step walkthrough for authorized collaborators (including system prerequisites, SHA-256 validation, AI engine pre-authentication, and troubleshooting), see directly:
+👉 [00 — Installation and local release test](00-installation-and-local-release-test.md)
 
-1. **Prerequisites:**
-   - Node.js installed (version `>=22.19.0`).
-   - Authorized collaborator access to the private GitHub repository.
-   - Development tools like `git`, `gh`, or `bun` are **not** required on your computer.
-2. **Download Assets:**
-   - Open your browser and navigate to the release page: `https://github.com/<owner>/forge614-shell/releases/tag/1.0.0`
-   - In the **Assets** section, download all three files into your Downloads folder (`~/Downloads`):
-     - `forge614-shell-1.0.0.tar.gz`
-     - `forge614-shell-1.0.0.tar.gz.sha256`
-     - `install.sh`
-3. **Verify Cryptographic Integrity:**
-   - Open Terminal and navigate to your Downloads folder:
-     ```bash
-     cd ~/Downloads
-     ```
-   - Check the SHA-256 digest of the downloaded archive:
-     ```bash
-     shasum -a 256 -c forge614-shell-1.0.0.tar.gz.sha256
-     ```
-   - The output must confirm: `forge614-shell-1.0.0.tar.gz: OK`.
-4. **Run the Installer:**
-   - Run the downloaded script pointing to the tarball archive:
-     ```bash
-     bash install.sh --archive forge614-shell-1.0.0.tar.gz
-     ```
-   - The script unpacks into `~/.forge614/shell/1.0.0/`, creates the active symlink `~/.forge614/bin/forge614-shell`, and automatically configures your shell profile (`~/.zshrc`, `~/.bashrc`, or `~/.profile`) with the required `PATH` export.
-5. **Restart Terminal and Launch:**
-   - Close the Terminal application completely (`Cmd + Q` on macOS or log out of the shell session).
-   - Open a fresh Terminal window.
-   - Run directly:
-     ```bash
-     forge614-shell
-     ```
-   - *Note:* The user **must not** run manual `export PATH=...` commands or edit configuration files manually.
-
-### 8.6 Version Immutability Policy and Patch Release Workflow (1.0.1)
+### 8.6 Version Immutability Policy and Future Patch Releases
 
 Forge614-Shell enforces a strict software release discipline and engineering traceability:
 
 1. **Immutability of Published Releases and Tags:**
-   - Tag `1.0.0` and release `Forge614 Shell v1.0.0` are already published to the remote repository and are strictly immutable.
+   - Tags `1.0.0` and `1.0.1` are already published to the remote repository and are strictly immutable.
    - **Unbreakable Rule:** Never move, delete, retag, or overwrite an already-published tag or release. Replacing an asset or moving a tag destroys cryptographic verification and auditability.
-2. **Post-Release Enhancements (Patch Version 1.0.1):**
-   - Subsequent enhancements made to `scripts/install.sh` (such as automatic idempotent shell profile injection) or bug fixes discovered during testing belong to the SemVer patch version **`1.0.1`**.
-3. **Six-Step Publishing Workflow for Patch 1.0.1:**
-   When version 1.0.1 is ready for formal distribution:
-   1. **Update `package.json`:** Bump `"version": "1.0.1"`.
+2. **Post-Release Enhancements (Patch Version 1.0.2 onward):**
+   - Future enhancements or bug fixes will be published under a new SemVer patch version (`1.0.2`).
+3. **Six-Step Publishing Workflow for Future Patches:**
+   1. **Update `package.json`:** Bump `"version"`.
    2. **Run Full Verification:** Execute `bun run check` to verify types, bundle build, and 124 tests passing.
    3. **Generate Release Artifacts:**
       ```bash
       bun run bundle:release
       ```
-      This generates `dist/release/forge614-shell-1.0.1.tar.gz` and companion `.sha256`.
    4. **Tag and Push Numeric Tag to Git:**
       ```bash
-      git tag 1.0.1
-      git push origin 1.0.1
+      git tag <version>
+      git push origin <version>
       ```
    5. **Create the Private GitHub Release:**
-      - Tag selected: `1.0.1` (pure numeric).
-      - Title: `Forge614 Shell v1.0.1` (with leading "v").
+      - Tag selected: `<version>` (pure numeric).
+      - Title: `Forge614 Shell v<version>` (with leading "v").
       - Type: Standard/stable release (not pre-release).
-   6. **Attach the Three 1.0.1 Assets:**
-      - `dist/release/forge614-shell-1.0.1.tar.gz`
-      - `dist/release/forge614-shell-1.0.1.tar.gz.sha256`
-      - Updated `scripts/install.sh` (with automatic profile injection).
+   6. **Attach the Three Assets:**
+      - `.tar.gz`
+      - `.tar.gz.sha256`
+      - `scripts/install.sh`
 
 ---
 
@@ -340,14 +304,14 @@ The software delivery lifecycle of Forge614-Shell progresses across three distin
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ TIER 1 (COMPLETED): Local Bundling and Verification                                             │
-│ • Standalone Node.js bundle (forge614-shell-1.0.0.tar.gz)                                      │
+│ • Standalone Node.js bundle (forge614-shell-1.0.1.tar.gz)                                      │
 │ • Local archive installer (bash scripts/install.sh --archive)                                   │
 │ • Filesystem layout validation (~/.forge614/) and isolated integration tests                    │
-│ • Pure numeric Git tag (1.0.0) pushed to origin                                                 │
+│ • Pure numeric Git tag (1.0.1) pushed to origin                                                 │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ TIER 2 (COMPLETED): Private GitHub Releases Distribution                                        │
-│ • Private release published with title "Forge614 Shell v1.0.0"                                  │
-│ • 3 assets (.tar.gz, .sha256, install.sh) attached to tag 1.0.0                                 │
+│ • Private release published with title "Forge614 Shell v1.0.1"                                  │
+│ • 3 assets (.tar.gz, .sha256, install.sh) attached to tag 1.0.1                                 │
 │ • Authenticated downloads and SHA-256 verification for authorized collaborators                 │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ TIER 3 (FUTURE): Public Hosted Infrastructure and In-App Updates                                │
@@ -371,6 +335,6 @@ bun run check
 ### Verified Pipeline Metrics:
 - **Automated Tests:** **124 tests passing across 32 files** (0 failures, 567 `expect()` assertions).
 - **Key Integration Test Added:** `tests/integration/release-bundle.test.ts` (bundling, installing with PATH injection, and executing `--version` outside the repository).
-- **Key UI Test Added:** `src/ui/basic/workspace-chrome.test.ts` (anchoring `v1.0.0` to the right edge with protective truncation of left-side metadata).
+- **Key UI Test Added:** `src/ui/basic/workspace-chrome.test.ts` (anchoring version badge to the right edge with protective truncation of left-side metadata).
 - **Strict Typecheck:** `tsc --noEmit` passed with 0 errors.
 - **Production Build:** `dist/cli.js` cleanly bundled (149.48 KB).
