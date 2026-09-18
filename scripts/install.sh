@@ -39,6 +39,16 @@ rm -rf "$target"
 mv "$staged" "$target"
 ln -sfn "$target/dist/cli.js" "$forge_home/bin/forge614-shell"
 
+case "${SHELL##*/}" in
+  zsh) profile="$HOME/.zshrc" ;;
+  bash) profile="$HOME/.bashrc" ;;
+  *) profile="$HOME/.profile" ;;
+esac
+path_line="export PATH=\"$forge_home/bin:\$PATH\""
+if ! grep -Fqx "$path_line" "$profile" 2>/dev/null; then
+  printf '\n# Forge614 Shell\n%s\n' "$path_line" >> "$profile"
+fi
+
 echo "Installed Forge614 Shell v$version"
-echo "Run: $forge_home/bin/forge614-shell --version"
-echo "Add $forge_home/bin to PATH to use forge614-shell everywhere."
+echo "Configured $profile so forge614-shell is available in new Terminal windows."
+echo "Close and reopen Terminal, then run: forge614-shell"
