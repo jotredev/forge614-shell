@@ -26,11 +26,11 @@ Para realizar esta prueba:
 Para evitar confusiones, es indispensable distinguir tres etapas de distribución:
 
 1. **Prueba local del instalador (Lo que hacemos hoy):** Creamos un paquete comprimido en tu máquina y comprobamos que el script instalador lo desempaque y lo deje listo para ejecutarse en una carpeta de prueba. **Esta es la única opción disponible actualmente.**
-2. **Distribución privada mediante GitHub Release (Próximamente):** Los miembros del equipo podrán descargar este mismo paquete desde un repositorio privado de GitHub sin necesidad de tener las herramientas de construcción instaladas. *(Aún no disponible).*
+2. **Distribución privada mediante GitHub Release (Próximamente):** Los miembros del equipo podrán descargar este mismo paquete desde un repositorio privado de GitHub sin necesidad de tener las herramientas de construcción instaladas. *(El tag de Git `1.0.0` ya está enviado a `origin`, pero la creación del release en la web de GitHub y la subida de los archivos descargables es una acción manual de los mantenedores documentada en el documento 06; aún no está publicada).*
 3. **Instalación pública hospedada (En el futuro):** Cualquier persona podrá instalar el programa con un comando simple desde internet o desde una página web (`forge614.dev`). *(Aún no disponible).*
 
 ### Lo que NO existe todavía:
-- No existe descarga de archivos desde GitHub Releases.
+- No existe descarga de archivos desde GitHub Releases hasta que el mantenedor publique el release web.
 - No existe un comando remoto del tipo `curl ... | bash`.
 - No existe instalador alojado en `forge614.dev`.
 - No existe el comando `/update` dentro del chat.
@@ -281,8 +281,8 @@ Cuando el instalador termina, crea esta estructura dentro de tu carpeta de usuar
 
 Una vez que esta prueba local ha sido verificada en tu Mac:
 
-1. **Fase siguiente (Colaboradores privados):** Se preparará la publicación de este archivo empaquetado dentro de la sección de Releases privados de GitHub, permitiendo que otros colaboradores puedan descargarlo e instalarlo con el mismo script sin tener que clonar el repositorio.
+1. **Fase siguiente (Colaboradores privados):** El flujo para mantenedores para crear el GitHub Release privado a partir del tag existente `1.0.0` y adjuntar los 3 archivos (`forge614-shell-1.0.0.tar.gz`, `forge614-shell-1.0.0.tar.gz.sha256` e `install.sh`) se encuentra documentado en la sección 8 del documento 06. Una vez que un mantenedor complete la publicación en la web de GitHub, los colaboradores autorizados del repositorio privado podrán descargar los archivos e instalar Shell sin necesidad de clonar el código fuente.
 2. **Fase futura (Usuarios generales):** Se desarrollará un instalador alojado en internet (`forge614.dev`) que descargará y configurará automáticamente el programa.
 
-Para comprender la arquitectura técnica, las sumas de verificación SHA-256 y el código del empaquetador, consulta el documento técnico:
+Para consultar el flujo de publicación de mantenedores, la arquitectura técnica, las sumas de verificación SHA-256 y el código del empaquetador, consulta el documento técnico:
 👉 [06 — Preparación del release 1.0.0 y empaquetado del instalador](06-preparacion-release-1.0.0-instalador.md)

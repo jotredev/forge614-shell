@@ -26,11 +26,11 @@ To perform this test:
 To prevent confusion, we strictly distinguish three stages of distribution:
 
 1. **Current local installer test (What we are doing today):** We build a standalone archive on your machine and confirm that the installer script unpacks it and prepares it for execution in an isolated test folder. **This is the only flow available right now.**
-2. **Private collaborator installation through GitHub Releases (Upcoming):** Team members will be able to download this same archive from a private GitHub Release without needing development build tools installed. *(Not yet available).*
+2. **Private collaborator installation through GitHub Releases (Upcoming):** Team members will be able to download this same archive from a private GitHub Release without needing development build tools installed. *(The Git tag `1.0.0` is already pushed to `origin`, but creating the release on the GitHub web UI and attaching downloadable assets is a manual maintainer workflow documented in doc 06; it has not been published yet).*
 3. **Public installation through a hosted installer (In the future):** Anyone will be able to install the program with a single terminal command from the internet or via a website (`forge614.dev`). *(Not yet available).*
 
 ### What is explicitly NOT available yet:
-- No downloadable assets on GitHub Releases.
+- No downloadable assets on GitHub Releases until the maintainer publishes the web release.
 - No remote `curl ... | bash` installation command.
 - No hosted installer on `forge614.dev`.
 - No in-app `/update` command inside the chat composer.
@@ -281,8 +281,8 @@ When the installation completes, it creates the following hierarchy in your user
 
 Now that this local installation test is verified on your Mac:
 
-1. **Upcoming phase (Private collaborators):** The release archive will be published to private GitHub Releases, allowing invited team members to download and install it with the same installer without cloning the repository.
+1. **Upcoming phase (Private collaborators):** The maintainer workflow for creating a private GitHub Release from the existing `1.0.0` tag and attaching the 3 assets (`forge614-shell-1.0.0.tar.gz`, `forge614-shell-1.0.0.tar.gz.sha256`, and `install.sh`) is documented in Section 8 of document 06. Once a maintainer publishes it on GitHub, authorized collaborators with repository access will be able to download the archive and run the installer without cloning the repository.
 2. **Future phase (General public):** An automated web-hosted installer (`forge614.dev`) will be introduced to streamline setup for anyone.
 
-For technical details on bundle compilation, SHA-256 generation, and atomic directory switching, see the technical companion document:
+For technical details on the maintainer publishing workflow, bundle compilation, SHA-256 generation, and atomic directory switching, see the technical companion document:
 👉 [06 — Release 1.0.0 preparation and installer bundle](06-release-1.0.0-bundle-installer.md)
