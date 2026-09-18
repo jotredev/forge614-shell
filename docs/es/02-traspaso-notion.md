@@ -1,15 +1,17 @@
 # 02 — Traspaso a Notion
 
-2026-09-18 · Etapas 01 y 02 · Revisión 7 · [English](../en/02-notion-handoff.md) · [Índice](../../README.md)
+2026-09-18 · Etapas 01 y 02 · Revisión 8 · [English](../en/02-notion-handoff.md) · [Índice](../../README.md)
 
-**Estado: Documentación local completa y verificada (124 pruebas pasando en 32 archivos). Sincronización en Notion de las revisiones 5, 6 y 7 pendiente por renovación de credenciales OAuth del MCP de Notion.**
+**Estado: Documentación local completa y verificada (124 pruebas pasando en 32 archivos). Sincronización en Notion de las revisiones 5, 6, 7 y 8 pendiente por renovación de credenciales OAuth del MCP de Notion.**
 
 ## Fuentes de esta entrega
 
 - [README.md](../../README.md): presentación bilingüe, estado de la etapa 02 e índice general (124 pruebas pasando en 32 archivos).
+- [00-instalacion-y-prueba-local-release.md](00-instalacion-y-prueba-local-release.md): guía paso a paso desde cero para probar la instalación local en macOS (revisión 1 con 124 tests).
+- [00-installation-and-local-release-test.md](../en/00-installation-and-local-release-test.md): step-by-step beginner guide for macOS local installation testing (revision 1 with 124 tests).
 - [01-alcance.md](01-alcance.md): alcance y decisiones en español (revisión 2: alcance actualizado sin gestor interno de proyectos/worktrees).
 - [01-scope.md](../en/01-scope.md): alcance equivalente en inglés (revision 2: updated scope).
-- [02-traspaso-notion.md](02-traspaso-notion.md) y [02-notion-handoff.md](../en/02-notion-handoff.md): instrucciones y registro de sincronización ES/EN (revisión 7).
+- [02-traspaso-notion.md](02-traspaso-notion.md) y [02-notion-handoff.md](../en/02-notion-handoff.md): instrucciones y registro de sincronización ES/EN (revisión 8).
 - [03-etapa-2-primera-entrega.md](03-etapa-2-primera-entrega.md): primera entrega técnica de la etapa 2 en español.
 - [03-stage-2-first-delivery.md](../en/03-stage-2-first-delivery.md): primera entrega técnica de la etapa 2 en inglés.
 - [04-arquitectura-motores.md](04-arquitectura-motores.md): arquitectura en capas, adaptadores multimotor, perfiles compartidos, desconexión local /logout y reconexión /login en español (revisión 2 con 124 tests).
@@ -24,8 +26,9 @@
 > Publica y sincroniza la documentación de las etapas 01 y 02 de Forge614-Shell en el espacio de Notion bajo AI Engineer / Librerías / Forge614-Shell.
 >
 > Mantén el índice general bilingüe en la página principal “Forge614-Shell” y las páginas subordinadas ES/EN correspondientes:
+> - «00 — Instalación y prueba local del release» / «00 — Installation and local release test» (revisión 1: guía paso a paso para principiantes en macOS, empaquetado, prueba aislada en `~/.forge614-test/`, verificación y solución de problemas).
 > - «01 — Alcance y decisiones» / «01 — Scope and decisions» (revisión 2).
-> - «02 — Traspaso a Notion» / «02 — Notion handoff» (revisión 7).
+> - «02 — Traspaso a Notion» / «02 — Notion handoff» (revisión 8).
 > - «03 — Primera entrega de la etapa 2» / «03 — Stage 2 first delivery» (revisión 1).
 > - «04 — Arquitectura y motores» / «04 — Architecture and engines» (revisión 2, 124 tests).
 > - «05 — Interfaz Basic, panel lateral y cuotas» / «05 — Basic UI, sidebar, and quotas» (revisión 3: diseño Forge614, sidebar contextual, recursos RAM, barra de estado con proyecto, Git y versión fija `v1.0.0`, modos nativos con `Shift+Tab`, habilidades Codex con `$`, menú agrupado, scroll independiente y refresco /refresh).
@@ -42,13 +45,14 @@
 | Campo | Valor |
 | --- | --- |
 | Índice de Notion | https://app.notion.com/p/3de21943d129818b9cd6ca4ab12c44ad |
+| Página 00 ES / EN | Pendiente de publicación en Notion (OAuth token revoked) |
 | Página 01 ES / EN | https://app.notion.com/p/3de21943d129819c9bd2ee1d70d04087 / https://app.notion.com/p/3de21943d12981edad3bd48436fec691 |
 | Página 02 ES / EN | https://app.notion.com/p/3de21943d1298125a565e14fdcfca893 / https://app.notion.com/p/3de21943d12981bc916ffdd9e2da9e63 |
 | Página 03 ES / EN | https://app.notion.com/p/3de21943d1298141a7cee925a5670e49 / https://app.notion.com/p/3de21943d1298152b26be649f7a630e5 |
 | Página 04 ES / EN | https://app.notion.com/p/3de21943d12981ddb85dd51594c81217 / https://app.notion.com/p/3de21943d12981fd91a2e3d8b33d8e10 |
 | Página 05 ES / EN | Pendiente de publicación en Notion (OAuth token revoked) |
 | Página 06 ES / EN | Pendiente de publicación en Notion (OAuth token revoked) |
-| Revisión publicada en Notion | 4 (Páginas 01 a 04 sincronizadas); Páginas 05, 06 y Rev 5-7 pendientes de reconexión OAuth |
+| Revisión publicada en Notion | 4 (Páginas 01 a 04 sincronizadas); Páginas 00, 05, 06 y Rev 5-8 pendientes de reconexión OAuth |
 | Fecha de publicación local | 2026-09-18 |
 | Diferencias con el repositorio | Enlaces relativos adaptados a URLs de Notion; analogía maestra e indexación técnica añadidas según estándar ai-engineer-docs. |
 | Revisión del usuario | Pendiente de confirmación |

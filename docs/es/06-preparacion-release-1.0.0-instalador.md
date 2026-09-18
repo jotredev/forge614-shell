@@ -1,8 +1,8 @@
 # 06 — Preparación del release 1.0.0 y empaquetado del instalador
 
-2026-09-18 · Etapa 02: empaquetado e instalación local · Revisión documental: 1 · [English](../en/06-release-1.0.0-bundle-installer.md) · [Índice](../../README.md)
+2026-09-18 · Etapa 02: empaquetado e instalación local · Revisión documental: 1 · [English](../en/06-release-1.0.0-bundle-installer.md) · [Índice](../../README.md) · [Guía práctica de instalación](00-instalacion-y-prueba-local-release.md)
 
-Este documento detalla la preparación del **release local 1.0.0** de Forge614-Shell: la **convención de versiones e identidad de producto**, la **visualización fija de versión en la barra de estado (`v1.0.0`)**, el script constructor de paquetes autónomos (`scripts/release-bundle.mjs`), el instalador local de sistema de archivos (`scripts/install.sh`), el **aislamiento de instalación en `~/.forge614/`**, las garantías de integridad mediante **sumas SHA-256** y la suite de calidad verificada mediante **124 pruebas automatizadas en 32 archivos**.
+Este documento detalla la preparación del **release local 1.0.0** de Forge614-Shell: la **convención de versiones e identidad de producto**, la **visualización fija de versión en la barra de estado (`v1.0.0`)**, el script constructor de paquetes autónomos (`scripts/release-bundle.mjs`), el instalador local de sistema de archivos (`scripts/install.sh`), el **aislamiento de instalación en `~/.forge614/`**, las garantías de integridad mediante **sumas SHA-256** y la suite de calidad verificada mediante **124 pruebas automatizadas en 32 archivos**. Para la guía paso a paso para principiantes en macOS, consulta [00 — Instalación y prueba local del release](00-instalacion-y-prueba-local-release.md).
 
 ---
 

@@ -1,8 +1,8 @@
 # 06 — Release 1.0.0 preparation and installer bundle
 
-2026-09-18 · Stage 02: packaging and local installation · Documentation revision: 1 · [Español](../es/06-preparacion-release-1.0.0-instalador.md) · [Index](../../README.md)
+2026-09-18 · Stage 02: packaging and local installation · Documentation revision: 1 · [Español](../es/06-preparacion-release-1.0.0-instalador.md) · [Index](../../README.md) · [Practical installation guide](00-installation-and-local-release-test.md)
 
-This document details the preparation of the **Forge614-Shell 1.0.0 local release**: the **versioning conventions and product identity**, the **pinned version display in the status bar (`v1.0.0`)**, the standalone package bundle builder (`scripts/release-bundle.mjs`), the filesystem-based local installer (`scripts/install.sh`), **isolated installation under `~/.forge614/`**, integrity guarantees backed by **SHA-256 checksums**, and software quality verified by **124 automated tests across 32 files**.
+This document details the preparation of the **Forge614-Shell 1.0.0 local release**: the **versioning conventions and product identity**, the **pinned version display in the status bar (`v1.0.0`)**, the standalone package bundle builder (`scripts/release-bundle.mjs`), the filesystem-based local installer (`scripts/install.sh`), **isolated installation under `~/.forge614/`**, integrity guarantees backed by **SHA-256 checksums**, and software quality verified by **124 automated tests across 32 files**. For the beginner-friendly step-by-step installation guide on macOS, see [00 — Installation and local release test](00-installation-and-local-release-test.md).
 
 ---
 

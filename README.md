@@ -10,6 +10,7 @@ Entorno de terminal con chat para programación asistida por IA con soporte mult
 
 | Nº | Español | English |
 | --- | --- | --- |
+| 00 | [Instalación y prueba local del release](docs/es/00-instalacion-y-prueba-local-release.md) | [Installation and local release test](docs/en/00-installation-and-local-release-test.md) |
 | 01 | [Alcance y decisiones](docs/es/01-alcance.md) | [Scope and decisions](docs/en/01-scope.md) |
 | 02 | [Traspaso a Notion](docs/es/02-traspaso-notion.md) | [Notion handoff](docs/en/02-notion-handoff.md) |
 | 03 | [Primera entrega de la etapa 2](docs/es/03-etapa-2-primera-entrega.md) | [Stage 2 first delivery](docs/en/03-stage-2-first-delivery.md) |
