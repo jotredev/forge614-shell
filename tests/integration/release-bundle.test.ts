@@ -33,7 +33,7 @@ test.skipIf(process.platform === "win32")("release bundle installs outside the r
 
     const installed = Bun.spawnSync([join(installation, "bin", "forge614-shell"), "--version"]);
     expect(installed.exitCode).toBe(0);
-    expect(installed.stdout.toString()).toBe("forge614-shell 1.0.1\n");
+    expect(installed.stdout.toString()).toBe("forge614-shell 1.0.2\n");
     const profile = await readFile(join(home, ".zshrc"), "utf8");
     expect(profile.split(`export PATH=\"${installation}/bin:$PATH\"`).length - 1).toBe(1);
   } finally {

@@ -37,7 +37,7 @@ function latestServer(release: Awaited<ReturnType<typeof createRelease>>, checks
       const path = new URL(request.url).pathname;
       if (path === "/latest") {
         return Response.json({
-          tag_name: "1.0.1",
+          tag_name: "1.0.2",
           assets: [
             { name: release.archiveName, browser_download_url: `${server.url}archive` },
             { name: `${release.archiveName}.sha256`, browser_download_url: `${server.url}checksum` },
@@ -70,11 +70,11 @@ test.skipIf(process.platform === "win32")("latest installer downloads, verifies,
         },
       });
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Installed Forge614 Shell v1.0.1");
+      expect(result.stdout).toContain("Installed Forge614 Shell v1.0.2");
       const installed = await run([join(home, ".forge614", "bin", "forge614-shell"), "--version"], {
         cwd: process.cwd(), env: { ...process.env, HOME: home },
       });
-      expect(installed.stdout).toBe("forge614-shell 1.0.1\n");
+      expect(installed.stdout).toBe("forge614-shell 1.0.2\n");
     } finally {
       server.stop(true);
     }

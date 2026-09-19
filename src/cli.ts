@@ -11,7 +11,15 @@ const metadata = JSON.parse(readFileSync(new URL("../package.json", import.meta.
 };
 const args = process.argv.slice(2);
 
-if (args.includes("--help") || args.includes("-h")) {
+if (args.length === 1 && args[0] === "update") {
+  try {
+    const { updateInstalledShell } = await import("./infrastructure/updater.ts");
+    await updateInstalledShell();
+  } catch (error) {
+    console.error(`Forge614-Shell update failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
+} else if (args.includes("--help") || args.includes("-h")) {
   console.log(`Forge614-Shell ${metadata.version}
 
 Usage: forge614-shell [--engine claude|codex|antigravity|pi]
@@ -25,6 +33,7 @@ Shell does not store subscription credentials or manage billing.
   --engine <name>      Legacy option; does not bypass interactive selectors
   --engine pi          Legacy Pi automation in non-interactive mode only
   --version, -v       Show the Shell version
+  update              Download and activate the latest stable release
   --help, -h          Show this help
 
 Native chat: /login, /logout, /resume, /new, /model, /effort, /status, /stop, /quit
