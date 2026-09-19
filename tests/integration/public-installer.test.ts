@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, readlink, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -37,7 +37,7 @@ function latestServer(release: Awaited<ReturnType<typeof createRelease>>, checks
       const path = new URL(request.url).pathname;
       if (path === "/latest") {
         return Response.json({
-          tag_name: "1.0.3",
+          tag_name: "1.0.4",
           assets: [
             { name: release.archiveName, browser_download_url: `${server.url}archive` },
             { name: `${release.archiveName}.sha256`, browser_download_url: `${server.url}checksum` },
@@ -57,6 +57,10 @@ test.skipIf(process.platform === "win32")("latest installer downloads, verifies,
   const home = join(root, "home");
   try {
     const release = await createRelease(root);
+    const legacyBin = join(home, ".forge614", "bin");
+    await mkdir(legacyBin, { recursive: true });
+    await symlink("/tmp/legacy-forge614-shell", join(legacyBin, "forge614-shell"));
+    await writeFile(join(home, ".zshrc"), `# Forge614 Shell\nexport PATH=\"${legacyBin}:$PATH\"\n`);
     const server = latestServer(release);
     try {
       const result = await run(["bash", "scripts/install.sh", "--latest"], {
@@ -70,11 +74,14 @@ test.skipIf(process.platform === "win32")("latest installer downloads, verifies,
         },
       });
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Installed Forge614 Shell v1.0.3");
+      expect(result.stdout).toContain("Installed Forge614 Shell v1.0.4");
       const installed = await run([join(home, ".forge614", "shell", "bin", "forge614-shell"), "--version"], {
         cwd: process.cwd(), env: { ...process.env, HOME: home },
       });
-      expect(installed.stdout).toBe("forge614-shell 1.0.3\n");
+      expect(installed.stdout).toBe("forge614-shell 1.0.4\n");
+      const profile = await readFile(join(home, ".zshrc"), "utf8");
+      expect(profile).not.toContain(`export PATH=\"${legacyBin}:$PATH\"`);
+      await expect(lstat(join(legacyBin, "forge614-shell"))).rejects.toThrow();
     } finally {
       server.stop(true);
     }

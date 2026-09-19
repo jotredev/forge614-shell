@@ -97,6 +97,9 @@ if (index >= 0) {
 }
 NODE
 fi
+legacy_link="$forge_home/bin/forge614-shell"
+if [[ -L "$legacy_link" || -f "$legacy_link" ]]; then rm -f "$legacy_link"; fi
+rmdir "$forge_home/bin" 2>/dev/null || true
 grep -Fqx "$path_line" "$profile" 2>/dev/null || printf '\n# Forge614 Shell\n%s\n' "$path_line" >> "$profile"
 echo "Installed Forge614 Shell v$version"
 echo "Configured $profile so forge614-shell is available in new Terminal windows."
