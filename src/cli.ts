@@ -19,6 +19,14 @@ if (args.length === 1 && args[0] === "update") {
     console.error(`Forge614-Shell update failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
   }
+} else if (args.length === 1 && args[0] === "uninstall") {
+  try {
+    const { uninstallInstalledShell } = await import("./infrastructure/updater.ts");
+    await uninstallInstalledShell();
+  } catch (error) {
+    console.error(`Forge614-Shell uninstall failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
 } else if (args.includes("--help") || args.includes("-h")) {
   console.log(`Forge614-Shell ${metadata.version}
 
@@ -34,6 +42,7 @@ Shell does not store subscription credentials or manage billing.
   --engine pi          Legacy Pi automation in non-interactive mode only
   --version, -v       Show the Shell version
   update              Download and activate the latest stable release
+  uninstall           Remove Forge614 Shell from this computer
   --help, -h          Show this help
 
 Native chat: /login, /logout, /resume, /new, /model, /effort, /status, /stop, /quit

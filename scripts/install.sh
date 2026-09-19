@@ -5,10 +5,12 @@ mode="latest"
 archive=""
 if [[ $# -eq 0 || ( $# -eq 1 && "$1" == "--latest" ) ]]; then
   mode="latest"
+elif [[ $# -eq 1 && "$1" == "--uninstall" ]]; then
+  mode="uninstall"
 elif [[ $# -eq 2 && "$1" == "--archive" ]]; then
   mode="archive"; archive="$2"
 else
-  echo "Usage: install.sh [--latest | --archive <forge614-shell-<version>.tar.gz>]" >&2; exit 64
+  echo "Usage: install.sh [--latest | --uninstall | --archive <forge614-shell-<version>.tar.gz>]" >&2; exit 64
 fi
 case "$(uname -s)" in Darwin|Linux) ;; *) echo "Forge614 Shell supports macOS and Linux only." >&2; exit 69 ;; esac
 for command in node tar; do command -v "$command" >/dev/null 2>&1 || { echo "Forge614 Shell requires $command." >&2; exit 69; }; done
@@ -20,6 +22,32 @@ forge_home="${FORGE614_HOME:-$HOME/.forge614}"
 temporary="$(mktemp -d)"
 cleanup() { rm -rf "$temporary"; }
 trap cleanup EXIT
+
+if [[ "$mode" == "uninstall" ]]; then
+  shell_root="$forge_home/shell"
+  case "${SHELL##*/}" in zsh) profile="$HOME/.zshrc" ;; bash) profile="$HOME/.bashrc" ;; *) profile="$HOME/.profile" ;; esac
+  path_line="export PATH=\"$shell_root/bin:\$PATH\""
+  echo "This removes Forge614 Shell from $shell_root."
+  echo "Engram, Atlas, and other Forge614 tools are unchanged."
+  printf "Continue? [y/N] "
+  if ! read -r answer || [[ "$answer" != "y" && "$answer" != "Y" ]]; then echo "Uninstall cancelled."; exit 0; fi
+  rm -rf "$shell_root"
+  if [[ -f "$profile" ]]; then
+    node - "$profile" "$path_line" <<'NODE'
+const fs = require("fs");
+const [profile, line] = process.argv.slice(2);
+const lines = fs.readFileSync(profile, "utf8").split("\n");
+const index = lines.indexOf(line);
+if (index >= 0) {
+  lines.splice(index, 1);
+  if (index > 0 && lines[index - 1] === "# Forge614 Shell") lines.splice(index - 1, 1);
+  fs.writeFileSync(profile, lines.join("\n"));
+}
+NODE
+  fi
+  echo "Forge614 Shell was uninstalled. Other Forge614 tools are unchanged."
+  exit 0
+fi
 
 if [[ "$mode" == "latest" ]]; then
   api_url="${FORGE614_RELEASE_API_URL:-https://api.github.com/repos/jotredev/forge614-shell/releases/latest}"
@@ -50,11 +78,11 @@ release_root="$(find "$extracted" -mindepth 1 -maxdepth 1 -type d -name 'forge61
 [[ -n "$release_root" && -f "$release_root/package.json" && -f "$release_root/dist/cli.js" ]] || { echo "Invalid Forge614 Shell release archive." >&2; exit 65; }
 version="$(node -e 'console.log(require(process.argv[1]).version)' "$release_root/package.json")"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid Forge614 Shell release version." >&2; exit 65; }
-shell_root="$forge_home/shell"; target="$shell_root/$version"; active_link="$forge_home/bin/forge614-shell"
+shell_root="$forge_home/shell"; target="$shell_root/$version"; active_link="$shell_root/bin/forge614-shell"
 if [[ -L "$active_link" && "$(readlink "$active_link")" == "$target/dist/cli.js" ]]; then echo "Forge614 Shell v$version is already active."; exit 0; fi
-staged="$shell_root/.${version}.installing"; mkdir -p "$shell_root" "$forge_home/bin"; rm -rf "$staged"; mv "$release_root" "$staged"; rm -rf "$target"; mv "$staged" "$target"; ln -sfn "$target/dist/cli.js" "$active_link"
+staged="$shell_root/.${version}.installing"; mkdir -p "$shell_root" "$shell_root/bin"; rm -rf "$staged"; mv "$release_root" "$staged"; rm -rf "$target"; mv "$staged" "$target"; ln -sfn "$target/dist/cli.js" "$active_link"
 case "${SHELL##*/}" in zsh) profile="$HOME/.zshrc" ;; bash) profile="$HOME/.bashrc" ;; *) profile="$HOME/.profile" ;; esac
-path_line="export PATH=\"$forge_home/bin:\$PATH\""
+path_line="export PATH=\"$shell_root/bin:\$PATH\""
 grep -Fqx "$path_line" "$profile" 2>/dev/null || printf '\n# Forge614 Shell\n%s\n' "$path_line" >> "$profile"
 echo "Installed Forge614 Shell v$version"
 echo "Configured $profile so forge614-shell is available in new Terminal windows."
