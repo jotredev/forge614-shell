@@ -23,8 +23,10 @@ try {
   await mkdir(join(releaseRoot, "dist"), { recursive: true });
   execFileSync(bun, ["build", "src/cli.ts", "--target=node", "--outdir", join(releaseRoot, "dist")], { cwd: root, stdio: "inherit" });
   await cp(join(root, "package.json"), join(releaseRoot, "package.json"));
+  await cp(join(root, "scripts", "install.sh"), join(releaseRoot, "install.sh"));
   await cp(join(root, "extensions"), join(releaseRoot, "extensions"), { recursive: true });
   await chmod(join(releaseRoot, "dist", "cli.js"), 0o755);
+  await chmod(join(releaseRoot, "install.sh"), 0o755);
 
   await mkdir(output, { recursive: true });
   execFileSync("tar", ["-czf", archive, "-C", stagingRoot, releaseName]);
