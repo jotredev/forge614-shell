@@ -83,6 +83,20 @@ if [[ -L "$active_link" && "$(readlink "$active_link")" == "$target/dist/cli.js"
 staged="$shell_root/.${version}.installing"; mkdir -p "$shell_root" "$shell_root/bin"; rm -rf "$staged"; mv "$release_root" "$staged"; rm -rf "$target"; mv "$staged" "$target"; ln -sfn "$target/dist/cli.js" "$active_link"
 case "${SHELL##*/}" in zsh) profile="$HOME/.zshrc" ;; bash) profile="$HOME/.bashrc" ;; *) profile="$HOME/.profile" ;; esac
 path_line="export PATH=\"$shell_root/bin:\$PATH\""
+old_path_line="export PATH=\"$forge_home/bin:\$PATH\""
+if [[ -f "$profile" ]]; then
+  node - "$profile" "$old_path_line" <<'NODE'
+const fs = require("fs");
+const [profile, line] = process.argv.slice(2);
+const lines = fs.readFileSync(profile, "utf8").split("\n");
+const index = lines.indexOf(line);
+if (index >= 0) {
+  lines.splice(index, 1);
+  if (index > 0 && lines[index - 1] === "# Forge614 Shell") lines.splice(index - 1, 1);
+  fs.writeFileSync(profile, lines.join("\n"));
+}
+NODE
+fi
 grep -Fqx "$path_line" "$profile" 2>/dev/null || printf '\n# Forge614 Shell\n%s\n' "$path_line" >> "$profile"
 echo "Installed Forge614 Shell v$version"
 echo "Configured $profile so forge614-shell is available in new Terminal windows."
