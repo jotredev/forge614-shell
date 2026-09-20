@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -29,7 +29,33 @@ async function createRelease(root: string) {
   };
 }
 
-function latestServer(release: Awaited<ReturnType<typeof createRelease>>, checksum = release.checksum) {
+function enginesBinaryScript(schemaVersion = 1): string {
+  return `#!/usr/bin/env bash
+if [[ "\${1:-}" == "detect" ]]; then
+  echo '{"schemaVersion":${schemaVersion},"agents":[]}'
+  exit 0
+fi
+exit 64
+`;
+}
+
+function enginesInstallerScript(schemaVersion = 1): string {
+  return `#!/usr/bin/env bash
+set -euo pipefail
+engines_root="\${FORGE614_HOME:?}/engines"
+mkdir -p "$engines_root/bin"
+cat > "$engines_root/bin/forge614-engines" <<'ENGINE'
+${enginesBinaryScript(schemaVersion)}ENGINE
+chmod +x "$engines_root/bin/forge614-engines"
+echo "Installed Forge614 Engines v1.0.0"
+`;
+}
+
+function latestServer(
+  release: Awaited<ReturnType<typeof createRelease>>,
+  checksum = release.checksum,
+  engineInstaller?: string,
+) {
   let server!: ReturnType<typeof Bun.serve>;
   server = Bun.serve({
     port: 0,
@@ -46,6 +72,7 @@ function latestServer(release: Awaited<ReturnType<typeof createRelease>>, checks
       }
       if (path === "/archive") return new Response(release.archive);
       if (path === "/checksum") return new Response(checksum);
+      if (path === "/engines-install.sh" && engineInstaller) return new Response(engineInstaller);
       return new Response("missing", { status: 404 });
     },
   });
@@ -61,7 +88,7 @@ test.skipIf(process.platform === "win32")("latest installer downloads, verifies,
     await mkdir(legacyBin, { recursive: true });
     await symlink("/tmp/legacy-forge614-shell", join(legacyBin, "forge614-shell"));
     await writeFile(join(home, ".zshrc"), `# Forge614 Shell\nexport PATH=\"${legacyBin}:$PATH\"\n`);
-    const server = latestServer(release);
+    const server = latestServer(release, release.checksum, enginesInstallerScript());
     try {
       const result = await run(["bash", "scripts/install.sh", "--latest"], {
         cwd: process.cwd(),
@@ -71,6 +98,7 @@ test.skipIf(process.platform === "win32")("latest installer downloads, verifies,
           SHELL: "/bin/zsh",
           FORGE614_HOME: join(home, ".forge614"),
           FORGE614_RELEASE_API_URL: `${server.url}latest`,
+          FORGE614_ENGINES_INSTALLER_URL: `${server.url}engines-install.sh`,
         },
       });
       expect(result.exitCode).toBe(0);
@@ -82,6 +110,10 @@ test.skipIf(process.platform === "win32")("latest installer downloads, verifies,
       const profile = await readFile(join(home, ".zshrc"), "utf8");
       expect(profile).not.toContain(`export PATH=\"${legacyBin}:$PATH\"`);
       await expect(lstat(join(legacyBin, "forge614-shell"))).rejects.toThrow();
+      const engines = await run([join(home, ".forge614", "engines", "bin", "forge614-engines"), "detect"], {
+        cwd: process.cwd(), env: { ...process.env, HOME: home },
+      });
+      expect(engines.stdout).toContain('"schemaVersion":1');
     } finally {
       server.stop(true);
     }
@@ -96,6 +128,11 @@ test.skipIf(process.platform === "win32")("a bad latest checksum preserves the a
   const forgeHome = join(home, ".forge614");
   try {
     const release = await createRelease(root);
+    const enginesBin = join(forgeHome, "engines", "bin");
+    const enginesExecutable = join(enginesBin, "forge614-engines");
+    await mkdir(enginesBin, { recursive: true });
+    await writeFile(enginesExecutable, enginesBinaryScript());
+    await chmod(enginesExecutable, 0o755);
     const initial = await run(["bash", "scripts/install.sh", "--archive", join(release.output, release.archiveName)], {
       cwd: process.cwd(), env: { ...process.env, HOME: home, SHELL: "/bin/zsh", FORGE614_HOME: forgeHome },
     });
@@ -110,6 +147,40 @@ test.skipIf(process.platform === "win32")("a bad latest checksum preserves the a
       });
       expect(result.exitCode).not.toBe(0);
       expect(await readlink(active)).toBe(before);
+    } finally {
+      server.stop(true);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.platform === "win32")("an already compatible Engines installation is reused without downloading its installer", async () => {
+  const root = await mkdtemp(join(tmpdir(), "forge614-public-engines-reuse-"));
+  const home = join(root, "home");
+  const forgeHome = join(home, ".forge614");
+  try {
+    const release = await createRelease(root);
+    const enginesBin = join(forgeHome, "engines", "bin");
+    const enginesExecutable = join(enginesBin, "forge614-engines");
+    await mkdir(enginesBin, { recursive: true });
+    await writeFile(enginesExecutable, enginesBinaryScript());
+    await chmod(enginesExecutable, 0o755);
+    const server = latestServer(release);
+    try {
+      const result = await run(["bash", "scripts/install.sh", "--latest"], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: home,
+          SHELL: "/bin/zsh",
+          FORGE614_HOME: forgeHome,
+          FORGE614_RELEASE_API_URL: `${server.url}latest`,
+          FORGE614_ENGINES_INSTALLER_URL: `${server.url}missing-engines-install.sh`,
+        },
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Using compatible Forge614 Engines");
     } finally {
       server.stop(true);
     }

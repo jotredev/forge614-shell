@@ -23,6 +23,37 @@ temporary="$(mktemp -d)"
 cleanup() { rm -rf "$temporary"; }
 trap cleanup EXIT
 
+engines_schema_version=1
+engines_binary="$forge_home/engines/bin/forge614-engines"
+
+engines_is_compatible() {
+  [[ -x "$engines_binary" ]] || return 1
+  local report
+  report="$("$engines_binary" detect 2>/dev/null)" || return 1
+  printf '%s' "$report" | node -e '
+let report;
+try { report = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch { process.exit(1); }
+const expected = Number(process.argv[1]);
+if (report?.schemaVersion !== expected || !Array.isArray(report?.agents)) process.exit(1);
+' "$engines_schema_version"
+}
+
+ensure_engines() {
+  if engines_is_compatible; then
+    echo "Using compatible Forge614 Engines (schema v$engines_schema_version)."
+    return 0
+  fi
+
+  local installer_url installer
+  installer_url="${FORGE614_ENGINES_INSTALLER_URL:-https://github.com/jotredev/forge614-engines/releases/latest/download/install.sh}"
+  installer="$temporary/forge614-engines-install.sh"
+  echo "Installing required Forge614 Engines (schema v$engines_schema_version)."
+  command -v curl >/dev/null 2>&1 || { echo "Forge614 Shell requires curl to install Forge614 Engines." >&2; return 69; }
+  curl --fail --silent --show-error --location --output "$installer" "$installer_url" || { echo "Could not download the Forge614 Engines installer." >&2; return 65; }
+  FORGE614_HOME="$forge_home" bash "$installer" --latest || { echo "Forge614 Engines installation failed; Forge614 Shell was not changed." >&2; return 65; }
+  engines_is_compatible || { echo "Installed Forge614 Engines is not compatible with Forge614 Shell; Forge614 Shell was not changed." >&2; return 65; }
+}
+
 if [[ "$mode" == "uninstall" ]]; then
   shell_root="$forge_home/shell"
   case "${SHELL##*/}" in zsh) profile="$HOME/.zshrc" ;; bash) profile="$HOME/.bashrc" ;; *) profile="$HOME/.profile" ;; esac
@@ -71,6 +102,8 @@ process.stdout.write(`${v}\t${a[0].browser_download_url}\t${c[0].browser_downloa
 elif [[ ! -f "$archive" ]]; then
   echo "Release archive not found: $archive" >&2; exit 66
 fi
+
+ensure_engines || exit $?
 
 extracted="$temporary/extracted"; mkdir -p "$extracted"
 tar -xzf "$archive" -C "$extracted" || { echo "Invalid Forge614 Shell release archive." >&2; exit 65; }
