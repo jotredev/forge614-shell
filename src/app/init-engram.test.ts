@@ -139,6 +139,31 @@ test("an Engram failure is reported, not swallowed as success", async () => {
   await expect(run).rejects.toThrow("No se pudo completar la operación.");
 });
 
+test("a failure that echoes the connection string never leaks it to the error or the screen", async () => {
+  const terminal = new TestTerminal();
+  const postgresUrl = "postgres://user:sup3rsecret@host:5432/db";
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({
+      status: 1,
+      stdout: "",
+      stderr: JSON.stringify({ code: "POSTGRES_UNAVAILABLE", error: `No se pudo conectar a ${postgresUrl}.` }),
+    }),
+  });
+  await tick();
+  terminal.input("\r"); await tick(); // Continue
+  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
+  terminal.input(postgresUrl);
+  terminal.input("\r"); await tick(); // submit connection string
+  terminal.input("\r"); await tick(); // Reinforcement: Yes (default)
+  terminal.input("\r"); // Summary: Confirm
+  const error = await run.catch((thrown: Error) => thrown);
+  expect((error as Error).message).not.toContain(postgresUrl);
+  expect((error as Error).message).not.toContain("sup3rsecret");
+  expect(terminal.output).not.toContain(postgresUrl);
+  expect(terminal.output).not.toContain("sup3rsecret");
+});
+
 test("the init command never imports Shell's normal chat startup modules", async () => {
   const source = await readFile(new URL("./init-engram.ts", import.meta.url), "utf8");
   expect(source).not.toMatch(/native-chat|visual-picker|engine-picker/);

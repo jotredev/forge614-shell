@@ -6,7 +6,7 @@
 
 **Architecture:** A pure `EngramInitDecisions` contract type sits between three layers: an `src/infrastructure/forge614-engram.ts` bridge that only spawns Engram's public binary (mirrors the existing `forge614-engines.ts` bridge), an `src/ui/startup/engram-init.ts` set of `pi-tui` screens that only collect decisions (mirrors `visual-picker.ts`/`engine-picker.ts`), and an `src/app/init-engram.ts` orchestrator that validates CLI arguments, requires a TTY, runs the screens, and calls the bridge only after confirmation. `src/cli.ts` gets one new, fully separate `init` branch that never falls through to the existing chat/engine-picker startup path.
 
-**Tech Stack:** TypeScript, Bun (`bun test`, `bun build`), `@earendil-works/pi-tui` (`SelectList`, `Text`, `TuiAltScreen`, `matchesKey`, `decodePrintableKey`), Node's `child_process.spawnSync` (via an injectable runner, as already used in `forge614-engines.ts`).
+**Tech Stack:** TypeScript, Bun (`bun test`, `bun build`), `@earendil-works/pi-tui` (`SelectList`, `Text`, `TuiAltScreen`, `matchesKey`, `decodeKittyPrintable`), Node's `child_process.spawnSync` (via an injectable runner, as already used in `forge614-engines.ts`).
 
 **Spec:** `docs/superpowers/specs/2026-09-20-shell-engram-init-flow-design.md`
 

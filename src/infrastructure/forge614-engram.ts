@@ -33,17 +33,27 @@ function parseEngramError(stderr: string): string {
   return "Forge614 Engram command failed.";
 }
 
+/** Masks every literal occurrence of the connection string, matching the summary screen's masking. */
+function redactSecret(message: string, secret: string | null): string {
+  return secret ? message.split(secret).join("********") : message;
+}
+
 async function runEngramCommand(
+  command: string,
   args: string[],
   options: { home?: string; env?: NodeJS.ProcessEnv; run?: RunEngram },
 ): Promise<unknown> {
   const binary = locateEngramBinary(options.home ?? homedir(), options.env);
   const result = await (options.run ?? defaultRun)(binary, args);
-  if (result.status !== 0) throw new Error(parseEngramError(result.stderr));
+  // A null status with nothing on stderr means the binary never ran (missing or not executable).
+  if (result.status === null && !result.stderr.trim()) {
+    throw new Error(`Forge614 Engram is unavailable at ${binary}. Install or reinstall Forge614 Engram to repair this dependency.`);
+  }
+  if (result.status !== 0) throw new Error(`forge614-engram ${command} failed: ${parseEngramError(result.stderr)}`);
   try {
     return JSON.parse(result.stdout);
   } catch {
-    throw new Error("Forge614 Engram returned an invalid result.");
+    throw new Error(`forge614-engram ${command} returned an invalid result.`);
   }
 }
 
@@ -59,9 +69,21 @@ export async function applyEngramInit(
   const initArgs = decisions.postgresUrl !== null
     ? ["init", "--json", "--postgres-url", decisions.postgresUrl]
     : ["init", "--json"];
-  const initResult = await runEngramCommand(initArgs, options);
-  const reinforcementResult = decisions.reinforcement
-    ? await runEngramCommand(["reinforcement-enable"], options)
-    : null;
+  let initResult: unknown;
+  try {
+    initResult = await runEngramCommand("init", initArgs, options);
+  } catch (error) {
+    // Last line of defence: the connection string must never reach any output, including error text.
+    throw new Error(redactSecret(error instanceof Error ? error.message : String(error), decisions.postgresUrl));
+  }
+  let reinforcementResult: unknown | null = null;
+  if (decisions.reinforcement) {
+    try {
+      reinforcementResult = await runEngramCommand("reinforcement-enable", ["reinforcement-enable"], options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`${message} Local memory initialization completed successfully; only reinforcement could not be enabled.`);
+    }
+  }
   return { initResult, reinforcementResult };
 }
