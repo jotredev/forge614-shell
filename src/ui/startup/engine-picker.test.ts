@@ -37,8 +37,8 @@ test("Escape cancels startup without choosing an engine", async () => {
   expect(terminal.stopped).toBe(true);
 });
 
-test("an empty list gives installation guidance instead of a broken menu", async () => {
+test("an empty Engines result gives installation guidance instead of a broken menu", async () => {
   const terminal = new TestTerminal();
-  await expect(chooseEngine([], terminal)).rejects.toThrow("https://code.claude.com/docs/en/setup");
+  await expect(chooseEngine([], terminal)).rejects.toThrow("Forge614 Engines found no Shell-compatible AI engines");
   expect(terminal.output).toBe("");
 });

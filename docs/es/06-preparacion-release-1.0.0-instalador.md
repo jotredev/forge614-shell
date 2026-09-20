@@ -1,8 +1,8 @@
 # 06 — Preparación de releases e instalador público
 
-2026-09-19 · Etapa 02: empaquetado, instalación pública y actualización · Revisión documental: 6 · [English](../en/06-release-1.0.0-bundle-installer.md) · [Índice](../../README.md) · [Guía de instalación y actualización](00-instalacion-y-prueba-local-release.md)
+2026-09-19 · Etapa 02: empaquetado, instalación pública y actualización · Revisión documental: 7 · [English](../en/06-release-1.0.0-bundle-installer.md) · [Índice](../../README.md) · [Guía de instalación y actualización](00-instalacion-y-prueba-local-release.md)
 
-Este documento detalla la arquitectura y procedimiento de **empaquetado, distribución pública y actualización** de Forge614-Shell: la **convención de versiones e identidad de producto**, la **visualización fija de versión en la barra de estado**, el constructor de paquetes autónomos (`scripts/release-bundle.mjs`), el instalador público por red (`scripts/install.sh`), el subcomando de actualización manual (`forge614-shell update`), el **aislamiento de versiones en `~/.forge614/shell/`**, la **integración automática con Forge614 Engines en `~/.forge614/engines/`**, el **flujo para mantenedores para la publicación de GitHub Releases**, las garantías de integridad mediante **sumas SHA-256** y la suite de calidad verificada mediante **130 pruebas automatizadas en 34 archivos (591 aserciones)**. Para la guía paso a paso para el usuario final en macOS/Linux, consulta [00 — Instalación y actualización pública del release](00-instalacion-y-prueba-local-release.md).
+Este documento detalla la arquitectura y procedimiento de **empaquetado, distribución pública y actualización** de Forge614-Shell: la **convención de versiones e identidad de producto**, la **visualización fija de versión en la barra de estado**, el constructor de paquetes autónomos (`scripts/release-bundle.mjs`), el instalador público por red (`scripts/install.sh`), el subcomando de actualización manual (`forge614-shell update`), el **aislamiento de versiones en `~/.forge614/shell/`**, la **integración automática con Forge614 Engines en `~/.forge614/engines/`**, el **flujo para mantenedores para la publicación de GitHub Releases**, las garantías de integridad mediante **sumas SHA-256** y la suite de calidad verificada mediante **133 pruebas automatizadas en 35 archivos (597 aserciones)**. Para la guía paso a paso para el usuario final en macOS/Linux, consulta [00 — Instalación y actualización pública del release](00-instalacion-y-prueba-local-release.md).
 
 > [!NOTE]
 > La integración de bootstrap automático con Forge614 Engines y el aislamiento de rutas en `~/.forge614/shell/bin/` están integrados y probados en el código para **el próximo release estable de Shell**, sin modificar la versión pública ya publicada en GitHub Releases.
@@ -220,7 +220,7 @@ Para publicar una nueva versión pública estable en GitHub Releases, el mantene
    ```bash
    bun run check
    ```
-   Asegurar que el typecheck, las 130 pruebas automáticas y el build pasen con 0 errores.
+   Asegurar que el typecheck, las 133 pruebas automáticas y el build pasen con 0 errores.
 4. **Generar el bundle autónomo y la suma criptográfica:**
    ```bash
    bun run bundle:release
@@ -288,7 +288,8 @@ bun run check
 ```
 
 ### Métricas reales de verificación:
-- **Pruebas automatizadas:** **130 pruebas superadas en 34 archivos** (0 fallos, 591 aserciones `expect()`).
+- **Pruebas automatizadas:** **133 pruebas superadas en 35 archivos** (0 fallos, 597 aserciones `expect()`).
+- **Prueba clave de contrato de Engines y regla de no-fallback:** `src/infrastructure/forge614-engines.test.ts` (contrato `detect` con schema v1, mapeo exclusivo de adaptadores Shell, rechazo inmediato ante Engines no disponible o incompatible sin fallback local).
 - **Prueba clave de instalador público y bootstrap de Engines:** `tests/integration/public-installer.test.ts` (descarga remota, verificación de hash, instalación de Shell, bootstrap de Engines v1.0.0, reutilización de Engines compatible e instalación fallida si el hash o Engines es corrupto).
 - **Prueba clave de actualización segura:** `tests/integration/public-installer.test.ts` (verificación de preservación de ejecutable activo ante un checksum corrupto).
 - **Prueba clave de comando update:** `src/infrastructure/updater.test.ts` (invocación del instalador en modo `--latest`).

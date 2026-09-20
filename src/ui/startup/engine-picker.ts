@@ -1,15 +1,15 @@
 import { ProcessTerminal, SelectList, matchesKey } from "@earendil-works/pi-tui";
 import type { Terminal } from "@earendil-works/pi-tui";
-import type { InstalledEngine } from "../../engines/discovery.ts";
+import type { AvailableEngine } from "../../contracts/available-engine.ts";
 import { startupFrame } from "./frame.ts";
 import { accent } from "../basic/theme.ts";
 
 export async function chooseEngine(
-  engines: InstalledEngine[],
+  engines: AvailableEngine[],
   terminal: Terminal = new ProcessTerminal(),
-): Promise<InstalledEngine | undefined> {
+): Promise<AvailableEngine | undefined> {
   if (!engines.length) {
-    throw new Error("No installed, supported AI engines found on PATH. Install Claude Code, Codex CLI or Gemini CLI, then restart Forge614-Shell. Claude setup: https://code.claude.com/docs/en/setup");
+    throw new Error("Forge614 Engines found no Shell-compatible AI engines. Install Claude Code or Codex, then restart Forge614-Shell.");
   }
   const plain = (text: string) => text;
   const list = new SelectList(engines.map(engine => ({ value: engine.id, label: engine.label })), 8, {
@@ -17,8 +17,8 @@ export async function chooseEngine(
     description: plain, scrollInfo: plain, noMatch: plain,
   });
   const tui = startupFrame(terminal, "Choose your AI engine", list);
-  let finish!: (engine?: InstalledEngine) => void;
-  const selection = new Promise<InstalledEngine | undefined>(resolve => { finish = resolve; });
+  let finish!: (engine?: AvailableEngine) => void;
+  const selection = new Promise<AvailableEngine | undefined>(resolve => { finish = resolve; });
   list.onSelect = item => finish(engines.find(engine => engine.id === item.value));
   list.onCancel = () => finish();
   tui.addInputListener(data => {

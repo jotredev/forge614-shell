@@ -1,6 +1,6 @@
 import { ProcessTerminal, SelectList, Text, matchesKey } from "@earendil-works/pi-tui";
 import type { Terminal } from "@earendil-works/pi-tui";
-import type { InstalledEngine } from "../../engines/discovery.ts";
+import type { AvailableEngine } from "../../contracts/available-engine.ts";
 import { chooseEngine } from "./engine-picker.ts";
 import { startupFrame } from "./frame.ts";
 import { accent, muted } from "../basic/theme.ts";
@@ -36,8 +36,8 @@ async function chooseVisual(terminal: Terminal): Promise<"basic" | undefined> {
 
 // No stored defaults: each interactive launch has two explicit selections.
 export async function chooseStartup(
-  engines: InstalledEngine[], terminal: Terminal = new ProcessTerminal(),
-): Promise<InstalledEngine | undefined> {
+  engines: AvailableEngine[], terminal: Terminal = new ProcessTerminal(),
+): Promise<AvailableEngine | undefined> {
   if (!await chooseVisual(terminal)) return undefined;
   return chooseEngine(engines, terminal);
 }

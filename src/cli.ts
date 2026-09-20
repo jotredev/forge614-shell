@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createLaunch } from "./engines/pi/launcher.ts";
 import { parseEngine } from "./app/options.ts";
-import { discoverEngines } from "./engines/discovery.ts";
+import { discoverSelectableEngines } from "./infrastructure/forge614-engines.ts";
 
 const metadata = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
@@ -65,7 +65,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
     // Only the legacy non-interactive Pi automation path bypasses the UI.
     if (interactive || selected.engine !== "pi") {
-      const installed = await discoverEngines(process.env);
+      const installed = await discoverSelectableEngines({ env: process.env });
       if (!interactive) {
         throw new Error("Shell startup requires an interactive terminal to select the visual interface and AI engine.");
       }
@@ -77,8 +77,8 @@ The selected engine's project settings and permissions apply. This is not a sand
     if (selected.engine === "claude") {
       const { startClaudeUI } = await import("./ui/basic/claude.ts");
       await startClaudeUI(selected.args, selectedExecutable, undefined, metadata.version);
-    } else if (selected.engine === "codex" || selected.engine === "antigravity") {
-      const executable = selectedExecutable ?? (await discoverEngines(process.env)).find(engine => engine.id === selected.engine)?.executable;
+    } else if (selected.engine === "codex") {
+      const executable = selectedExecutable;
       if (!executable) throw new Error(`${selected.engine} is not installed on PATH.`);
       const { startNativeUI } = await import("./app/native-chat.ts");
       await startNativeUI(selected.engine, executable, selected.args, metadata.version);

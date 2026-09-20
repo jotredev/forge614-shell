@@ -1,8 +1,8 @@
 # 06 — Release preparation and public installer bundle
 
-2026-09-19 · Stage 02: packaging, public installation, and updates · Documentation revision: 6 · [Español](../es/06-preparacion-release-1.0.0-instalador.md) · [Index](../../README.md) · [Installation and update guide](00-installation-and-local-release-test.md)
+2026-09-19 · Stage 02: packaging, public installation, and updates · Documentation revision: 7 · [Español](../es/06-preparacion-release-1.0.0-instalador.md) · [Index](../../README.md) · [Installation and update guide](00-installation-and-local-release-test.md)
 
-This document details the engineering and workflow of **packaging, public distribution, and updates** for Forge614-Shell: **versioning conventions and product identity**, **pinned version display in the status bar**, the standalone package bundle builder (`scripts/release-bundle.mjs`), the public network installer (`scripts/install.sh`), the manual CLI updater (`forge614-shell update`), **version isolation under `~/.forge614/shell/`**, the **automatic bootstrap integration with Forge614 Engines under `~/.forge614/engines/`**, the **maintainer workflow for publishing GitHub Releases**, cryptographic integrity guarantees backed by **SHA-256 checksums**, and software quality verified by **130 automated tests across 34 files (591 assertions)**. For the end-user step-by-step guide on macOS/Linux, see [00 — Public release installation and updates](00-installation-and-local-release-test.md).
+This document details the engineering and workflow of **packaging, public distribution, and updates** for Forge614-Shell: **versioning conventions and product identity**, **pinned version display in the status bar**, the standalone package bundle builder (`scripts/release-bundle.mjs`), the public network installer (`scripts/install.sh`), the manual CLI updater (`forge614-shell update`), **version isolation under `~/.forge614/shell/`**, the **automatic bootstrap integration with Forge614 Engines under `~/.forge614/engines/`**, the **maintainer workflow for publishing GitHub Releases**, cryptographic integrity guarantees backed by **SHA-256 checksums**, and software quality verified by **133 automated tests across 35 files (597 assertions)**. For the end-user step-by-step guide on macOS/Linux, see [00 — Public release installation and updates](00-installation-and-local-release-test.md).
 
 > [!NOTE]
 > The automatic bootstrap integration with Forge614 Engines and the isolated PATH routing under `~/.forge614/shell/bin/` are built and verified in the codebase for **the next stable Shell release**, without altering the existing release published on GitHub Releases.
@@ -220,7 +220,7 @@ To publish a new public stable release on GitHub Releases, the repository mainta
    ```bash
    bun run check
    ```
-   Ensure strict typechecking, 130 automated tests, and bundle compilation pass with 0 errors.
+   Ensure strict typechecking, 133 automated tests, and bundle compilation pass with 0 errors.
 4. **Generate standalone bundle and checksum:**
    ```bash
    bun run bundle:release
@@ -288,9 +288,10 @@ bun run check
 ```
 
 ### Verified Pipeline Metrics:
-- **Automated Tests:** **130 tests passing across 34 files** (0 failures, 591 `expect()` assertions).
+- **Automated Tests:** **133 tests passing across 35 files** (0 failures, 597 `expect()` assertions).
+- **Engines Contract & No-Fallback Test:** `src/infrastructure/forge614-engines.test.ts` (schema v1 detect contract, exclusive Shell chat adapter mapping, immediate failure on unavailable or incompatible Engines without local fallback).
 - **Public Installer & Engines Bootstrap Test:** `tests/integration/public-installer.test.ts` (remote `/latest` resolution, hash verification, Shell installation, Engines v1.0.0 bootstrap, compatible Engines reuse, and failure safety if hash or Engines is invalid).
 - **Rollback Safety Integration Test:** `tests/integration/public-installer.test.ts` (verification of active executable preservation when checksum is invalid).
 - **CLI Updater Unit Test:** `src/infrastructure/updater.test.ts` (invoking the installer in `--latest` mode).
 - **Strict Typecheck:** `tsc --noEmit` passed with 0 errors.
-- **Production Build:** `dist/cli.js` cleanly bundled (150.77 KB).
+- **Production Build:** `dist/cli.js` cleanly bundled.

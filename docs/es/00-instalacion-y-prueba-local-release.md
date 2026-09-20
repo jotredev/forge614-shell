@@ -1,8 +1,8 @@
 # 00 — Instalación y actualización pública del release
 
-2026-09-19 · Etapa 02: instalación y actualización pública en macOS y Linux · Revisión: 6 · [English](../en/00-installation-and-local-release-test.md) · [Índice](../../README.md) · [Detalles técnicos del bundle](06-preparacion-release-1.0.0-instalador.md)
+2026-09-19 · Etapa 02: instalación y actualización pública en macOS y Linux · Revisión: 7 · [English](../en/00-installation-and-local-release-test.md) · [Índice](../../README.md) · [Detalles técnicos del bundle](06-preparacion-release-1.0.0-instalador.md)
 
-Esta guía explica, con el máximo nivel de detalle y paso a paso para personas **sin experiencia técnica previa**, el flujo público definitivo de instalación y actualización de **Forge614 Shell** en **macOS o Linux**, utilizando como versión de referencia estable el release **`1.0.2`** (`Forge614 Shell v1.0.2`). La integración de bootstrap automático con **Forge614 Engines** y el aislamiento de rutas en `~/.forge614/shell/bin/` forman parte del código validado localmente para **el próximo release estable de Shell** (sin modificar aún la versión publicada actual).
+Esta guía explica, con el máximo nivel de detalle y paso a paso para personas **sin experiencia técnica previa**, el flujo público definitivo de instalación y actualización de **Forge614 Shell** en **macOS o Linux**, utilizando como versión de referencia estable el release **`1.0.2`** (`Forge614 Shell v1.0.2`). La integración con el contrato público de **Forge614 Engines** (`schemaVersion: 1`), el selector de inicio respaldado por Engines (sin fallback local) y el aislamiento de rutas en `~/.forge614/shell/bin/` forman parte del código validado localmente para **el próximo release estable de Shell** (sin modificar aún la versión publicada actual).
 
 El repositorio de Forge614 Shell es público y su distribución oficial se realiza a través de **GitHub Releases**.
 
@@ -20,7 +20,7 @@ Antes de comenzar, asegúrate de que tu computadora cuenta con los siguientes re
 - **`shasum` o `sha256sum`:** Herramienta para verificar la integridad criptográfica SHA-256 de los archivos descargados.
 - **Node.js compatible instalado:** Se requiere Node.js versión `>=22.19.0`.
 - **Conexión a Internet:** Para conectarse a GitHub y descargar el release y sus componentes.
-- **Una o más CLIs de IA instaladas y autenticadas:** Según las IAs que desees utilizar (por ejemplo, Claude Code, OpenAI Codex, Google Gemini CLI o Antigravity CLI).
+- **Una o más CLIs de IA instaladas y autenticadas:** Aquellas que desees utilizar en el selector de chat de Shell (por ejemplo, Claude Code o OpenAI Codex).
 
 ---
 
@@ -35,7 +35,7 @@ Para mantener absoluta transparencia técnica y evitar expectativas incorrectas,
 - **Sin actualizaciones automáticas en segundo plano:** Forge614 Shell nunca busca ni instala actualizaciones por su cuenta sin que tú lo ordenes explícitamente.
 - **Sin restricciones privadas:** El repositorio es público; cualquier persona con macOS o Linux y Node.js compatible puede instalarlo sin requerir invitaciones previas de colaborador.
 - **Engines no se gestiona ni ejecuta manualmente:** Forge614 Engines es una dependencia interna no interactiva. Se instala y actualiza automáticamente a través de Shell. No se añade a la variable `PATH` ni está pensado para ser invocado a mano por el usuario.
-- **Uso opcional de Shell para trabajo diario:** Forge614 Shell es la cabina visual para configuración, setup, confirmación de integraciones y chat unificado; sin embargo, no es obligatorio permanecer dentro de Shell para programar a diario. Tras completar el setup o inicialización en Shell, puedes cerrar Shell y trabajar directamente en tu entorno preferido (ADE Orca, Claude Code, OpenAI Codex, etc.).
+- **Uso opcional de Shell para trabajo diario:** Forge614 Shell es la cabina visual para configuración, setup, confirmación de integraciones y chat unificado; sin embargo, no es obligatorio permanecer dentro de Shell para programar a diario. Tras completar el setup o inicialización en Shell, puedes cerrar Shell y trabajar directamente en tu entorno preferido (ADE Orca, Claude Code, OpenAI Codex, etc.). Shell no sustituye a esos clientes.
 
 ---
 
@@ -79,11 +79,17 @@ Instalar Shell (con el comando curl único)
 Shell verifica Engines
 (reutiliza Engines compatible v1.0.0 o lo instala automáticamente en ~/.forge614/engines/)
        ↓
-Abre Shell (forge614-shell) para setup/init opcional
-(presenta estado, IAs disponibles y confirmación de integraciones)
+Abre Shell (forge614-shell)
+       ↓
+Shell consulta el contrato público de Engines (~/.forge614/engines/bin/forge614-engines detect)
+(Engines detecta clientes locales instalados bajo schemaVersion: 1)
+       ↓
+Selector "Choose your AI engine" muestra solo agentes detectados con adaptador de chat
+(muestra Claude Code y Codex; Cursor se oculta por falta de adaptador; sin Antigravity)
        ↓
 El usuario puede cerrar Shell y trabajar normalmente en ADE Orca, Claude Code o Codex
-(las integraciones gestionadas quedan activas sin necesidad de mantener Shell abierto)
+(las integraciones gestionadas quedan activas sin necesidad de mantener Shell abierto;
+ Shell no sustituye a ADE Orca ni a las terminales nativas)
 ```
 
 ### Pasos al finalizar la instalación
@@ -141,9 +147,8 @@ forge614-shell update
 > Solo puede interactuar con las herramientas de IA que **tú ya tengas instaladas y autenticadas previamente en tu propia computadora**:
 > - **Para Claude Code:** Debes tener instalada la herramienta CLI oficial de Claude Code (`claude`) y haber iniciado sesión previamente en tu máquina (`claude login` o autenticación web en Anthropic) con una suscripción activa (Claude Pro o Claude Max).
 > - **Para OpenAI Codex:** Debes tener instalada la CLI de Codex e iniciar sesión con tu cuenta de ChatGPT / OpenAI.
-> - **Para Google Gemini CLI / Antigravity CLI:** Debes haber completado el flujo de autenticación de Google en tu terminal.
 >
-> Si seleccionas un motor de IA que no está instalado en tu máquina o cuya sesión expiró, Forge614 Shell te informará amablemente en pantalla que debes iniciar sesión con ese proveedor antes de enviar mensajes.
+> **Nota sobre el selector de arranque:** El selector "Choose your AI engine" muestra únicamente los agentes reportados por Forge614 Engines (`forge614-engines detect`) para los cuales Shell ya dispone de un adaptador de chat interactivo (Claude Code y Codex). Si Engines detecta Cursor, este no aparecerá aún en el selector pues su adaptador de chat está en desarrollo. Antigravity CLI ya no figura en este selector inicial al pertenecer a la detección local en PATH histórica. Si seleccionas un motor de IA que no está autenticado o cuya sesión expiró, Forge614 Shell te informará amablemente en pantalla que debes iniciar sesión con ese proveedor antes de enviar mensajes.
 
 ---
 
@@ -229,29 +234,51 @@ El instalador y el comando de actualización incorporan diagnósticos claros par
 - **Causa:** Falló la conexión con GitHub al intentar descargar el instalador oficial de Engines, o la instalación de Engines abortó. Shell no se activó para evitar dejar tu sistema inconsistente.
 - **Solución:** Comprueba tu conexión a internet y vuelve a ejecutar el comando de instalación de Shell. Shell reintentará descargar Engines.
 
-### 7. Forge614 Engines instalado pero incompatible
-- **Mensaje de error:**
+### 7. Forge614 Engines ausente al iniciar Shell (Sin Fallback Local)
+- **Mensaje de error al ejecutar `forge614-shell`:**
   ```text
-  Installed Forge614 Engines is not compatible with Forge614 Shell; Forge614 Shell was not changed.
+  Forge614-Shell could not start: Forge614 Engines is unavailable. Reinstall Forge614 Shell to repair its required dependency.
   ```
-- **Causa:** La versión existente de `~/.forge614/engines/bin/forge614-engines` no responde al comando `detect` con `schemaVersion: 1` o el binario está corrupto.
-- **Solución:** Vuelve a ejecutar el comando de instalación o actualización de Shell. El instalador descargará automáticamente la versión compatible más reciente de Engines (`v1.0.0`) y validará el contrato antes de activar Shell.
+- **Causa:** El binario interno `~/.forge614/engines/bin/forge614-engines` fue eliminado, movido o no cuenta con permisos de ejecución.
+- **Comportamiento arquitectónico:** **Forge614 Shell no realiza fallback a detección local en `PATH`**. No intenta adivinar qué CLIs están instaladas ni inventa una lista interna.
+- **Solución:** Repara la instalación ejecutando nuevamente el instalador oficial de Shell:
+  ```bash
+  curl -fsSL https://github.com/jotredev/forge614-shell/releases/latest/download/install.sh | bash
+  ```
+  El instalador reinstalará y verificará automáticamente la versión correcta de Engines.
 
-### 8. Reutilización de Forge614 Engines ya existente
-- **Mensaje informativo:**
+### 8. Forge614 Engines incompatible o salida corrupta al iniciar Shell
+- **Mensajes de error al ejecutar `forge614-shell`:**
+  ```text
+  Forge614-Shell could not start: Forge614 Engines is incompatible with this Shell version. Reinstall Forge614 Shell to repair its required dependency.
+  ```
+  o bien:
+  ```text
+  Forge614-Shell could not start: Forge614 Engines returned an invalid detection result.
+  ```
+- **Causa:** La versión instalada de Engines responde con una versión de contrato diferente a `schemaVersion: 1` o el JSON emitido está malformado.
+- **Comportamiento arquitectónico:** Shell rechaza tajantemente contratos incompatibles y se detiene de forma segura sin intentar una detección local alternativa.
+- **Solución:** Reinstala Forge614 Shell con el comando curl oficial para restaurar la versión compatible de Engines.
+
+### 9. Reutilización de Forge614 Engines ya existente
+- **Mensaje informativo durante la instalación/actualización:**
   ```text
   Using compatible Forge614 Engines (schema v1).
   ```
 - **Explicación:** Shell detectó que tu sistema ya cuenta con una versión compatible de Engines en `~/.forge614/engines/`. No requiere descargas adicionales ni acción por tu parte.
 
-### 9. El usuario intenta ejecutar `forge614-engines` manualmente
+### 10. El usuario intenta ejecutar `forge614-engines` manualmente
 - **Síntoma:** Al escribir `forge614-engines` en la terminal, el sistema responde:
   ```text
   forge614-engines: command not found
   ```
-- **Causa y explicación:** `forge614-engines` es un componente de soporte interno no interactivo para el ecosistema Forge614. No cuenta con interfaz de usuario (TUI) ni se añade a la variable `PATH` del usuario. Solo debe ser invocado internamente por Shell y otros componentes autorizados. No intentes ejecutarlo ni configurarlo por separado; todo su ciclo de vida lo gestiona `forge614-shell`.
+- **Causa y explicación:** `forge614-engines` es un componente de soporte interno no interactivo para el ecosistema Forge614. No cuenta con interfaz de usuario (TUI) ni se añade a la variable `PATH` del usuario (el único comando en `PATH` es `forge614-shell`). Solo debe ser invocado internamente por Shell y otros componentes autorizados. No intentes ejecutarlo ni configurarlo por separado; todo su ciclo de vida lo gestiona `forge614-shell`.
 
-### 10. Sistema operativo no soportado
+### 11. Libertad de trabajo en ADE Orca y clientes nativos
+- **Aclaración de diseño:** Forge614 Shell no reemplaza a ADE Orca, Claude Code, OpenAI Codex ni a tu terminal habitual.
+- **Flujo:** Puedes utilizar Shell para la configuración inicial, verificación de agentes y confirmación de integraciones. Una vez concluido, eres libre de cerrar Shell y programar directamente desde Orca o la terminal de tu preferencia. Las sesiones y perfiles compartidos permanecen operativos en tus herramientas habituales.
+
+### 12. Sistema operativo no soportado
 - **Mensaje de error:**
   ```text
   Forge614 Shell supports macOS and Linux only.
@@ -259,7 +286,7 @@ El instalador y el comando de actualización incorporan diagnósticos claros par
 - **Causa:** Se intentó ejecutar el script en Windows u otro sistema operativo no compatible.
 - **Solución:** Utiliza una computadora con macOS o una distribución de Linux compatible.
 
-### 11. El comando dice `forge614-shell: command not found` tras instalar
+### 13. El comando dice `forge614-shell: command not found` tras instalar
 - **Causa:** Sigues escribiendo en la misma ventana de Terminal donde se ejecutó el instalador y tu shell aún no ha leído el archivo de perfil actualizado (`~/.forge614/shell/bin`).
 - **Solución:** Cierra esa ventana de Terminal por completo (**Command + Q** en macOS) y abre una nueva ventana. Escribe directamente `forge614-shell`.
 
