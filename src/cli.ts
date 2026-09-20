@@ -27,6 +27,14 @@ if (args.length === 1 && args[0] === "update") {
     console.error(`Forge614-Shell uninstall failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
   }
+} else if (args[0] === "init") {
+  try {
+    const { runInitCommand } = await import("./app/init-engram.ts");
+    await runInitCommand(args.slice(1));
+  } catch (error) {
+    console.error(`Forge614-Shell init failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
 } else if (args.includes("--help") || args.includes("-h")) {
   console.log(`Forge614-Shell ${metadata.version}
 
