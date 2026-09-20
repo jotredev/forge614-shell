@@ -18,6 +18,18 @@ interface EnginesReport {
   agents?: unknown;
 }
 
+interface EnginesErrorPayload {
+  error?: { code?: unknown; message?: unknown };
+}
+
+interface McpPlanPayload {
+  plan?: { planId?: unknown; noop?: unknown; writes?: unknown };
+}
+
+interface McpApplyPayload {
+  result?: { applied?: unknown; changedFiles?: unknown };
+}
+
 const supportedShellAdapters: Record<string, AvailableEngine["id"]> = {
   "claude-code": "claude",
   codex: "codex",
@@ -121,4 +133,132 @@ export async function discoverMcpCapableAgents(options: {
     }
   }
   return capable;
+}
+
+function parseEnginesError(stdout: string, stderr: string): string {
+  for (const text of [stdout, stderr]) {
+    try {
+      const payload = JSON.parse(text) as EnginesErrorPayload;
+      if (payload.error && typeof payload.error.message === "string" && payload.error.message) return payload.error.message;
+    } catch { /* try the next stream */ }
+  }
+  return "Forge614 Engines command failed.";
+}
+
+async function runEnginesCommand(
+  args: string[],
+  label: string,
+  options: { home?: string; env?: NodeJS.ProcessEnv; run?: DetectRun },
+): Promise<unknown> {
+  const home = options.home ?? homedir();
+  const binary = enginesBinary(home, options.env);
+  const result = await (options.run ?? defaultRun)(binary, args);
+  if (result.status === null && !result.stdout.trim() && !result.stderr.trim()) {
+    throw new Error(`Forge614 Engines is unavailable at ${binary}. Install or reinstall Forge614 Engines to repair this dependency.`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    throw new Error(`forge614-engines ${label} failed: ${parseEnginesError(result.stdout, result.stderr)}`);
+  }
+  if (parsed && typeof parsed === "object" && "error" in (parsed as Record<string, unknown>)) {
+    throw new Error(`forge614-engines ${label} failed: ${parseEnginesError(result.stdout, result.stderr)}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(`forge614-engines ${label} failed: ${parseEnginesError(result.stdout, result.stderr)}`);
+  }
+  return parsed;
+}
+
+export interface McpPlanResult {
+  readonly planId: string;
+  readonly noop: boolean;
+  readonly filePath: string | null;
+}
+
+function toMcpPlanResult(payload: unknown): McpPlanResult {
+  const plan = (payload as McpPlanPayload).plan;
+  if (!plan || typeof plan.planId !== "string" || !plan.planId) {
+    throw new Error("forge614-engines returned an invalid plan.");
+  }
+  const writes = Array.isArray(plan.writes) ? plan.writes : [];
+  const firstWrite = writes[0] as { path?: unknown } | undefined;
+  const filePath = firstWrite && typeof firstWrite.path === "string" ? firstWrite.path : null;
+  return { planId: plan.planId, noop: plan.noop === true, filePath };
+}
+
+/** Requests a read-only install plan. Never writes anything; throws Engines' own message on any error, including conflicts. */
+export async function planMcpInstall(options: {
+  agentId: string;
+  name: string;
+  command: string;
+  args: string[];
+  home?: string;
+  env?: NodeJS.ProcessEnv;
+  run?: DetectRun;
+}): Promise<McpPlanResult> {
+  const payload = await runEnginesCommand(
+    ["plan", "mcp-install", "--agent", options.agentId, "--name", options.name, "--command", options.command, "--args", ...options.args],
+    "plan mcp-install",
+    options,
+  );
+  return toMcpPlanResult(payload);
+}
+
+/**
+ * Requests a read-only removal plan for a future uninstall flow. Takes the same four flags as
+ * `planMcpInstall` — Engines validates the entire existing entry against `command`/`args`, not
+ * just the name — and throws (e.g. `UNRECOGNIZED_ENTRY`) if it does not match or Engines refuses.
+ */
+export async function planMcpRemove(options: {
+  agentId: string;
+  name: string;
+  command: string;
+  args: string[];
+  home?: string;
+  env?: NodeJS.ProcessEnv;
+  run?: DetectRun;
+}): Promise<McpPlanResult> {
+  const payload = await runEnginesCommand(
+    ["plan", "mcp-remove", "--agent", options.agentId, "--name", options.name, "--command", options.command, "--args", ...options.args],
+    "plan mcp-remove",
+    options,
+  );
+  return toMcpPlanResult(payload);
+}
+
+/** Applies a previously previewed and confirmed plan. Must never be called before Shell's own confirmation. */
+export async function applyMcpPlan(options: {
+  planId: string;
+  home?: string;
+  env?: NodeJS.ProcessEnv;
+  run?: DetectRun;
+}): Promise<{ applied: boolean; changedFiles: string[] }> {
+  const payload = await runEnginesCommand(["apply", "--plan-id", options.planId], "apply", options);
+  const result = (payload as McpApplyPayload).result;
+  if (!result || typeof result.applied !== "boolean") {
+    throw new Error("forge614-engines apply returned an invalid result.");
+  }
+  const changedFiles = Array.isArray(result.changedFiles)
+    ? result.changedFiles.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  return { applied: result.applied, changedFiles };
+}
+
+/**
+ * Composed building block for a future `forge614-shell` uninstall flow: plans and immediately
+ * applies removal of the `forge614-engram` MCP entry for one assistant. `server` must match what
+ * was originally installed (same `command`/`args`), since Engines validates the whole entry, not
+ * just the name. No interactive UI here — a future uninstall command calls this directly and
+ * reports the outcome itself.
+ */
+export async function removeEngramMcpFromAgent(
+  agentId: string,
+  server: { command: string; args: string[] },
+  options: { home?: string; env?: NodeJS.ProcessEnv; run?: DetectRun } = {},
+): Promise<{ applied: boolean; changedFiles: string[] }> {
+  const plan = await planMcpRemove({ agentId, name: "forge614-engram", command: server.command, args: server.args, ...options });
+  if (plan.noop) return { applied: false, changedFiles: [] };
+  return applyMcpPlan({ planId: plan.planId, ...options });
 }

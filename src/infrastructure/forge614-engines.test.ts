@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { discoverMcpCapableAgents, discoverSelectableEngines } from "./forge614-engines.ts";
+import { applyMcpPlan, discoverMcpCapableAgents, discoverSelectableEngines, planMcpInstall, planMcpRemove, removeEngramMcpFromAgent } from "./forge614-engines.ts";
 
 const report = {
   schemaVersion: 1,
@@ -99,4 +99,136 @@ test("discoverMcpCapableAgents excludes an agent whose capabilities lookup fails
 test("discoverMcpCapableAgents rejects an unavailable Engines installation", async () => {
   await expect(discoverMcpCapableAgents({ run: async () => ({ status: 127, stdout: "", stderr: "not found" }) }))
     .rejects.toThrow("Forge614 Engines is unavailable");
+});
+
+test("planMcpInstall sends the exact Engines contract and reads the plan", async () => {
+  const calls: string[][] = [];
+  const plan = await planMcpInstall({
+    agentId: "claude-code", name: "forge614-engram", command: "/Users/tester/.forge614/engram/bin/forge614-engram", args: ["mcp"],
+    home: "/Users/tester",
+    run: async (command, args) => {
+      calls.push([command, ...args]);
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          schemaVersion: 1,
+          plan: {
+            planId: "plan-1", agentId: "claude-code", action: "mcp-install", noop: false,
+            writes: [{ path: "/Users/tester/.claude.json", beforeHash: "x", afterContent: "{ secret: true }" }],
+          },
+        }),
+        stderr: "",
+      };
+    },
+  });
+  expect(calls).toEqual([[
+    "/Users/tester/.forge614/engines/bin/forge614-engines", "plan", "mcp-install",
+    "--agent", "claude-code", "--name", "forge614-engram",
+    "--command", "/Users/tester/.forge614/engram/bin/forge614-engram", "--args", "mcp",
+  ]]);
+  expect(plan).toEqual({ planId: "plan-1", noop: false, filePath: "/Users/tester/.claude.json" });
+});
+
+test("planMcpInstall never exposes afterContent or beforeHash", async () => {
+  const plan = await planMcpInstall({
+    agentId: "claude-code", name: "forge614-engram", command: "/bin/x", args: ["mcp"], home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({ schemaVersion: 1, plan: { planId: "plan-1", agentId: "claude-code", action: "mcp-install", noop: false, writes: [{ path: "/p", beforeHash: "h", afterContent: "SECRET" }] } }),
+      stderr: "",
+    }),
+  });
+  expect(JSON.stringify(plan)).not.toContain("SECRET");
+  expect(JSON.stringify(plan)).not.toContain("beforeHash");
+});
+
+test("planMcpInstall reports noop when nothing would change", async () => {
+  const plan = await planMcpInstall({
+    agentId: "claude-code", name: "forge614-engram", command: "/bin/x", args: ["mcp"], home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, plan: { planId: "plan-1", agentId: "claude-code", action: "mcp-install", noop: true, writes: [] } }), stderr: "" }),
+  });
+  expect(plan).toEqual({ planId: "plan-1", noop: true, filePath: null });
+});
+
+test("planMcpInstall throws Engines' own message for a conflict", async () => {
+  await expect(planMcpInstall({
+    agentId: "claude-code", name: "forge614-engram", command: "/bin/x", args: ["mcp"], home: "/Users/tester",
+    run: async () => ({ status: 1, stdout: JSON.stringify({ schemaVersion: 1, error: { code: "CONFLICT", message: "A different MCP already uses this name." } }), stderr: "" }),
+  })).rejects.toThrow("A different MCP already uses this name.");
+});
+
+test("applyMcpPlan sends the plan id and reports the changed files", async () => {
+  const calls: string[][] = [];
+  const result = await applyMcpPlan({
+    planId: "plan-1", home: "/Users/tester",
+    run: async (command, args) => {
+      calls.push([command, ...args]);
+      return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { planId: "plan-1", applied: true, changedFiles: ["/Users/tester/.claude.json"] } }), stderr: "" };
+    },
+  });
+  expect(calls).toEqual([["/Users/tester/.forge614/engines/bin/forge614-engines", "apply", "--plan-id", "plan-1"]]);
+  expect(result).toEqual({ applied: true, changedFiles: ["/Users/tester/.claude.json"] });
+});
+
+test("applyMcpPlan throws Engines' own message when the plan id is unknown", async () => {
+  await expect(applyMcpPlan({
+    planId: "missing", home: "/Users/tester",
+    run: async () => ({ status: 1, stdout: JSON.stringify({ schemaVersion: 1, error: { code: "PLAN_NOT_FOUND", message: 'No plan found with id "missing"' } }), stderr: "" }),
+  })).rejects.toThrow('No plan found with id "missing"');
+});
+
+test("planMcpRemove sends the same four flags as install and throws when the entry does not match what this system would have installed", async () => {
+  const calls: string[][] = [];
+  await expect(planMcpRemove({
+    agentId: "claude-code", name: "forge614-engram", command: "/Users/tester/.forge614/engram/bin/forge614-engram", args: ["mcp"], home: "/Users/tester",
+    run: async (command, args) => {
+      calls.push([command, ...args]);
+      return {
+        status: 1,
+        stdout: JSON.stringify({ schemaVersion: 1, error: { code: "UNRECOGNIZED_ENTRY", message: 'Refusing to remove "forge614-engram": it does not match what this system would have installed' } }),
+        stderr: "",
+      };
+    },
+  })).rejects.toThrow("does not match what this system would have installed");
+  expect(calls).toEqual([[
+    "/Users/tester/.forge614/engines/bin/forge614-engines", "plan", "mcp-remove",
+    "--agent", "claude-code", "--name", "forge614-engram",
+    "--command", "/Users/tester/.forge614/engram/bin/forge614-engram", "--args", "mcp",
+  ]]);
+});
+
+test("removeEngramMcpFromAgent plans and applies removal in one call", async () => {
+  const calls: string[][] = [];
+  const result = await removeEngramMcpFromAgent("claude-code", { command: "/Users/tester/.forge614/engram/bin/forge614-engram", args: ["mcp"] }, {
+    home: "/Users/tester",
+    run: async (command, args) => {
+      calls.push([command, ...args]);
+      if (args.includes("plan")) {
+        return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, plan: { planId: "plan-remove-1", agentId: "claude-code", action: "mcp-remove", noop: false, writes: [{ path: "/Users/tester/.claude.json" }] } }), stderr: "" };
+      }
+      return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { planId: "plan-remove-1", applied: true, changedFiles: ["/Users/tester/.claude.json"] } }), stderr: "" };
+    },
+  });
+  expect(calls).toEqual([
+    [
+      "/Users/tester/.forge614/engines/bin/forge614-engines", "plan", "mcp-remove",
+      "--agent", "claude-code", "--name", "forge614-engram",
+      "--command", "/Users/tester/.forge614/engram/bin/forge614-engram", "--args", "mcp",
+    ],
+    ["/Users/tester/.forge614/engines/bin/forge614-engines", "apply", "--plan-id", "plan-remove-1"],
+  ]);
+  expect(result).toEqual({ applied: true, changedFiles: ["/Users/tester/.claude.json"] });
+});
+
+test("removeEngramMcpFromAgent skips apply when there is nothing to remove", async () => {
+  const calls: string[][] = [];
+  const result = await removeEngramMcpFromAgent("claude-code", { command: "/bin/x", args: ["mcp"] }, {
+    home: "/Users/tester",
+    run: async (command, args) => {
+      calls.push([command, ...args]);
+      return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, plan: { planId: "plan-remove-1", agentId: "claude-code", action: "mcp-remove", noop: true, writes: [] } }), stderr: "" };
+    },
+  });
+  expect(calls.length).toBe(1);
+  expect(result).toEqual({ applied: false, changedFiles: [] });
 });
