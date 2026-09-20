@@ -56,7 +56,7 @@ The installer uses the GitHub Releases API to resolve the numeric tag and the ma
 
 ## Installation and update behavior
 
-- First installation creates `~/.forge614/bin/forge614-shell` and makes it available in new Terminal sessions.
+- First installation creates `~/.forge614/shell/bin/forge614-shell` and makes it available in new Terminal sessions.
 - An update keeps previous version directories intact and only repoints the active symlink after the new archive is fully downloaded, verified, and installed.
 - Re-running installation of the same version is safe and does not add another PATH line.
 - A compatible Engines binary is reused without downloading another copy; an absent or incompatible one is installed automatically before Shell is activated.

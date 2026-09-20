@@ -1,8 +1,8 @@
 # 00 — Instalación y actualización pública del release
 
-2026-09-18 · Etapa 02: instalación y actualización pública en macOS y Linux · Revisión: 5 · [English](../en/00-installation-and-local-release-test.md) · [Índice](../../README.md) · [Detalles técnicos del bundle](06-preparacion-release-1.0.0-instalador.md)
+2026-09-19 · Etapa 02: instalación y actualización pública en macOS y Linux · Revisión: 6 · [English](../en/00-installation-and-local-release-test.md) · [Índice](../../README.md) · [Detalles técnicos del bundle](06-preparacion-release-1.0.0-instalador.md)
 
-Esta guía explica, con el máximo nivel de detalle y paso a paso para personas **sin experiencia técnica previa**, el flujo público definitivo de instalación y actualización de **Forge614 Shell** en **macOS o Linux**, utilizando como versión de referencia estable el release **`1.0.2`** (`Forge614 Shell v1.0.2`).
+Esta guía explica, con el máximo nivel de detalle y paso a paso para personas **sin experiencia técnica previa**, el flujo público definitivo de instalación y actualización de **Forge614 Shell** en **macOS o Linux**, utilizando como versión de referencia estable el release **`1.0.2`** (`Forge614 Shell v1.0.2`). La integración de bootstrap automático con **Forge614 Engines** y el aislamiento de rutas en `~/.forge614/shell/bin/` forman parte del código validado localmente para **el próximo release estable de Shell** (sin modificar aún la versión publicada actual).
 
 El repositorio de Forge614 Shell es público y su distribución oficial se realiza a través de **GitHub Releases**.
 
@@ -34,6 +34,8 @@ Para mantener absoluta transparencia técnica y evitar expectativas incorrectas,
 - **Sin comando `/update` dentro del chat interactivo:** La actualización no es un comando slash del chat, sino un subcomando de terminal ejecutado fuera de la sesión activa: `forge614-shell update`.
 - **Sin actualizaciones automáticas en segundo plano:** Forge614 Shell nunca busca ni instala actualizaciones por su cuenta sin que tú lo ordenes explícitamente.
 - **Sin restricciones privadas:** El repositorio es público; cualquier persona con macOS o Linux y Node.js compatible puede instalarlo sin requerir invitaciones previas de colaborador.
+- **Engines no se gestiona ni ejecuta manualmente:** Forge614 Engines es una dependencia interna no interactiva. Se instala y actualiza automáticamente a través de Shell. No se añade a la variable `PATH` ni está pensado para ser invocado a mano por el usuario.
+- **Uso opcional de Shell para trabajo diario:** Forge614 Shell es la cabina visual para configuración, setup, confirmación de integraciones y chat unificado; sin embargo, no es obligatorio permanecer dentro de Shell para programar a diario. Tras completar el setup o inicialización en Shell, puedes cerrar Shell y trabajar directamente en tu entorno preferido (ADE Orca, Claude Code, OpenAI Codex, etc.).
 
 ---
 
@@ -45,21 +47,48 @@ Para instalar Forge614 Shell por primera vez en tu computadora, el **único coma
 curl -fsSL https://github.com/jotredev/forge614-shell/releases/latest/download/install.sh | bash
 ```
 
+> [!IMPORTANT]
+> **Un único comando para todo el entorno:** No debes ejecutar ningún comando secundario para instalar Forge614 Engines. El instalador de Shell detecta, descarga y valida Engines de forma desatendida y automática.
+
 ### ¿Qué hace este comando automáticamente?
 El script instalador resuelve todo el proceso técnico por ti de forma transparente:
 
 1. **Consulta GitHub Releases:** Se conecta a la API pública de GitHub para identificar la versión estable más reciente (`releases/latest`).
 2. **Descarga el paquete y su suma:** Descarga automáticamente el archivo comprimido (`forge614-shell-<version>.tar.gz`) y su firma criptográfica (`.sha256`).
 3. **Verifica la integridad con SHA-256:** Antes de descomprimir nada, calcula la huella matemática del archivo descargado con `shasum` o `sha256sum`. Si la suma no coincide exactamente con el valor oficial, aborta inmediatamente para proteger tu computadora.
-4. **Instala en `~/.forge614`:** Desempaqueta la aplicación dentro de una carpeta propia en tu directorio personal (`~/.forge614/shell/<version>/`) y crea un enlace simbólico ejecutable en `~/.forge614/bin/forge614-shell`.
-5. **Configura automáticamente el comando `forge614-shell`:** Detecta tu shell activo (`~/.zshrc` en macOS, `~/.bashrc` en Linux o `~/.profile` en otros entornos) y añade la ruta del programa al inicio de tu terminal de forma idempotente (nunca duplicará líneas si lo vuelves a ejecutar).
-6. **NO requiere editar el `PATH` a mano:** No tienes que copiar instrucciones como `export PATH=...` ni tocar archivos de configuración ocultos.
+4. **Bootstrap y validación automática de Forge614 Engines:**
+   - Revisa si ya existe el ejecutable interno `~/.forge614/engines/bin/forge614-engines`.
+   - Ejecuta `forge614-engines detect` para comprobar que cumpla con `schemaVersion: 1`.
+   - Si ya existe y es compatible, lo reutiliza directamente sin descargarlo nuevamente.
+   - Si Engines falta o no es compatible, descarga y ejecuta automáticamente el instalador oficial de Forge614 Engines (`v1.0.0`) dentro de `~/.forge614/engines/`.
+   - **Garantía atómica:** Si Engines no puede descargarse, instalarse o validarse, **Shell no se activa ni queda instalado a medias**.
+5. **Instala Shell en `~/.forge614/shell/<version>`:** Desempaqueta la aplicación de forma aislada y crea el enlace simbólico activo en `~/.forge614/shell/bin/forge614-shell`.
+6. **Configura automáticamente el `PATH` exclusivamente para Shell:** Detecta tu shell activo (`~/.zshrc` en macOS, `~/.bashrc` en Linux o `~/.profile` en otros entornos) e inyecta la línea `export PATH="$HOME/.forge614/shell/bin:$PATH"` de forma idempotente, migrando y limpiando cualquier entrada antigua obsoleta. **Engines nunca se agrega al PATH.**
 7. **NO requiere herramientas de desarrollo:** No necesitas tener instalados Git, GitHub CLI (`gh`), Bun ni npm, ni requieres clonar el código fuente.
 8. **NO requiere permisos de administrador:** No te pedirá contraseñas de sistema ni usará `sudo`; todo se instala dentro de tu carpeta de usuario.
 
+---
+
+## Flujo de ciclo de vida completo
+
+El flujo de trabajo previsto entre Shell, Engines y tus herramientas habituales es el siguiente:
+
+```text
+Instalar Shell (con el comando curl único)
+       ↓
+Shell verifica Engines
+(reutiliza Engines compatible v1.0.0 o lo instala automáticamente en ~/.forge614/engines/)
+       ↓
+Abre Shell (forge614-shell) para setup/init opcional
+(presenta estado, IAs disponibles y confirmación de integraciones)
+       ↓
+El usuario puede cerrar Shell y trabajar normalmente en ADE Orca, Claude Code o Codex
+(las integraciones gestionadas quedan activas sin necesidad de mantener Shell abierto)
+```
+
 ### Pasos al finalizar la instalación
 
-Una vez que el comando termine y veas el mensaje `Installed Forge614 Shell v1.0.2`:
+Una vez que el comando termine y veas el mensaje de confirmación de instalación:
 
 1. **Cierra completamente la aplicación Terminal** (en macOS presiona **Command + Q**; en Linux cierra la ventana de la terminal).
 2. **Abre una nueva ventana de Terminal.**
@@ -75,7 +104,7 @@ Para confirmar la versión instalada en cualquier momento, ejecuta:
 forge614-shell --version
 ```
 
-- **Resultado esperado:**
+- **Resultado esperado de referencia:**
   ```text
   forge614-shell 1.0.2
   ```
@@ -91,9 +120,9 @@ forge614-shell update
 ```
 
 ### Comportamiento del comando de actualización:
-- **Descarga e instalación de la última versión estable:** Consulta la API pública de GitHub, descarga los nuevos assets y repunta el enlace activo a la nueva versión.
+- **Descarga e instalación de la última versión estable:** Consulta la API pública de GitHub, descarga los nuevos assets, valida Engines y repunta el enlace activo a la nueva versión.
 - **Acción manual deliberada:** Nunca se ejecuta en segundo plano. La decisión de cuándo actualizar está siempre en tus manos.
-- **Protección de la versión activa:** Si la descarga se interrumpe, el checksum falla o el paquete descargado es inválido, **la versión que ya tenías instalada permanece intacta y activa**. Tu entorno nunca quedará roto.
+- **Protección de la versión activa:** Si la descarga se interrumpe, el checksum falla, el paquete es inválido o Engines no puede validarse, **la versión de Shell que ya tenías instalada permanece intacta y activa**. Tu entorno nunca quedará roto.
 - **Aviso si ya estás al día:** Si ya tienes activa la versión más reciente, el sistema te avisará con un mensaje claro:
   ```text
   Forge614 Shell v1.0.2 is already active.
@@ -115,6 +144,34 @@ forge614-shell update
 > - **Para Google Gemini CLI / Antigravity CLI:** Debes haber completado el flujo de autenticación de Google en tu terminal.
 >
 > Si seleccionas un motor de IA que no está instalado en tu máquina o cuya sesión expiró, Forge614 Shell te informará amablemente en pantalla que debes iniciar sesión con ese proveedor antes de enviar mensajes.
+
+---
+
+## Estructura creada en tu disco (`~/.forge614/`)
+
+Una vez completada la instalación, los archivos quedan organizados bajo tu directorio personal con estricta separación de responsabilidades:
+
+```text
+~/.forge614/
+├─ shell/
+│  ├─ bin/
+│  │  └─ forge614-shell -> ~/.forge614/shell/<version>/dist/cli.js   # Enlace activo (ÚNICO en PATH)
+│  └─ <version>/                                                    # Directorio versionado de Shell
+│     ├── dist/
+│     │   └── cli.js                                                # Runtime empaquetado Node.js
+│     ├── extensions/                                               # Extensiones de entorno
+│     └── package.json                                              # Metadatos del release
+└─ engines/
+   └─ bin/
+      └─ forge614-engines                                           # Binario interno de Engines (NO en PATH)
+```
+
+> [!IMPORTANT]
+> **Aislamiento estricto del PATH:**
+> - Solo el directorio `~/.forge614/shell/bin` se añade a la variable `PATH` de tu sistema.
+> - El directorio `~/.forge614/engines/bin` **no se añade al PATH**, ya que `forge614-engines` es una herramienta auxiliar interna para inspección de capacidades, consumida de forma programática por Shell.
+
+Cuando actualices a una futura versión con `forge614-shell update`, se creará una carpeta paralela en `shell/<nueva-version>/` y el enlace activo `shell/bin/forge614-shell` se repuntará a ella de forma atómica y segura.
 
 ---
 
@@ -163,7 +220,38 @@ El instalador y el comando de actualización incorporan diagnósticos claros par
 - **Causa:** El archivo comprimido se descargó de forma incompleta o sus bytes se alteraron durante la transferencia.
 - **Solución:** El instalador aborta sin tocar tu sistema. Vuelve a ejecutar el comando para realizar una nueva descarga limpia.
 
-### 6. Sistema operativo no soportado
+### 6. Problemas al descargar o instalar Forge614 Engines
+- **Mensaje de error:**
+  ```text
+  Could not download the Forge614 Engines installer.
+  ```
+  o bien `Forge614 Engines installation failed; Forge614 Shell was not changed.`.
+- **Causa:** Falló la conexión con GitHub al intentar descargar el instalador oficial de Engines, o la instalación de Engines abortó. Shell no se activó para evitar dejar tu sistema inconsistente.
+- **Solución:** Comprueba tu conexión a internet y vuelve a ejecutar el comando de instalación de Shell. Shell reintentará descargar Engines.
+
+### 7. Forge614 Engines instalado pero incompatible
+- **Mensaje de error:**
+  ```text
+  Installed Forge614 Engines is not compatible with Forge614 Shell; Forge614 Shell was not changed.
+  ```
+- **Causa:** La versión existente de `~/.forge614/engines/bin/forge614-engines` no responde al comando `detect` con `schemaVersion: 1` o el binario está corrupto.
+- **Solución:** Vuelve a ejecutar el comando de instalación o actualización de Shell. El instalador descargará automáticamente la versión compatible más reciente de Engines (`v1.0.0`) y validará el contrato antes de activar Shell.
+
+### 8. Reutilización de Forge614 Engines ya existente
+- **Mensaje informativo:**
+  ```text
+  Using compatible Forge614 Engines (schema v1).
+  ```
+- **Explicación:** Shell detectó que tu sistema ya cuenta con una versión compatible de Engines en `~/.forge614/engines/`. No requiere descargas adicionales ni acción por tu parte.
+
+### 9. El usuario intenta ejecutar `forge614-engines` manualmente
+- **Síntoma:** Al escribir `forge614-engines` en la terminal, el sistema responde:
+  ```text
+  forge614-engines: command not found
+  ```
+- **Causa y explicación:** `forge614-engines` es un componente de soporte interno no interactivo para el ecosistema Forge614. No cuenta con interfaz de usuario (TUI) ni se añade a la variable `PATH` del usuario. Solo debe ser invocado internamente por Shell y otros componentes autorizados. No intentes ejecutarlo ni configurarlo por separado; todo su ciclo de vida lo gestiona `forge614-shell`.
+
+### 10. Sistema operativo no soportado
 - **Mensaje de error:**
   ```text
   Forge614 Shell supports macOS and Linux only.
@@ -171,29 +259,9 @@ El instalador y el comando de actualización incorporan diagnósticos claros par
 - **Causa:** Se intentó ejecutar el script en Windows u otro sistema operativo no compatible.
 - **Solución:** Utiliza una computadora con macOS o una distribución de Linux compatible.
 
-### 7. El comando dice `forge614-shell: command not found` tras instalar
-- **Causa:** Sigues escribiendo en la misma ventana de Terminal donde se ejecutó el instalador y tu shell aún no ha leído el archivo de perfil actualizado.
+### 11. El comando dice `forge614-shell: command not found` tras instalar
+- **Causa:** Sigues escribiendo en la misma ventana de Terminal donde se ejecutó el instalador y tu shell aún no ha leído el archivo de perfil actualizado (`~/.forge614/shell/bin`).
 - **Solución:** Cierra esa ventana de Terminal por completo (**Command + Q** en macOS) y abre una nueva ventana. Escribe directamente `forge614-shell`.
-
----
-
-## Estructura creada en tu disco (`~/.forge614/`)
-
-Una vez instalado, los archivos quedan organizados bajo tu carpeta de usuario de la siguiente manera:
-
-```text
-~/.forge614/
-├── bin/
-│   └── forge614-shell -> ~/.forge614/shell/1.0.2/dist/cli.js   # Enlace simbólico activo
-└── shell/
-    └── 1.0.2/                                                 # Directorio de la versión 1.0.2
-        ├── dist/
-        │   └── cli.js                                         # Aplicación Node.js empaquetada
-        ├── extensions/                                        # Extensiones de entorno
-        └── package.json                                       # Metadatos del release
-```
-
-Cuando actualices a una futura versión con `forge614-shell update`, se creará una carpeta paralela (por ejemplo `shell/1.0.3/`) y el enlace activo `bin/forge614-shell` se repuntará a ella de forma atómica y segura.
 
 ---
 
@@ -206,15 +274,14 @@ Cuando actualices a una futura versión con `forge614-shell update`, se creará 
    ```bash
    bun run bundle:release
    ```
-   Produce `dist/release/forge614-shell-1.0.2.tar.gz` y `dist/release/forge614-shell-1.0.2.tar.gz.sha256`.
+   Produce `dist/release/forge614-shell-1.0.4.tar.gz` (o la versión correspondiente) y su archivo `.sha256`.
 2. **Probar la instalación por archivo en una ruta temporal aislada:**
    ```bash
-   FORGE614_HOME="$HOME/.forge614-test" bash scripts/install.sh --archive "$PWD/dist/release/forge614-shell-1.0.2.tar.gz"
+   FORGE614_HOME="$HOME/.forge614-test" bash scripts/install.sh --archive "$PWD/dist/release/forge614-shell-1.0.4.tar.gz"
    ```
 3. **Verificar la versión instalada en la prueba:**
    ```bash
-   ~/.forge614-test/bin/forge614-shell --version
-   # Salida esperada: forge614-shell 1.0.2
+   ~/.forge614-test/shell/bin/forge614-shell --version
    ```
 4. **Limpieza del entorno de prueba:**
    ```bash
