@@ -97,7 +97,7 @@ test("discoverMcpCapableAgents excludes an agent whose capabilities lookup fails
 });
 
 test("discoverMcpCapableAgents rejects an unavailable Engines installation", async () => {
-  await expect(discoverMcpCapableAgents({ run: async () => ({ status: 127, stdout: "", stderr: "not found" }) }))
+  await expect(discoverMcpCapableAgents({ home: "/Users/tester", run: async () => ({ status: 127, stdout: "", stderr: "not found" }) }))
     .rejects.toThrow("Forge614 Engines is unavailable");
 });
 

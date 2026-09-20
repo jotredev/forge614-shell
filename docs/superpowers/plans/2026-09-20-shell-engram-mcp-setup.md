@@ -594,6 +594,8 @@ export async function removeEngramMcpFromAgent(
 }
 ```
 
+**Amendment (post-Task 7):** the error-wrapping shown above was superseded during Task 7's integration — see that task's section and the SDD ledger for why. The shipped `runEnginesCommand`/`parseEnginesError` now surface Engines' own message directly and fall back to `forge614-engines ${label} failed.` only when Engines gives no parseable message.
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test src/infrastructure/forge614-engines.test.ts`

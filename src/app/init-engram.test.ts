@@ -215,8 +215,7 @@ test("choosing one MCP-capable assistant plans and applies exactly that one", as
   terminal.input("\r"); await tick(); // Engram summary: Confirm
   terminal.input(" "); terminal.input("\r"); await tick(); // MCP picker: check Claude Code, submit
   terminal.input("\r"); // MCP preview: Confirm
-  await run;
-  restore();
+  try { await run; } finally { restore(); }
   expect(enginesCalls[0]).toEqual(["/Users/tester/.forge614/engines/bin/forge614-engines", "detect"]);
   expect(enginesCalls[1]).toEqual(["/Users/tester/.forge614/engines/bin/forge614-engines", "capabilities", "--agent", "claude-code"]);
   expect(enginesCalls[2]).toEqual([
@@ -255,8 +254,7 @@ test("selecting no assistants initializes Engram without configuring any MCP", a
   terminal.input("\x1b[B"); terminal.input("\r"); await tick();
   terminal.input("\r"); await tick(); // Engram summary confirm
   terminal.input("\r"); // MCP picker: submit with nothing checked
-  await run;
-  restore();
+  try { await run; } finally { restore(); }
   expect(enginesCalls).toEqual([
     ["/Users/tester/.forge614/engines/bin/forge614-engines", "detect"],
     ["/Users/tester/.forge614/engines/bin/forge614-engines", "capabilities", "--agent", "claude-code"],
@@ -294,8 +292,7 @@ test("an already-configured assistant is reported without an apply call", async 
   terminal.input("\x1b[B"); terminal.input("\r"); await tick();
   terminal.input("\r"); await tick();
   terminal.input(" "); terminal.input("\r"); // check + submit
-  await run;
-  restore();
+  try { await run; } finally { restore(); }
   expect(enginesCalls.filter(call => call.includes("apply")).length).toBe(0);
   expect(logs).toContain("Claude Code: already configured");
 });
@@ -330,8 +327,7 @@ test("a plan error is shown as not configured and never applied", async () => {
   terminal.input("\x1b[B"); terminal.input("\r"); await tick();
   terminal.input("\r"); await tick();
   terminal.input(" "); terminal.input("\r"); // check + submit
-  await run;
-  restore();
+  try { await run; } finally { restore(); }
   expect(enginesCalls.filter(call => call.includes("apply")).length).toBe(0);
   expect(logs).toContain("Claude Code: not configured — A different MCP already uses this name.");
 });
@@ -367,8 +363,7 @@ test("cancelling the MCP preview confirmation applies nothing", async () => {
   terminal.input("\r"); await tick();
   terminal.input(" "); terminal.input("\r"); await tick(); // check + submit MCP picker
   terminal.input("\x1b[B"); terminal.input("\r"); // preview: move to Cancel, submit
-  await run;
-  restore();
+  try { await run; } finally { restore(); }
   expect(enginesCalls.filter(call => call.includes("apply")).length).toBe(0);
   expect(logs).toContain("Claude Code: skipped");
 });
@@ -415,8 +410,97 @@ test("two selected assistants report independently when one apply fails", async 
   terminal.input("\r"); await tick();
   terminal.input(" "); terminal.input("\x1b[B"); terminal.input(" "); terminal.input("\r"); await tick(); // check both, submit
   terminal.input("\r"); // preview: Confirm
-  await run;
-  restore();
+  try { await run; } finally { restore(); }
   expect(logs).toContain("Claude Code: configured");
   expect(logs).toContain("Codex: not configured — Could not write the Codex config file.");
+});
+
+test("an apply that reports applied: false is shown as not configured, not configured", async () => {
+  const terminal = new TestTerminal();
+  const enginesCalls: string[][] = [];
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (command, args) => {
+      enginesCalls.push([command, ...args]);
+      if (args[0] === "detect") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ schemaVersion: 1, agents: [
+            { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude" },
+          ] }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "capabilities") {
+        return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, id: "claude-code", label: "Claude Code", supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true }), stderr: "" };
+      }
+      if (args[0] === "plan") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ schemaVersion: 1, plan: { planId: "plan-1", agentId: "claude-code", action: "mcp-install", noop: false, writes: [{ path: "/Users/tester/.claude.json" }] } }),
+          stderr: "",
+        };
+      }
+      return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { planId: "plan-1", applied: false, changedFiles: [] } }), stderr: "" };
+    },
+  });
+  await tick();
+  terminal.input("\r"); await tick(); // Continue
+  terminal.input("\r"); await tick(); // PostgreSQL: No
+  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
+  terminal.input("\r"); await tick(); // Engram summary: Confirm
+  terminal.input(" "); terminal.input("\r"); await tick(); // MCP picker: check Claude Code, submit
+  terminal.input("\r"); // MCP preview: Confirm
+  try { await run; } finally { restore(); }
+  expect(logs).toContain("Claude Code: not configured — Forge614 Engines reported the change was not applied.");
+  expect(logs).not.toContain("Claude Code: configured");
+});
+
+// pi-tui defers a screen's first paint to a `setTimeout`/`process.nextTick` callback outside any
+// promise chain, so throwing from `write()` on matching text can never be caught by a `try/catch`
+// around `runMcpSetupStep` (confirmed: it surfaces as an unrelated, uncatchable async exception).
+// `start()` is called synchronously inside `chooseMcpAgents`'s own `tui.start()` call instead, so
+// throwing there on the picker's turn reproduces an MCP-step UI failure that the fix can catch.
+// The Engram flow renders exactly four screens (intro, PostgreSQL, reinforcement, summary) before
+// the MCP picker starts its own TUI, so the fifth `start()` call is the picker's.
+class ThrowingMcpScreenTerminal extends TestTerminal {
+  private starts = 0;
+  start(input: (data: string) => void) {
+    this.starts += 1;
+    if (this.starts === 5) throw new Error("terminal write failed");
+    super.start(input);
+  }
+}
+
+test("an exception during the MCP picker screen never fails an already-successful Engram init", async () => {
+  const terminal = new ThrowingMcpScreenTerminal();
+  const { logs, restore } = captureLogs();
+  process.exitCode = 0;
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ schemaVersion: 1, agents: [
+            { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude" },
+          ] }),
+          stderr: "",
+        };
+      }
+      return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, id: "claude-code", label: "Claude Code", supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true }), stderr: "" };
+    },
+  });
+  await tick();
+  terminal.input("\r"); await tick(); // Continue
+  terminal.input("\r"); await tick(); // PostgreSQL: No (default)
+  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
+  terminal.input("\r"); // Summary: Confirm (default)
+  try { await run; } finally { restore(); }
+  expect(process.exitCode as number | undefined).not.toBe(1);
+  expect(logs.some(line => line.includes("MCP setup could not be completed"))).toBe(true);
+  process.exitCode = 0; // reset so this test's exit code doesn't leak into the overall `bun test` process exit status
 });

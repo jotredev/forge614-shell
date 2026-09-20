@@ -41,7 +41,7 @@ export interface McpPreviewItem {
 function previewLine(item: McpPreviewItem): string {
   if (item.status === "pending") return `${item.agentLabel}: will add MCP "forge614-engram" to ${item.filePath}`;
   if (item.status === "already-configured") return `${item.agentLabel}: already configured (no change)`;
-  return `${item.agentLabel}: blocked — ${item.detail}`;
+  return `${item.agentLabel}: blocked — ${item.detail ?? "Forge614 Engines refused this change."}`;
 }
 
 function previewText(items: readonly McpPreviewItem[]): string {

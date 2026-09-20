@@ -90,11 +90,11 @@ async function runMcpSetupStep(
   }
   const selectedSet = new Set(selectedIds);
   const engramBinary = locateEngramBinary(options.home ?? homedir(), options.env);
-  const outcomes: McpOutcome[] = [];
+  const outcomeMap = new Map<string, McpOutcome>();
   const resolved: { agent: McpCapableAgent; status: "already-configured" | "not-configured"; detail?: string }[] = [];
   const pending: { agent: McpCapableAgent; plan: McpPlanResult }[] = [];
   for (const agent of agents) {
-    if (!selectedSet.has(agent.id)) { outcomes.push({ label: agent.label, status: "skipped" }); continue; }
+    if (!selectedSet.has(agent.id)) { outcomeMap.set(agent.id, { label: agent.label, status: "skipped" }); continue; }
     try {
       const plan = await planMcpInstall({
         agentId: agent.id, name: "forge614-engram", command: engramBinary, args: ["mcp"],
@@ -106,7 +106,7 @@ async function runMcpSetupStep(
       resolved.push({ agent, status: "not-configured", detail: error instanceof Error ? error.message : String(error) });
     }
   }
-  for (const r of resolved) outcomes.push({ label: r.agent.label, status: r.status, detail: r.detail });
+  for (const r of resolved) outcomeMap.set(r.agent.id, { label: r.agent.label, status: r.status, detail: r.detail });
   if (pending.length > 0) {
     const previewItems: McpPreviewItem[] = [
       ...pending.map(p => ({ agentLabel: p.agent.label, filePath: p.plan.filePath, status: "pending" as const })),
@@ -118,19 +118,21 @@ async function runMcpSetupStep(
     ];
     const confirmed = await showMcpPreviewConfirm(previewItems, terminal);
     if (!confirmed) {
-      for (const p of pending) outcomes.push({ label: p.agent.label, status: "skipped" });
+      for (const p of pending) outcomeMap.set(p.agent.id, { label: p.agent.label, status: "skipped" });
     } else {
       for (const p of pending) {
         try {
-          await applyMcpPlan({ planId: p.plan.planId, home: options.home, env: options.env, run: options.enginesRun });
-          outcomes.push({ label: p.agent.label, status: "configured" });
+          const result = await applyMcpPlan({ planId: p.plan.planId, home: options.home, env: options.env, run: options.enginesRun });
+          outcomeMap.set(p.agent.id, result.applied
+            ? { label: p.agent.label, status: "configured" }
+            : { label: p.agent.label, status: "not-configured", detail: "Forge614 Engines reported the change was not applied." });
         } catch (error) {
-          outcomes.push({ label: p.agent.label, status: "not-configured", detail: error instanceof Error ? error.message : String(error) });
+          outcomeMap.set(p.agent.id, { label: p.agent.label, status: "not-configured", detail: error instanceof Error ? error.message : String(error) });
         }
       }
     }
   }
-  return outcomes;
+  return agents.map(agent => outcomeMap.get(agent.id)!);
 }
 
 /** Entry point for `forge614-shell init --product engram`. Makes no Engram call before confirmation. */
@@ -149,6 +151,10 @@ export async function runInitCommand(args: string[], options: RunInitOptions = {
   }
   await applyEngramInit(flow.decisions, { run: options.run, home: options.home, env: options.env });
   console.log("Forge614 Engram memory initialization is complete.");
-  const outcomes = await runMcpSetupStep(options.terminal, { home: options.home, env: options.env, enginesRun: options.enginesRun });
-  for (const outcome of outcomes) console.log(outcomeLine(outcome));
+  try {
+    const outcomes = await runMcpSetupStep(options.terminal, { home: options.home, env: options.env, enginesRun: options.enginesRun });
+    for (const outcome of outcomes) console.log(outcomeLine(outcome));
+  } catch (error) {
+    console.log(`MCP setup could not be completed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
