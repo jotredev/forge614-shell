@@ -194,3 +194,52 @@ test("Codex opens the returned login URL and keeps a manual fallback if browser 
     expect(rpc.calls.some(call => call.method === "turn/start")).toBe(false);
   }
 });
+
+test("an Engram MCP tool call is shown with a brain-labeled activity line", async () => {
+  const rpc = codexFixture();
+  const events: any[] = [];
+  const session = new CodexSession(rpc, "/project", event => events.push(event), async () => false);
+  await session.initialize();
+  rpc.replies.set("thread/start", { thread: { id: "thread-1" }, model: "test-model", reasoningEffort: "medium", modelProvider: "openai" });
+  rpc.handler = async (method, params) => {
+    if (method === "turn/start") {
+      queueMicrotask(() => {
+        rpc.onNotification("item/started", {
+          threadId: "thread-1",
+          item: { type: "mcpToolCall", id: "call-1", server: "forge614-engram", tool: "memory_search", arguments: { query: "test" } },
+        });
+        rpc.onNotification("turn/completed", { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } });
+      });
+      return { turn: { id: "turn-1" } };
+    }
+    if (!rpc.replies.has(method)) throw new Error(`Unexpected ${method}`);
+    return rpc.replies.get(method);
+  };
+  await session.send("please search memory");
+  expect(events.some(event => event.type === "text" && event.text.startsWith("Tool: 🧠 memory search"))).toBe(true);
+});
+
+test("an MCP tool call from a server other than forge614-engram falls back to a plain server/tool label", async () => {
+  const rpc = codexFixture();
+  const events: any[] = [];
+  const session = new CodexSession(rpc, "/project", event => events.push(event), async () => false);
+  await session.initialize();
+  rpc.replies.set("thread/start", { thread: { id: "thread-1" }, model: "test-model", reasoningEffort: "medium", modelProvider: "openai" });
+  rpc.handler = async (method) => {
+    if (method === "turn/start") {
+      queueMicrotask(() => {
+        rpc.onNotification("item/started", {
+          threadId: "thread-1",
+          item: { type: "mcpToolCall", id: "call-1", server: "github", tool: "create_issue", arguments: {} },
+        });
+        rpc.onNotification("turn/completed", { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } });
+      });
+      return { turn: { id: "turn-1" } };
+    }
+    if (!rpc.replies.has(method)) throw new Error(`Unexpected ${method}`);
+    return rpc.replies.get(method);
+  };
+  await session.send("please open an issue");
+  expect(events.some(event => event.type === "text" && event.text.startsWith("Tool: github: create_issue"))).toBe(true);
+  expect(events.some(event => event.type === "text" && event.text.includes("🧠"))).toBe(false);
+});

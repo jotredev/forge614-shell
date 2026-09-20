@@ -21,6 +21,12 @@ Claude Code usa su flujo oficial de suscripción y Codex usa `app-server` con in
 
 `--engine pi` es una ruta heredada para automatización no interactiva. Cursor no es un chat de Shell, aunque Engines puede reportarlo para MCP. Gemini y Antigravity ya no tienen directorios, procesos, autenticación ni selector en Shell.
 
+## Regla para asistentes nuevos
+
+La llegada de un asistente nuevo a Forge614 Engines activa tres capacidades distintas. Primero, si Engines informa `installed` y `supportsMcp: true`, Shell lo descubre y puede ofrecerle el MCP de Engram automáticamente: no hay lista permitida ni cambio de código de Shell. Segundo, poder conversar con él exige siempre un adaptador de chat nuevo (capa que traduce su protocolo a la interfaz): sesión, autenticación, modelos, cancelación, reanudación y una entrada explícita en la lista de adaptadores de Shell. MCP no sustituye ese trabajo.
+
+Tercero, el indicador de herramientas durante el chat solo existe después de tener ese adaptador. Cada protocolo expresa las llamadas de herramientas de una forma propia; se debe investigar en vivo su formato real con Engram configurado antes de escribir la traducción. No existe una detección genérica y segura para todos los asistentes. La regla completa para asistentes de programación está en [`AGENTS.md`](../../AGENTS.md).
+
 ## Seguridad de procesos
 
 Los adaptadores rechazan variables de entorno que desvían autenticación o proveedor, como claves API o URL base. Los procesos nativos no imprimen `stderr` sin filtrar porque puede contener ajustes privados. Las aprobaciones y el sandbox dependen del cliente nativo; Shell no promete aislamiento adicional.

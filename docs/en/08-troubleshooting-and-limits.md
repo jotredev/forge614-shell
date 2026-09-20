@@ -12,6 +12,7 @@ Like a car fault list, this document connects each symptom to the component that
 | `not configured` outcome | Planning or apply failed, or Engines returned `applied: false`. Other assistants may have completed correctly. |
 | Credentials or base URL in environment | The adapter rejects authentication rerouting. Use a clean terminal and official login. |
 | Missing quota/context data | The native client did not report it; Shell does not calculate or invent it. |
+| An MCP tool does not show 🧠 | Only `forge614-engram` uses that indicator. Other MCP servers show `server: tool`; a new assistant needs an adapter and protocol validation. |
 
 ## Known limits
 

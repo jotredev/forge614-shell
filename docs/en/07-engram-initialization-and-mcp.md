@@ -42,6 +42,8 @@ Shell never displays or logs configuration-file `afterContent` (proposed content
 
 The infrastructure also contains `planMcpRemove` and `removeEngramMcpFromAgent`, internal foundations for future uninstallation. There is no public MCP-removal command or interface yet; it must not be documented as available.
 
+Configuration makes the server available to the selected client; it does not guarantee Shell can chat with that client or display its activity. Both capabilities require their own adapter and investigation of the assistant protocol.
+
 ## Real interpretation example
 
 If Claude Code is already configured and Codex has a pending plan, the preview shows both. On confirmation Shell does not apply Claude and applies only Codex's plan. If Codex fails, the result retains `Claude Code: already configured` and reports `Codex: not configured — ...`.

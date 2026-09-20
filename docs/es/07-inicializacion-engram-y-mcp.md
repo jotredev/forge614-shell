@@ -42,6 +42,8 @@ Shell nunca presenta ni registra `afterContent` (contenido propuesto) ni `before
 
 La infraestructura también incluye `planMcpRemove` y `removeEngramMcpFromAgent`, bases internas para una futura desinstalación. No existe todavía un comando público ni interfaz de eliminación MCP; no debe documentarse como disponible.
 
+La configuración hace disponible el servidor para el cliente seleccionado; no garantiza que Shell pueda chatear con ese cliente ni que muestre su actividad. Ambas capacidades requieren su propio adaptador y una investigación del protocolo del asistente.
+
 ## Ejemplo real de interpretación
 
 Si Claude Code ya está configurado y Codex tiene un plan pendiente, la vista previa muestra ambos. Al confirmar, Shell no aplica Claude y aplica solo el plan de Codex. Si Codex falla, el resultado conserva `Claude Code: already configured` y muestra `Codex: not configured — ...`.

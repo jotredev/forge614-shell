@@ -1,6 +1,6 @@
 {
   "product": "forge614-shell",
-  "reviewedVersion": "1.2.0",
+  "reviewedVersion": "1.3.0",
   "notionHub": "https://app.notion.com/p/3de21943d129818b9cd6ca4ab12c44ad?pvs=204",
   "pages": [
     {"localPath":"docs/es/00-instalacion-y-prueba-local-release.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d12981f4ba25c60272f1ca73?pvs=204","fingerprint":"333fd0c6afe2984993b41f6a8242d5beba47df8b81158badd7a83fc8734db55e"},
@@ -11,15 +11,15 @@
     {"localPath":"docs/en/02-notion-handoff.md","language":"en","notionUrl":"https://app.notion.com/p/3de21943d12981bc916ffdd9e2da9e63?pvs=204","fingerprint":"5b5b724f23189f36210ac47512705469a4e935eedeb13e19a6ab2f776034349b"},
     {"localPath":"docs/es/03-etapa-2-primera-entrega.md","language":"es","notionUrl":"https://app.notion.com/p/3de21943d1298141a7cee925a5670e49?pvs=204","fingerprint":"03514a97e1e78ed88cdeea1e131b0b21f59ed39732686ec2bacf53079fb1cf24"},
     {"localPath":"docs/en/03-stage-2-first-delivery.md","language":"en","notionUrl":"https://app.notion.com/p/3de21943d1298152b26be649f7a630e5?pvs=204","fingerprint":"5a60ce0513867cc55e193085063b9d8117f53d7ca6633759124d9ecbde7f15b3"},
-    {"localPath":"docs/es/04-arquitectura-motores.md","language":"es","notionUrl":"https://app.notion.com/p/3de21943d12981ddb85dd51594c81217?pvs=204","fingerprint":"83acdcd26d62aaa2cef88606c63bfc02bf29b8ec625c02b674df3d77397cd312"},
-    {"localPath":"docs/en/04-architecture-engines.md","language":"en","notionUrl":"https://app.notion.com/p/3de21943d12981fd91a2e3d8b33d8e10?pvs=204","fingerprint":"210fb412c7928eae79be70c7beca2909ed3bf90555bbd0a876bf2f11b87ffe26"},
-    {"localPath":"docs/es/05-interfaz-basic-panel-cuotas.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d1298143a086cc755a12274d?pvs=204","fingerprint":"1315d7208cf075a2161b48a153bdd069b73b9099e1f8f0a5b0919c4d03b121c3"},
-    {"localPath":"docs/en/05-basic-ui-sidebar-quotas.md","language":"en","notionUrl":"https://app.notion.com/p/3e121943d129815abce0c3c115cb4a9e?pvs=204","fingerprint":"8bee3050c93cd008d1aa781a94346702665de4be69743c43627d40e9ce8e137a"},
+    {"localPath":"docs/es/04-arquitectura-motores.md","language":"es","notionUrl":"https://app.notion.com/p/3de21943d12981ddb85dd51594c81217?pvs=204","fingerprint":"cb1aef44d42606f23c34a20a9a1389b2a7ed9eb3ebae257d0c841ec8fc7e3ac1"},
+    {"localPath":"docs/en/04-architecture-engines.md","language":"en","notionUrl":"https://app.notion.com/p/3de21943d12981fd91a2e3d8b33d8e10?pvs=204","fingerprint":"f64fa772185fc46434f6fab7737fff03a05dabff0769856fbd2c24423738aff0"},
+    {"localPath":"docs/es/05-interfaz-basic-panel-cuotas.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d1298143a086cc755a12274d?pvs=204","fingerprint":"7f9a3858375ef8aba9ee046c2b9832c35c9344d83d91e346f06c96621cbc8726"},
+    {"localPath":"docs/en/05-basic-ui-sidebar-quotas.md","language":"en","notionUrl":"https://app.notion.com/p/3e121943d129815abce0c3c115cb4a9e?pvs=204","fingerprint":"ee52ea6819bbb37a040bbb21b08ba4a8cf4bbd9fe6a680de5dcf00fe7760c427"},
     {"localPath":"docs/es/06-preparacion-release-1.0.0-instalador.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d129812b9856e25b0acbe3ef?pvs=204","fingerprint":"161447d0da87f88250a52dc689dae30e029c6d80be5ca848fb69809a330c20d4"},
     {"localPath":"docs/en/06-release-1.0.0-bundle-installer.md","language":"en","notionUrl":"https://app.notion.com/p/3e121943d129817497f8f047bc359ff6?pvs=204","fingerprint":"32859d13e1acd5665b8aa7f6df37fbb926dfa2795e7b23923e793d804eca6d69"},
-    {"localPath":"docs/es/07-inicializacion-engram-y-mcp.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d12981aaafeed21038dfeb08?pvs=204","fingerprint":"1b85afbf9eb0e247d8ddb2dd99f6c97265d5f6d5415c5b36c49a91196aea6d00"},
-    {"localPath":"docs/en/07-engram-initialization-and-mcp.md","language":"en","notionUrl":"https://app.notion.com/p/3e121943d129812cb6afdf65c798bade?pvs=204","fingerprint":"36f18970431dd13346bbdd81539aa7e62a1fc01945bb009daeaeed4f23e28dd9"},
-    {"localPath":"docs/es/08-diagnostico-y-limites.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d12981cdb951cdc7867cb12b?pvs=204","fingerprint":"bf297ee481f9c6b37feb14961892caa41b4fc168a363f7714dbf94d8015b5c4a"},
-    {"localPath":"docs/en/08-troubleshooting-and-limits.md","language":"en","notionUrl":"https://app.notion.com/p/3e121943d12981f9a13bcc532157f20f?pvs=204","fingerprint":"25aba7aa0aa138ef284f9e3e17299dc6a56f70c69f7ea8ddd859bac80745d41a"}
+    {"localPath":"docs/es/07-inicializacion-engram-y-mcp.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d12981aaafeed21038dfeb08?pvs=204","fingerprint":"a6ed6c9702d787fadc1646f1e4e84b13a8332c40617d52c7ae103115f8318b91"},
+    {"localPath":"docs/en/07-engram-initialization-and-mcp.md","language":"en","notionUrl":"https://app.notion.com/p/3e121943d129812cb6afdf65c798bade?pvs=204","fingerprint":"c12aa55bd0189796159f430170b33f7fe903831da840e2f605aba545c666ba16"},
+    {"localPath":"docs/es/08-diagnostico-y-limites.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d12981cdb951cdc7867cb12b?pvs=204","fingerprint":"cc13f8b2e36478a9d7caeddf3a40665bc3b6b0abe1f4db1044da526e3d9f9518"},
+    {"localPath":"docs/en/08-troubleshooting-and-limits.md","language":"en","notionUrl":"https://app.notion.com/p/3e121943d12981f9a13bcc532157f20f?pvs=204","fingerprint":"b4e4bf5b3eb52bf1ad81b887b36f88c557125ec9eab0a96ca6ef8281b3894bd9"}
   ]
 }

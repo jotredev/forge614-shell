@@ -14,6 +14,7 @@ import { readRuntimeResources } from "../../infrastructure/runtime-resources.ts"
 import { ShellStatusBar } from "./status-bar.ts";
 import { isDisplayableUsage } from "./metrics.ts";
 import { ActivityCard, chatMessage } from "./transcript.ts";
+import { engramToolLabel, parseClaudeMcpToolName } from "../../engines/mcp-labels.ts";
 import { ChatText } from "./theme.ts";
 import { workspaceLayout, workspaceTerminal } from "./workspace.ts";
 
@@ -172,7 +173,9 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         streaming = undefined; streamedText = "";
       }
       for (const block of event.message.content) if (block.type === "tool_use" && !tools.has(block.id)) {
-        const card = new ActivityCard(block.name, "Requested\n" + clean(JSON.stringify(block.input, null, 2)).slice(0, 2000));
+        const parsed = parseClaudeMcpToolName(block.name);
+        const label = (parsed && engramToolLabel(parsed.server, parsed.tool)) ?? block.name;
+        const card = new ActivityCard(label, "Requested\n" + clean(JSON.stringify(block.input, null, 2)).slice(0, 2000));
         tools.set(block.id, { card, startedAt: Date.now() }); transcript.addChild(card);
       }
     }

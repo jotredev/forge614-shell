@@ -12,6 +12,7 @@ Como una lista de averías de automóvil, este documento conecta cada síntoma c
 | Resultado `not configured` | El plan o la aplicación falló, o Engines devolvió `applied: false`. Los demás asistentes pueden haber terminado correctamente. |
 | Credenciales o URL base en el entorno | El adaptador rechaza desvíos de autenticación. Usa una terminal limpia y el login oficial. |
 | Datos de cuotas/contexto ausentes | El cliente nativo no los reportó; Shell no los calcula ni inventa. |
+| Una herramienta MCP no muestra 🧠 | Solo `forge614-engram` usa ese indicador. Otros MCP muestran `servidor: herramienta`; un asistente nuevo necesita un adaptador y validación de su protocolo. |
 
 ## Límites conocidos
 

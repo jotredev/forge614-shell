@@ -2,6 +2,7 @@ import type { RpcConnection } from "../../infrastructure/rpc.ts";
 import type { Approve, Emit, NativeModel, NativeSession, NativeVisualState, NativeWorkMode } from "../types.ts";
 import { openLoginBrowser } from "../../infrastructure/browser.ts";
 import { confirmedLogout } from "../logout.ts";
+import { engramToolLabel } from "../mcp-labels.ts";
 
 export class CodexSession implements NativeSession {
   busy = false;
@@ -236,7 +237,12 @@ export class CodexSession implements NativeSession {
     }
     if (method === "item/started") {
       this.items.set(params.item.id, params.item);
-      if (["commandExecution", "fileChange", "mcpToolCall"].includes(params.item.type)) this.emit({ type: "text", text: `Tool: ${params.item.type}\n${params.item.command ?? ""}` });
+      if (params.item.type === "mcpToolCall") {
+        const label = engramToolLabel(params.item.server, params.item.tool) ?? `${params.item.server}: ${params.item.tool}`;
+        this.emit({ type: "text", text: `Tool: ${label}\n${JSON.stringify(params.item.arguments ?? {}, null, 2)}` });
+      } else if (["commandExecution", "fileChange"].includes(params.item.type)) {
+        this.emit({ type: "text", text: `Tool: ${params.item.type}\n${params.item.command ?? ""}` });
+      }
     }
     if (method === "item/completed" && params.item.type === "agentMessage" && !this.streamed.has(params.item.id)) this.emit({ type: "text", text: params.item.text });
     if (method === "thread/tokenUsage/updated") {

@@ -19,6 +19,14 @@ La interfaz Basic es la única interfaz visual disponible. El selector inicial p
 
 La barra de estado, el panel lateral y el historial muestran proyecto, modelo, contexto y cuotas cuando el cliente los expone. “No reportado” significa exactamente que el cliente no entregó el dato. La interfaz no soporta pantallas ni comandos de Gemini o Antigravity.
 
+## Actividad de memoria Engram
+
+Como ver encenderse una luz del archivador, la tarjeta de actividad del chat muestra cuándo el asistente está usando una herramienta de memoria, sin revelar el contenido de la configuración.
+
+Cuando Claude Code o Codex llama una herramienta del servidor MCP `forge614-engram`, la tarjeta muestra `🧠` y un nombre legible: por ejemplo, `🧠 memory search` en lugar de `mcp__forge614-engram__memory_search`. El cerebro identifica solo el servidor conocido Engram; no infiere que otros servidores sean memoria. Para otro MCP se muestra `servidor: herramienta`, por ejemplo `github: create_issue`.
+
+Claude Code obtiene el dato del nombre de herramienta que entrega su SDK: `mcp__<servidor>__<herramienta>`. Codex lo obtiene de `item.server` e `item.tool` en sus notificaciones `mcpToolCall` de `app-server` (protocolo JSON-RPC para su interfaz). Esos campos se verificaron con una sesión real antes de implementar el indicador. La lógica compartida está en `src/engines/mcp-labels.ts` y tiene pruebas propias.
+
 ## Sesiones y permisos
 
 Codex lista y retoma hilos del directorio actual; rechaza un hilo de otro proyecto o activo en otro cliente. Los modos de trabajo de Codex proceden de sus requisitos de configuración y pueden combinar política de aprobación con sandbox. Claude mantiene su propio historial nativo. Antes de una acción que requiera confirmación, Shell muestra la pregunta en la interfaz.
