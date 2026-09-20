@@ -14,7 +14,7 @@ test("engine and infrastructure layers do not depend on UI or application startu
 });
 
 test("each supported native engine owns its session implementation", async () => {
-  for (const engine of ["claude", "codex", "antigravity"]) {
+  for (const engine of ["claude", "codex"]) {
     const source = await readFile(new URL(join("../../src/engines", engine, "session.ts"), import.meta.url), "utf8");
     expect(source).toContain("export class");
   }

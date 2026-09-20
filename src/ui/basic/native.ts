@@ -15,7 +15,7 @@ import { discoverCodexSkills } from "../../engines/codex/skills.ts";
 const clean = (text: string) => stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
 
 export async function runNativeUI(
-  id: NativeId, cwd: string, createSession: (emit: Emit, approve: Approve, withTerminal: (action: () => Promise<void>) => Promise<void>) => NativeSession,
+  id: NativeId, cwd: string, createSession: (emit: Emit, approve: Approve) => NativeSession,
   terminal: Terminal = new ProcessTerminal(),
   version?: string,
 ): Promise<void> {
@@ -24,7 +24,7 @@ export async function runNativeUI(
   const transcript = new Container();
   const composer = createComposer(tui);
   const { input } = composer;
-  const engineLabel = id === "codex" ? "Codex" : id === "antigravity" ? "Antigravity" : "Gemini CLI";
+  const engineLabel = "Codex";
   const shellState = new ShellState(engineLabel);
   const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd);
   const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version);
@@ -183,12 +183,7 @@ export async function runNativeUI(
       else throw new Error(`Unknown command: ${name}. Use /help.`);
     } finally { commandBusy = false; refresh(); }
   };
-  session = createSession(emit, approve, async action => {
-    tui.stop({ preserveScreen: true });
-    process.stdout.write("\nOpening native Antigravity for account login. After signing in, exit agy to return to Shell. No chat message is sent automatically.\n");
-    try { await action(); }
-    finally { if (!closed) { tui.start(); tui.requestRender(); } }
-  });
+  session = createSession(emit, approve);
   sidebar.setRefreshAction(async () => {
     if (!session.refreshUsage) return "Not available from this engine";
     await session.refreshUsage(); refresh();

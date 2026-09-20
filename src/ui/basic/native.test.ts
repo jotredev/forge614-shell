@@ -98,21 +98,3 @@ test("native chat waits for input and warns instead of quitting an active turn",
   terminal.input("/quit!"); terminal.input("\r"); await ui;
   expect(closed).toBe(true); expect(terminal.stopped).toBe(true);
 });
-
-test("Antigravity login relinquishes the terminal and restores Shell without sending a prompt", async () => {
-  const terminal = new TestTerminal(); let loginWasSuspended = false; let sent = false;
-  const ui = runNativeUI("antigravity", "/project", (_emit, _approve, withTerminal) => ({
-    busy: false, models: [],
-    async initialize() {},
-    async login() { await withTerminal(async () => { loginWasSuspended = terminal.stopped; }); },
-    async send() { sent = true; }, async cancel() {}, reset() {}, async resume() {},
-    async listSessions() { return []; }, async setModel() {}, async setEffort() {},
-    status() { return []; }, close() {},
-  }), terminal);
-  await tick();
-  terminal.input("/login"); terminal.input("\r"); await tick();
-  expect(loginWasSuspended).toBe(true);
-  expect(terminal.stopped).toBe(false);
-  expect(sent).toBe(false);
-  terminal.input("/quit"); terminal.input("\r"); await ui;
-});

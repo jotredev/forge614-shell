@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { discoverEngines } from "../discovery.ts";
+import { discoverSelectableEngines } from "../../infrastructure/forge614-engines.ts";
 
 const exec = promisify(execFile);
 
@@ -19,7 +19,7 @@ export function requireSubscription(status: { loggedIn?: boolean; authMethod?: s
 }
 
 export async function findClaude(env: NodeJS.ProcessEnv): Promise<string> {
-  const engine = (await discoverEngines(env)).find(engine => engine.id === "claude");
+  const engine = (await discoverSelectableEngines({ env })).find(engine => engine.id === "claude");
   if (engine) return engine.executable;
   throw new Error("Official Claude Code was not found on PATH. Install Claude Code first. Automatic installation is not available in this delivery.");
 }

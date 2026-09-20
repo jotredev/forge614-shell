@@ -1,4 +1,4 @@
-export type NativeId = "codex" | "gemini" | "antigravity";
+export type NativeId = "codex";
 export interface NativeModel { id: string; name: string; efforts?: string[]; defaultEffort?: string }
 /** A work mode reported by a native engine. Forge614 never synthesizes these. */
 export interface NativeWorkMode { id: string; label: string }

@@ -38,7 +38,7 @@ if (args.length === 1 && args[0] === "update") {
 } else if (args.includes("--help") || args.includes("-h")) {
   console.log(`Forge614-Shell ${metadata.version}
 
-Usage: forge614-shell [--engine claude|codex|antigravity|pi]
+Usage: forge614-shell [--engine claude|codex|pi]
 
 Every interactive startup asks for visual interface, then installed AI engine.
 Basic is available; Full — Coming later is disabled.
@@ -58,9 +58,8 @@ Native chat: /login, /logout, /resume, /new, /model, /effort, /status, /stop, /q
 /logout disconnects only the current Shell session; native accounts and other apps are unchanged.
 Claude sessions: managed by Claude Code, shared with its native history.
 Codex: native history, model catalog, reasoning and reported account limits.
-Login reuses existing accounts. Antigravity asks before opening native agy if sign-in is required.
+Login reuses existing accounts.
 Headless uses native permissions, with no interactive tool approvals.
-Antigravity /resume <id> selects a conversation without a history preview.
 Pi profile only: ~/.forge614-shell/agent (FORGE614_SHELL_HOME override)
 Pass Pi-specific options after --engine pi.
 
