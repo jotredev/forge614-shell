@@ -18,6 +18,12 @@ test("accepts exactly --product engram", () => {
   expect(() => requireEngramProduct(["--product", "engram"])).not.toThrow();
 });
 
+test("accepts the --product=engram form too", () => {
+  expect(() => requireEngramProduct(["--product=engram"])).not.toThrow();
+  expect(() => requireEngramProduct(["--product=atlas"])).toThrow('"engram" is supported today');
+  expect(() => requireEngramProduct(["--product="])).toThrow("--product <name>");
+});
+
 import type { Terminal } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
 import { runInitCommand } from "./init-engram.ts";
@@ -41,7 +47,28 @@ test("rejects a missing product before ever starting the terminal UI", async () 
 });
 
 test("rejects a non-interactive terminal", async () => {
-  await expect(runInitCommand(["--product", "engram"])).rejects.toThrow("interactive terminal");
+  // `interactive: false` is the sole gate here, so this never depends on the test runner's own TTY state.
+  await expect(runInitCommand(["--product", "engram"], { interactive: false })).rejects.toThrow("interactive terminal");
+});
+
+test("an injected terminal alone is enough to run, even with no TTY on the real process", async () => {
+  const stdin = process.stdin.isTTY;
+  const stdout = process.stdout.isTTY;
+  process.stdin.isTTY = false;
+  process.stdout.isTTY = false;
+  try {
+    const terminal = new TestTerminal();
+    process.exitCode = 0;
+    const run = runInitCommand(["--product", "engram"], { terminal });
+    await tick();
+    expect(terminal.output).toContain("Forge614 Engram stores persistent memory locally on this device.");
+    terminal.input("\x1b"); // Escape on the intro screen
+    await run;
+    process.exitCode = 0;
+  } finally {
+    process.stdin.isTTY = stdin;
+    process.stdout.isTTY = stdout;
+  }
 });
 
 test("cancelling makes zero Engram calls and sets exit code 130", async () => {
