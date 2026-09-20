@@ -56,6 +56,7 @@ function latestServer(
   checksum = release.checksum,
   engineInstaller?: string,
 ) {
+  const version = release.archiveName.replace(/^forge614-shell-/, "").replace(/\.tar\.gz$/, "");
   let server!: ReturnType<typeof Bun.serve>;
   server = Bun.serve({
     port: 0,
@@ -63,7 +64,7 @@ function latestServer(
       const path = new URL(request.url).pathname;
       if (path === "/latest") {
         return Response.json({
-          tag_name: "1.0.4",
+          tag_name: version,
           assets: [
             { name: release.archiveName, browser_download_url: `${server.url}archive` },
             { name: `${release.archiveName}.sha256`, browser_download_url: `${server.url}checksum` },
@@ -89,6 +90,7 @@ test.skipIf(process.platform === "win32")("latest installer downloads, verifies,
     await symlink("/tmp/legacy-forge614-shell", join(legacyBin, "forge614-shell"));
     await writeFile(join(home, ".zshrc"), `# Forge614 Shell\nexport PATH=\"${legacyBin}:$PATH\"\n`);
     const server = latestServer(release, release.checksum, enginesInstallerScript());
+    const version = release.archiveName.replace(/^forge614-shell-/, "").replace(/\.tar\.gz$/, "");
     try {
       const result = await run(["bash", "scripts/install.sh", "--latest"], {
         cwd: process.cwd(),
@@ -102,11 +104,11 @@ test.skipIf(process.platform === "win32")("latest installer downloads, verifies,
         },
       });
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Installed Forge614 Shell v1.0.4");
+      expect(result.stdout).toContain(`Installed Forge614 Shell v${version}`);
       const installed = await run([join(home, ".forge614", "shell", "bin", "forge614-shell"), "--version"], {
         cwd: process.cwd(), env: { ...process.env, HOME: home },
       });
-      expect(installed.stdout).toBe("forge614-shell 1.0.4\n");
+      expect(installed.stdout).toBe(`forge614-shell ${version}\n`);
       const profile = await readFile(join(home, ".zshrc"), "utf8");
       expect(profile).not.toContain(`export PATH=\"${legacyBin}:$PATH\"`);
       await expect(lstat(join(legacyBin, "forge614-shell"))).rejects.toThrow();

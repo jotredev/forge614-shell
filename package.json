@@ -1,6 +1,6 @@
 {
   "name": "forge614-shell",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "A minimal Forge614 terminal workspace powered by Pi",
   "type": "module",

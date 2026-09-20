@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -20,6 +20,17 @@ test.skipIf(process.platform === "win32")("release bundle installs outside the r
     const packagedInstaller = join(unpacked, `forge614-shell-${version}`, "install.sh");
     expect(await readFile(packagedInstaller, "utf8")).toContain("--latest");
 
+    const enginesExecutable = join(installation, "engines", "bin", "forge614-engines");
+    await mkdir(join(installation, "engines", "bin"), { recursive: true });
+    await writeFile(enginesExecutable, `#!/usr/bin/env bash
+if [[ "\${1:-}" == "detect" ]]; then
+  echo '{"schemaVersion":1,"agents":[]}'
+  exit 0
+fi
+exit 64
+`);
+    await chmod(enginesExecutable, 0o755);
+
     const installArguments = ["bash", "scripts/install.sh", "--archive", join(output, archive!)];
     const install = Bun.spawnSync(installArguments, {
       cwd: process.cwd(),
@@ -33,7 +44,7 @@ test.skipIf(process.platform === "win32")("release bundle installs outside the r
 
     const installed = Bun.spawnSync([join(installation, "shell", "bin", "forge614-shell"), "--version"]);
     expect(installed.exitCode).toBe(0);
-    expect(installed.stdout.toString()).toBe("forge614-shell 1.0.4\n");
+    expect(installed.stdout.toString()).toBe(`forge614-shell ${version}\n`);
     const profile = await readFile(join(home, ".zshrc"), "utf8");
     expect(profile.split(`export PATH=\"${installation}/shell/bin:$PATH\"`).length - 1).toBe(1);
   } finally {

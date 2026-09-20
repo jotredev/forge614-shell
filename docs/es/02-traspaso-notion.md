@@ -40,6 +40,59 @@
 >
 > Devuelve el enlace del índice y de cada página ES/EN, fecha de publicación, revisión documental publicada y cualquier diferencia respecto de los archivos recibidos.
 
+## Secciones actualizadas para sincronización en Notion
+
+### 1. Instalación pública (un solo comando)
+El comando de instalación por red se mantiene estrictamente en una sola línea mediante `curl | bash`:
+```bash
+curl -fsSL https://github.com/jotredev/forge614-shell/releases/latest/download/install.sh | bash
+```
+No se requiere un segundo comando ni pasos adicionales para dependencias.
+
+### 2. Dependencia interna automática (Forge614 Engines)
+Al instalar o actualizar Shell mediante `forge614-shell update`:
+1. El instalador o actualizador revisa la presencia del binario interno en `~/.forge614/engines/bin/forge614-engines`.
+2. Ejecuta `forge614-engines detect` y valida el contrato JSON (`schemaVersion: 1` y arreglo de agentes).
+3. **Reutilización:** Si Engines ya está instalado y es compatible, se reutiliza sin realizar descargas innecesarias.
+4. **Bootstrap automático:** Si Engines falta o es incompatible, Shell descarga y ejecuta de forma autónoma el instalador oficial de Engines (`v1.0.0`).
+5. **No interactivo:** La persona usuaria nunca instala, actualiza ni ejecuta `forge614-engines` manualmente.
+
+### 3. Estructura instalada en el disco
+Ambos componentes coexisten de manera desacoplada bajo el directorio base `~/.forge614/`:
+```text
+~/.forge614/
+├─ shell/
+│  └─ bin/forge614-shell
+└─ engines/
+   └─ bin/forge614-engines
+```
+
+### 4. Configuración del PATH (Aislamiento Estricto)
+- El instalador inyecta **única y exclusivamente** `~/.forge614/shell/bin` en los archivos de perfil (`~/.zshrc`, `~/.bashrc`).
+- `~/.forge614/engines/bin` **nunca se agrega al PATH** del usuario, garantizando que los binarios internos no colisionen con comandos del sistema.
+
+### 5. Garantía de Seguridad y Atomicidad
+- Engines verifica de forma criptográfica y funcional su propio binario y contrato.
+- Si Engines no puede descargarse, instalarse o validarse, la instalación o actualización de Shell se aborta de inmediato. Shell no se activa ni queda en un estado parcialmente instalado; en caso de actualización, se preserva intacta la versión previa.
+
+### 6. Flujo de Trabajo Diario (Shell es Opcional tras el Setup)
+- Forge614 Shell se utiliza para el setup inicial, configuración de perfiles, resolución de discrepancias, inspección de estado y confirmaciones.
+- Una vez finalizada la configuración, la persona es completamente libre de cerrar Shell y trabajar directamente en su editor o cliente preferido (ADE Orca, Claude Code, OpenAI Codex u otro cliente nativo). Shell es una herramienta de empoderamiento, no una jaula operativa.
+
+### 7. Resolución de Incidencias (Troubleshooting)
+| Escenario / Error | Causa Raíz | Acción del Sistema / Solución |
+| --- | --- | --- |
+| Falla al descargar el instalador de Engines | Pérdida de conexión a red o bloqueo de GitHub Releases. | La instalación de Shell se aborta atómicamente; no se activa ni altera el estado previo. Reintentar cuando se restablezca la red. |
+| Engines incompatible o binario corrupto | El binario existente no devuelve `schemaVersion: 1`. | Shell invoca el instalador oficial de Engines para activar una versión estable compatible y después valida el contrato. |
+| Engines compatible detectado | `schemaVersion: 1` validado satisfactoriamente. | Shell reutiliza el binario existente al instante, omitiendo descargas redundantes. |
+| `forge614-engines: command not found` al invocarlo | El usuario intenta ejecutar el binario directamente en su terminal. | Comportamiento previsto: Engines es un componente interno no expuesto en el `PATH`. Shell lo administra automáticamente; usar Shell para setup o un cliente nativo configurado para el trabajo diario. |
+
+### 8. Directrices para Mantenedores (Maintainers Workflow)
+- **3 Assets oficiales de Shell:** Shell publica exclusivamente `forge614-shell-<version>.tar.gz`, `forge614-shell-<version>.tar.gz.sha256` e `install.sh`.
+- **Cero binarios de Engines empaquetados:** No se copian ni empaquetan binarios de Engines dentro del bundle o release de Shell; Shell consume el instalador oficial de Engines en red.
+- **Precondición de Release:** Antes de publicar una versión de Shell que requiera una versión de Engines, debe existir publicado un release estable y verificado de Forge614 Engines.
+- **Próximo release estable:** Este comportamiento está integrado en el código local y formará parte del próximo release estable de Shell.
+
 ## Registro de confirmación
 
 | Campo | Valor |

@@ -40,6 +40,59 @@
 >
 > Return the index link and each ES/EN page link, publication date, published revision, and any differences from local files.
 
+## Updated sections for Notion synchronization
+
+### 1. Public installation (single command)
+The network installation command remains strictly a single line using `curl | bash`:
+```bash
+curl -fsSL https://github.com/jotredev/forge614-shell/releases/latest/download/install.sh | bash
+```
+No secondary command or manual dependency setup is required.
+
+### 2. Automatic internal dependency (Forge614 Engines)
+When installing or updating Shell via `forge614-shell update`:
+1. The installer or updater checks for the internal binary at `~/.forge614/engines/bin/forge614-engines`.
+2. It executes `forge614-engines detect` and verifies the JSON contract (`schemaVersion: 1` and array of agents).
+3. **Reuse:** If Engines is already installed and compatible, it is reused without unnecessary downloads.
+4. **Automatic bootstrap:** If Engines is missing or incompatible, Shell autonomously downloads and executes the official Engines installer (`v1.0.0`).
+5. **Non-interactive:** The user never installs, updates, or executes `forge614-engines` manually.
+
+### 3. Installed filesystem layout
+Both components coexist cleanly and decoupled under the base directory `~/.forge614/`:
+```text
+~/.forge614/
+├─ shell/
+│  └─ bin/forge614-shell
+└─ engines/
+   └─ bin/forge614-engines
+```
+
+### 4. PATH configuration (Strict Isolation)
+- The installer injects **only** `~/.forge614/shell/bin` into shell profile files (`~/.zshrc`, `~/.bashrc`).
+- `~/.forge614/engines/bin` is **never added to PATH**, guaranteeing internal binaries do not pollute the user's interactive shell or collide with system tools.
+
+### 5. Security and Atomicity Guarantees
+- Engines cryptographically and functionally verifies its own binary and contract.
+- If Engines cannot be downloaded, installed, or validated, Shell installation or update immediately aborts. Shell is never activated nor left in a partially installed state; during updates, the previous working version is safely preserved.
+
+### 6. Daily workflow (Shell is Optional after Setup)
+- Forge614 Shell is used for initial setup, profile configuration, fixing discrepancies, status inspections, and confirmations.
+- Once setup is complete, the user is completely free to close Shell and work directly in their preferred native editor or client (ADE Orca, Claude Code, OpenAI Codex, or other native clients). Shell empowers setup without constraining daily habits.
+
+### 7. Troubleshooting
+| Scenario / Error | Root Cause | System Action / Resolution |
+| --- | --- | --- |
+| Failed to download Engines installer | Network drop or GitHub Releases unreachable. | Shell install aborts atomically; Shell is neither activated nor partially installed. Retry once network connectivity is restored. |
+| Incompatible or corrupted Engines binary | The binary does not return `schemaVersion: 1`. | Shell invokes the official Engines installer to activate a compatible stable release, then validates the contract. |
+| Compatible Engines detected | `schemaVersion: 1` validated successfully. | Shell reuses the binary instantly, skipping redundant downloads. |
+| `forge614-engines: command not found` on terminal | User attempts to invoke the internal binary directly. | Expected behavior: Engines is an internal component not exposed in `PATH`. Shell manages it automatically; use Shell for setup or a configured native AI client for daily work. |
+
+### 8. Maintainer guidelines
+- **3 Official Shell Assets:** Shell publishes exclusively `forge614-shell-<version>.tar.gz`, `forge614-shell-<version>.tar.gz.sha256`, and `install.sh`.
+- **Zero bundled Engines binaries:** Engines binaries are never copied or packaged inside Shell's release bundle; Shell fetches the official Engines installer over the network.
+- **Release Precondition:** A compatible stable release of Forge614 Engines must already be published before publishing a Shell release that depends on it.
+- **Next stable release:** This bootstrap behavior is integrated into the local code and will ship in the next stable Shell release.
+
 ## Verification record
 
 | Field | Value |
