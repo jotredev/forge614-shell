@@ -20,7 +20,7 @@ const defaultRun: RunEngram = async (command, args) => {
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 };
 
-function locateEngramBinary(home: string, env?: NodeJS.ProcessEnv): string {
+export function locateEngramBinary(home: string, env?: NodeJS.ProcessEnv): string {
   const forgeHome = env?.FORGE614_HOME ?? join(home, ".forge614");
   return join(forgeHome, "engram", "bin", "forge614-engram");
 }

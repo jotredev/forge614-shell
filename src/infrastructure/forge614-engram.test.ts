@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { applyEngramInit } from "./forge614-engram.ts";
+import { applyEngramInit, locateEngramBinary } from "./forge614-engram.ts";
 
 test("runs init --json only when PostgreSQL and reinforcement are both disabled", async () => {
   const calls: string[][] = [];
@@ -149,4 +149,14 @@ test("rejects a result Engram did not report as JSON", async () => {
     { postgresUrl: null, reinforcement: false },
     { home: "/Users/tester", run: async () => ({ status: 0, stdout: "not json", stderr: "" }) },
   )).rejects.toThrow("invalid result");
+});
+
+test("locateEngramBinary resolves under the given home by default", () => {
+  expect(locateEngramBinary("/Users/tester")).toBe("/Users/tester/.forge614/engram/bin/forge614-engram");
+});
+
+test("locateEngramBinary honors FORGE614_HOME over the given home", () => {
+  expect(locateEngramBinary("/Users/tester", { FORGE614_HOME: "/custom/forge" } as NodeJS.ProcessEnv)).toBe(
+    "/custom/forge/engram/bin/forge614-engram",
+  );
 });
