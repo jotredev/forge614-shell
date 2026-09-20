@@ -1,33 +1,29 @@
 # Forge614-Shell
 
-## Español
+Forge614-Shell is a terminal workspace with AI-assisted programming chat. Think of it as a workshop reception desk: it gives people one visible place to choose and use an installed assistant, while specialised tools do their own jobs behind the counter.
 
-Entorno de terminal con chat para programación asistida por IA con soporte multimotor bajo arquitectura en capas. Se apoya en Forge614 Engines como dependencia interna no interactiva instalada en `~/.forge614/engines/` para la detección y validación de agentes de IA locales. Forge614 Shell es el único comando agregado al PATH (`forge614-shell`); Engines no se agrega al PATH y el usuario no debe ejecutarlo directamente. Al iniciar Shell, el selector “Choose your AI engine” consulta el contrato público `~/.forge614/engines/bin/forge614-engines detect` (`schemaVersion: 1`) en lugar de usar detección local en PATH. Shell muestra únicamente los agentes detectados por Engines para los que Shell ya cuenta con un adaptador de chat: Claude Code y OpenAI Codex (Cursor puede ser detectado por Engines pero no aparece aún al no tener adaptador de chat, y Antigravity CLI ya no aparece al pertenecer a la detección local heredada). Si Engines no está disponible o es incompatible, Shell no realiza fallback a detección local y solicita reinstalar Forge614 Shell para repararlo. Se ejecuta dentro de la terminal o IDE del usuario (como Orca, Ghostty, iTerm o tmux), manteniendo una sesión activa aislada por cada ruta o worktree de trabajo. Tras completar el setup o configuración en Shell, el usuario puede seguir trabajando directamente desde ADE Orca, Claude Code, Codex u otras terminales nativas; Shell no sustituye esos clientes. Utiliza los perfiles y credenciales nativas compartidas del sistema, ofreciendo desconexión local de sesión mediante `/logout` sin revocar cuentas externas.
+Shell is a TypeScript application run with Bun and Node.js 22.19+. It is the human-facing product in the Forge614 ecosystem. Forge614 Engines (the internal, non-interactive component that detects installed assistants) supplies discovery and safe configuration plans. Forge614 Engram (the separate persistent-memory product) is optional for chat, but Shell can initialize it and offer to register its MCP server (a local standard connection that lets an AI client call a tool) after initialization.
 
-**Estado:** Etapa 02 en curso (interfaz Basic con chat y sidebar contextual, métricas braille, barra de estado inferior con identidad de proyecto y fijación de versión, modos de trabajo nativos con `Shift+Tab`, descubrimiento de habilidades Codex con `$`, refresco de cuotas `/refresh`, scroll independiente, arquitectura en capas, adaptadores de chat para Claude Code y Codex, integración con contrato público de Forge614 Engines `detect` con schema v1 sin fallback local, perfiles compartidos, desconexión local `/logout`, reconexión `/login`, instalador público de un comando vía `curl -fsSL https://github.com/jotredev/forge614-shell/releases/latest/download/install.sh | bash`, actualización manual mediante `forge614-shell update` con protección de rollback, bootstrap y validación automática de Forge614 Engines en `~/.forge614/engines/`, ruta aislada de Shell en `~/.forge614/shell/bin/` como única entrada añadida al PATH, e independencia para trabajar en clientes nativos tras el setup; 133 pruebas pasando en 35 archivos, 597 aserciones). La integración con Engines y la ruta aislada de Shell están preparadas localmente para el próximo release estable de Shell (sin alterar la versión publicada actual). La etapa 2 no está completada; restan interfaz Full estilo Orca/worktrees, instalador para Windows, distribución vía paquetes nativos/dominio web propio, motores locales e integración de memoria Engram diferida al final.
+## Boundaries
 
-### Índice de documentación
+- Interactive chat adapters exist for Claude Code and OpenAI Codex. Pi remains a legacy non-interactive path only.
+- Cursor can be configured with Engram MCP when Engines reports MCP support, but Shell has no Cursor chat adapter.
+- Gemini and Antigravity are not supported by Shell.
+- Shell never falls back to scanning `PATH` itself when Forge614 Engines is missing or incompatible.
+- Shell does not store subscription credentials, revoke external accounts, create projects during Engram initialization, or display MCP configuration-file contents.
 
-| Nº | Español | English |
+## Documentation / Documentación
+
+| No. | Español | English |
 | --- | --- | --- |
-| 00 | [Instalación y actualización pública del release](docs/es/00-instalacion-y-prueba-local-release.md) | [Public release installation and updates](docs/en/00-installation-and-local-release-test.md) |
-| 01 | [Alcance y decisiones](docs/es/01-alcance.md) | [Scope and decisions](docs/en/01-scope.md) |
-| 02 | [Traspaso a Notion](docs/es/02-traspaso-notion.md) | [Notion handoff](docs/en/02-notion-handoff.md) |
-| 03 | [Primera entrega de la etapa 2](docs/es/03-etapa-2-primera-entrega.md) | [Stage 2 first delivery](docs/en/03-stage-2-first-delivery.md) |
-| 04 | [Arquitectura y motores](docs/es/04-arquitectura-motores.md) | [Architecture and engines](docs/en/04-architecture-engines.md) |
-| 05 | [Interfaz Basic, panel lateral y cuotas](docs/es/05-interfaz-basic-panel-cuotas.md) | [Basic UI, sidebar, and quotas](docs/en/05-basic-ui-sidebar-quotas.md) |
-| 06 | [Preparación de releases e instalador público](docs/es/06-preparacion-release-1.0.0-instalador.md) | [Release preparation and public installer bundle](docs/en/06-release-1.0.0-bundle-installer.md) |
+| 00 | [Instalación, actualización y comandos](docs/es/00-instalacion-y-prueba-local-release.md) | [Installation, updates, and commands](docs/en/00-installation-and-local-release-test.md) |
+| 01 | [Propósito, límites y ecosistema](docs/es/01-alcance.md) | [Purpose, boundaries, and ecosystem](docs/en/01-scope.md) |
+| 02 | [Mapa de publicación y trazabilidad](docs/es/02-traspaso-notion.md) | [Publication map and traceability](docs/en/02-notion-handoff.md) |
+| 03 | [Registro histórico: primera entrega](docs/es/03-etapa-2-primera-entrega.md) | [Historical record: first delivery](docs/en/03-stage-2-first-delivery.md) |
+| 04 | [Arquitectura y motores actuales](docs/es/04-arquitectura-motores.md) | [Current architecture and engines](docs/en/04-architecture-engines.md) |
+| 05 | [Interfaz Basic y chat](docs/es/05-interfaz-basic-panel-cuotas.md) | [Basic interface and chat](docs/en/05-basic-ui-sidebar-quotas.md) |
+| 06 | [Releases, seguridad y mantenimiento](docs/es/06-preparacion-release-1.0.0-instalador.md) | [Releases, security, and maintenance](docs/en/06-release-1.0.0-bundle-installer.md) |
+| 07 | [Inicialización de Engram y MCP](docs/es/07-inicializacion-engram-y-mcp.md) | [Engram initialization and MCP](docs/en/07-engram-initialization-and-mcp.md) |
+| 08 | [Diagnóstico y límites operativos](docs/es/08-diagnostico-y-limites.md) | [Troubleshooting and operational limits](docs/en/08-troubleshooting-and-limits.md) |
 
-Cada par ES/EN comparte un número estable. Los archivos usan `NN-tema.md`; este README es el índice general. Notion conserva la misma numeración.
-
-El desarrollo avanza por etapas pequeñas: acordar alcance, implementar, verificar, revisar y documentar en español e inglés. La integración opcional con Forge614-Engram se abordará al final.
-
-## English
-
-A multi-engine terminal workspace for AI-assisted programming built on a layered architecture. It relies on Forge614 Engines as an internal non-interactive dependency installed under `~/.forge614/engines/` for local AI agent detection and validation. Forge614 Shell is the only command added to PATH (`forge614-shell`); Engines is not added to PATH and the user must not execute it directly. Upon starting Shell, the “Choose your AI engine” selector queries the public contract `~/.forge614/engines/bin/forge614-engines detect` (`schemaVersion: 1`) instead of performing local PATH discovery. Shell displays only agents detected by Engines for which Shell already has a chat adapter: Claude Code and OpenAI Codex (Cursor may be detected by Engines but does not appear yet because Shell has no chat adapter for it, and Antigravity CLI no longer appears as it belonged to legacy local discovery). If Engines is missing or incompatible, Shell does not fall back to local discovery and prompts repairing by reinstalling Forge614 Shell. It runs inside the user's terminal or IDE (such as Orca, Ghostty, iTerm, or tmux), maintaining an isolated active session for each working path or worktree. After completing setup or configuration in Shell, the user can continue working directly from ADE Orca, Claude Code, Codex, or native terminals; Shell does not replace those clients. It shares existing native system profiles and credentials, providing local session disconnect via `/logout` without revoking external accounts.
-
-**Status:** Stage 02 in progress (Basic split interface with contextual sidebar, braille context ring, bottom status bar with project identity and pinned version badge, native work modes via `Shift+Tab`, Codex skill discovery via `$`, `/refresh` quota queries, independent scrolling, layered architecture, chat adapters for Claude Code and Codex, integration with the public Forge614 Engines `detect` contract with schema v1 without local fallback, shared profiles, local `/logout`, `/login` reconnect, one-line public curl installer via `curl -fsSL https://github.com/jotredev/forge614-shell/releases/latest/download/install.sh | bash`, manual CLI updater via `forge614-shell update` with rollback safety, automatic bootstrap and verification of Forge614 Engines under `~/.forge614/engines/`, isolated Shell path under `~/.forge614/shell/bin/` as the only entry added to PATH, and full freedom to work in native clients after setup; 133 passing tests across 35 files, 597 assertions). The automatic Engines bootstrap and isolated Shell PATH are prepared locally for the next stable Shell release (without altering the current published release). Stage 2 is not completed; Full Orca-style workspace manager, Windows installer, package manager/custom domain distribution, local inference engines, and Engram memory integration remain deferred.
-
-The bilingual documentation index above links every document and its translation. Each ES/EN pair shares a stable number. Files use `NN-topic.md`; this README is the main index. Notion preserves the same numbering.
-
-Development proceeds in small stages: agree on scope, implement, verify, review, and document in Spanish and English. Optional Forge614-Engram integration will be addressed last.
+The local-to-Notion correspondence, version, and content fingerprints (short change-detection hashes) live in [`docs/notion-map.json`](docs/notion-map.json).
