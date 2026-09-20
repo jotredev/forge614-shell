@@ -114,6 +114,27 @@ test("an error echoing the connection string back is redacted before it can prop
   expect((error as Error).message).toContain("********");
 });
 
+test("a reinforcement-enable failure echoing the connection string back is redacted before it can propagate", async () => {
+  const postgresUrl = "postgres://user:sup3rsecret@host:5432/db";
+  const error = await applyEngramInit(
+    { postgresUrl, reinforcement: true },
+    {
+      home: "/Users/tester",
+      run: async (_command, args) => args.includes("reinforcement-enable")
+        ? {
+          status: 1,
+          stdout: "",
+          stderr: JSON.stringify({ code: "SCHEMA_ERROR", error: `No se pudo habilitar el refuerzo para ${postgresUrl}.` }),
+        }
+        : { status: 0, stdout: "{}", stderr: "" },
+    },
+  ).catch((thrown: Error) => thrown);
+  expect((error as Error).message).not.toContain(postgresUrl);
+  expect((error as Error).message).not.toContain("sup3rsecret");
+  expect((error as Error).message).toContain("********");
+  expect((error as Error).message).toContain("Local memory initialization completed successfully");
+});
+
 test("respects FORGE614_HOME when locating the Engram binary", async () => {
   const calls: string[][] = [];
   await applyEngramInit(

@@ -91,6 +91,19 @@ test("a bracketed paste on the connection-string screen reaches Engram intact an
   expect(terminal.output).not.toContain("postgres://user:pw@host:5432/db");
 });
 
+test("a pasted connection string with a trailing newline is trimmed before being submitted", async () => {
+  const terminal = new TestTerminal();
+  const result = runEngramInitFlow(terminal);
+  await tick();
+  terminal.input("\r"); await tick(); // Continue
+  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
+  terminal.input("\x1b[200~postgres://user:pw@host/db\n\x1b[201~");
+  terminal.input("\r"); await tick(); // submit the pasted value (with trailing newline)
+  terminal.input("\r"); await tick(); // Reinforcement: Yes (default)
+  terminal.input("\r"); // Summary: Confirm
+  expect(await result).toEqual({ confirmed: true, decisions: { postgresUrl: "postgres://user:pw@host/db", reinforcement: true } });
+});
+
 test("Escape at the intro screen cancels before any other screen is shown", async () => {
   const terminal = new TestTerminal();
   const result = runEngramInitFlow(terminal);

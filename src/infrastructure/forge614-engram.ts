@@ -81,7 +81,9 @@ export async function applyEngramInit(
     try {
       reinforcementResult = await runEngramCommand("reinforcement-enable", ["reinforcement-enable"], options);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      // Same last line of defence as the init catch block: Engram just persisted this connection
+      // string, so it must never reach any output, including error text, from this call either.
+      const message = redactSecret(error instanceof Error ? error.message : String(error), decisions.postgresUrl);
       throw new Error(`${message} Local memory initialization completed successfully; only reinforcement could not be enabled.`);
     }
   }

@@ -51,7 +51,7 @@ async function askPostgresConnectionString(terminal: Terminal): Promise<string |
       tui.requestRender();
       return;
     }
-    finish(value);
+    finish(value.trim());
   };
   input.onEscape = () => finish(undefined);
   tui.addInputListener(data => {
