@@ -135,14 +135,14 @@ export async function discoverMcpCapableAgents(options: {
   return capable;
 }
 
-function parseEnginesError(stdout: string, stderr: string): string {
+function parseEnginesError(stdout: string, stderr: string): string | undefined {
   for (const text of [stdout, stderr]) {
     try {
       const payload = JSON.parse(text) as EnginesErrorPayload;
       if (payload.error && typeof payload.error.message === "string" && payload.error.message) return payload.error.message;
     } catch { /* try the next stream */ }
   }
-  return "Forge614 Engines command failed.";
+  return undefined;
 }
 
 async function runEnginesCommand(
@@ -160,13 +160,13 @@ async function runEnginesCommand(
   try {
     parsed = JSON.parse(result.stdout);
   } catch {
-    throw new Error(`forge614-engines ${label} failed: ${parseEnginesError(result.stdout, result.stderr)}`);
+    throw new Error(parseEnginesError(result.stdout, result.stderr) ?? `forge614-engines ${label} failed.`);
   }
   if (parsed && typeof parsed === "object" && "error" in (parsed as Record<string, unknown>)) {
-    throw new Error(`forge614-engines ${label} failed: ${parseEnginesError(result.stdout, result.stderr)}`);
+    throw new Error(parseEnginesError(result.stdout, result.stderr) ?? `forge614-engines ${label} failed.`);
   }
   if (result.status !== 0) {
-    throw new Error(`forge614-engines ${label} failed: ${parseEnginesError(result.stdout, result.stderr)}`);
+    throw new Error(parseEnginesError(result.stdout, result.stderr) ?? `forge614-engines ${label} failed.`);
   }
   return parsed;
 }
