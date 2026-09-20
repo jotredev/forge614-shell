@@ -60,6 +60,37 @@ test("choosing Yes for PostgreSQL asks for a connection string, masks it everywh
   expect(terminal.output).not.toContain("postgres://user:pw@host/db");
 });
 
+test("submitting an empty connection string re-asks instead of cancelling the flow", async () => {
+  const terminal = new TestTerminal();
+  const result = runEngramInitFlow(terminal);
+  await tick();
+  terminal.input("\r"); await tick(); // Continue
+  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
+  terminal.input("\r"); await tick(); // submit nothing
+  expect(terminal.output).toContain("A connection string is required.");
+  expect(terminal.output).not.toContain("Memory reinforcement");
+  terminal.input("postgres://user:pw@host/db");
+  terminal.input("\r"); await tick(); // submit a real value
+  expect(terminal.output).toContain("Memory reinforcement");
+  terminal.input("\r"); await tick(); // Reinforcement: Yes (default)
+  terminal.input("\r"); // Summary: Confirm
+  expect(await result).toEqual({ confirmed: true, decisions: { postgresUrl: "postgres://user:pw@host/db", reinforcement: true } });
+});
+
+test("a bracketed paste on the connection-string screen reaches Engram intact and is never shown", async () => {
+  const terminal = new TestTerminal();
+  const result = runEngramInitFlow(terminal);
+  await tick();
+  terminal.input("\r"); await tick(); // Continue
+  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
+  terminal.input("\x1b[200~postgres://user:pw@host:5432/db\x1b[201~");
+  terminal.input("\r"); await tick(); // submit the pasted value
+  terminal.input("\r"); await tick(); // Reinforcement: Yes (default)
+  terminal.input("\r"); // Summary: Confirm
+  expect(await result).toEqual({ confirmed: true, decisions: { postgresUrl: "postgres://user:pw@host:5432/db", reinforcement: true } });
+  expect(terminal.output).not.toContain("postgres://user:pw@host:5432/db");
+});
+
 test("Escape at the intro screen cancels before any other screen is shown", async () => {
   const terminal = new TestTerminal();
   const result = runEngramInitFlow(terminal);

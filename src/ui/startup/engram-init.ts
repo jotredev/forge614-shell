@@ -30,24 +30,38 @@ async function showIntro(terminal: Terminal): Promise<boolean> {
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { finish(false); return { consume: true }; }
     return undefined;
   });
+  const terminate = () => finish(false);
+  process.once("SIGTERM", terminate);
   try { tui.start(); return await selection; }
-  finally { tui.stop({ preserveScreen: true }); }
+  finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
 }
+
+const CONNECTION_PROMPT = "Enter the PostgreSQL connection string. It is never shown or logged.";
 
 async function askPostgresConnectionString(terminal: Terminal): Promise<string | undefined> {
   const input = new MaskedInput({ placeholder: "postgres://user:password@host:5432/database" });
-  const body = new Text("Enter the PostgreSQL connection string. It is never shown or logged.");
+  const body = new Text(CONNECTION_PROMPT);
   const tui = startupFrame(terminal, "PostgreSQL connection string", input, undefined, body);
   let finish!: (value: string | undefined) => void;
   const submission = new Promise<string | undefined>(resolve => { finish = resolve; });
-  input.onSubmit = value => finish(value.trim() ? value : undefined);
+  input.onSubmit = value => {
+    // An empty submission re-asks on the same screen; only Esc/Ctrl+C cancels the flow.
+    if (!value.trim()) {
+      body.setText(`${CONNECTION_PROMPT}\n\nA connection string is required. Press Esc to cancel instead.`);
+      tui.requestRender();
+      return;
+    }
+    finish(value);
+  };
   input.onEscape = () => finish(undefined);
   tui.addInputListener(data => {
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { finish(undefined); return { consume: true }; }
     return undefined;
   });
+  const terminate = () => finish(undefined);
+  process.once("SIGTERM", terminate);
   try { tui.start(); return await submission; }
-  finally { tui.stop({ preserveScreen: true }); }
+  finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
 }
 
 async function askPostgres(terminal: Terminal): Promise<{ enabled: boolean; connectionString: string | null } | undefined> {
@@ -64,9 +78,11 @@ async function askPostgres(terminal: Terminal): Promise<{ enabled: boolean; conn
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { finish(undefined); return { consume: true }; }
     return undefined;
   });
+  const terminate = () => finish(undefined);
+  process.once("SIGTERM", terminate);
   let choice: "no" | "yes" | undefined;
   try { tui.start(); choice = await selection; }
-  finally { tui.stop({ preserveScreen: true }); }
+  finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
   if (!choice) return undefined;
   if (choice === "no") return { enabled: false, connectionString: null };
   const connectionString = await askPostgresConnectionString(terminal);
@@ -88,11 +104,13 @@ async function askReinforcement(terminal: Terminal): Promise<boolean | undefined
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { finish(undefined); return { consume: true }; }
     return undefined;
   });
+  const terminate = () => finish(undefined);
+  process.once("SIGTERM", terminate);
   try {
     tui.start();
     const choice = await selection;
     return choice === undefined ? undefined : choice === "yes";
-  } finally { tui.stop({ preserveScreen: true }); }
+  } finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
 }
 
 function summaryText(decisions: EngramInitDecisions): string {
@@ -129,8 +147,10 @@ async function showSummary(terminal: Terminal, decisions: EngramInitDecisions): 
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { finish(false); return { consume: true }; }
     return undefined;
   });
+  const terminate = () => finish(false);
+  process.once("SIGTERM", terminate);
   try { tui.start(); return await selection; }
-  finally { tui.stop({ preserveScreen: true }); }
+  finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
 }
 
 /** Drives the Engram memory-initialization screens end to end. Makes no Engram command calls. */
