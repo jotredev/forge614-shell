@@ -1,3 +1,7 @@
+import type { Terminal } from "@earendil-works/pi-tui";
+import { runEngramInitFlow } from "../ui/startup/engram-init.ts";
+import { applyEngramInit, type RunEngram } from "../infrastructure/forge614-engram.ts";
+
 const SUPPORTED_PRODUCTS = ["engram"] as const;
 
 /** Validates `forge614-shell init --product <name>` arguments; throws a clear error otherwise. */
@@ -15,4 +19,27 @@ export function requireEngramProduct(args: string[]): void {
   if (!SUPPORTED_PRODUCTS.includes(product as (typeof SUPPORTED_PRODUCTS)[number])) {
     throw new Error(`forge614-shell init --product ${product} is not supported. Only "engram" is supported today.`);
   }
+}
+
+export interface RunInitOptions {
+  readonly terminal?: Terminal;
+  readonly run?: RunEngram;
+  readonly home?: string;
+  readonly env?: NodeJS.ProcessEnv;
+}
+
+/** Entry point for `forge614-shell init --product engram`. Makes no Engram call before confirmation. */
+export async function runInitCommand(args: string[], options: RunInitOptions = {}): Promise<void> {
+  requireEngramProduct(args);
+  if (!options.terminal && (!process.stdin.isTTY || !process.stdout.isTTY)) {
+    throw new Error("forge614-shell init requires an interactive terminal.");
+  }
+  const flow = await runEngramInitFlow(options.terminal);
+  if (!flow.confirmed) {
+    process.exitCode = 130;
+    console.log("Cancelled. No changes were made.");
+    return;
+  }
+  await applyEngramInit(flow.decisions, { run: options.run, home: options.home, env: options.env });
+  console.log("Forge614 Engram memory initialization is complete.");
 }
