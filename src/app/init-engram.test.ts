@@ -177,57 +177,72 @@ function captureLogs(): { logs: string[]; restore: () => void } {
   return { logs, restore: () => spy.mockRestore() };
 }
 
-test("choosing one MCP-capable assistant plans and applies exactly that one", async () => {
-  const terminal = new TestTerminal();
-  const enginesCalls: string[][] = [];
-  const { logs, restore } = captureLogs();
-  const run = runInitCommand(["--product", "engram"], {
-    terminal, home: "/Users/tester",
-    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
-    enginesRun: async (command, args) => {
-      enginesCalls.push([command, ...args]);
-      if (args[0] === "detect") {
-        return {
-          status: 0,
-          stdout: JSON.stringify({ schemaVersion: 1, agents: [
-            { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude" },
-          ] }),
-          stderr: "",
-        };
-      }
-      if (args[0] === "capabilities") {
-        return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, id: "claude-code", label: "Claude Code", supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true }), stderr: "" };
-      }
-      if (args[0] === "plan") {
-        return {
-          status: 0,
-          stdout: JSON.stringify({ schemaVersion: 1, plan: { planId: "plan-1", agentId: "claude-code", action: "mcp-install", noop: false, writes: [{ path: "/Users/tester/.claude.json" }] } }),
-          stderr: "",
-        };
-      }
-      return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { planId: "plan-1", applied: true, changedFiles: ["/Users/tester/.claude.json"] } }), stderr: "" };
+function detectPayload(agents: { id: string; label: string; executable: string }[]) {
+  return { schemaVersion: 1, agents: agents.map(a => ({ ...a, installed: true })) };
+}
+
+function capabilitiesPayload(agentId: string) {
+  return { schemaVersion: 1, id: agentId, label: agentId, supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true };
+}
+
+function planPayload(agentId: string, opts: {
+  planId?: string; noop?: boolean;
+  mcpStatus?: { kind: string; reason?: string; details?: string };
+  instructionsStatus?: { kind: string; reason?: string; details?: string };
+  overallStatus?: string; mcpPath?: string; instructionsPaths?: string[];
+} = {}) {
+  return {
+    schemaVersion: 1,
+    plan: {
+      planId: opts.planId ?? `plan-${agentId}`,
+      agentId,
+      action: "memory-install",
+      noop: opts.noop ?? false,
+      writes: [],
+      metadata: {
+        mcp: { path: opts.mcpPath ?? `/Users/tester/.${agentId}.json`, status: opts.mcpStatus ?? { kind: "write" } },
+        instructions: { paths: opts.instructionsPaths ?? [`/Users/tester/.${agentId}/instructions.md`], status: opts.instructionsStatus ?? { kind: "write" } },
+        overallStatus: opts.overallStatus ?? "complete",
+      },
     },
-  });
+  };
+}
+
+function applyPayload(planId: string, applied = true) {
+  return { schemaVersion: 1, result: { planId, applied, changedFiles: applied ? ["/Users/tester/changed.json"] : [] } };
+}
+
+function verifyPayload(agentId: string, opts: {
+  mcpPresent?: boolean; instructionsSupported?: boolean; instructionsPresent?: boolean; overallStatus?: string;
+} = {}) {
+  return {
+    schemaVersion: 1,
+    verification: {
+      agentId,
+      mcp: { path: `/Users/tester/.${agentId}.json`, present: opts.mcpPresent ?? true },
+      instructions: {
+        supported: opts.instructionsSupported ?? true,
+        paths: [`/Users/tester/.${agentId}/instructions.md`],
+        present: opts.instructionsPresent ?? true,
+      },
+      overallStatus: opts.overallStatus ?? "complete",
+    },
+  };
+}
+
+function agentIdFrom(args: string[]): string {
+  return args[args.indexOf("--agent") + 1]!;
+}
+
+async function driveEngramScreens(terminal: TestTerminal): Promise<void> {
   await tick();
   terminal.input("\r"); await tick(); // Continue
-  terminal.input("\r"); await tick(); // PostgreSQL: No
+  terminal.input("\r"); await tick(); // PostgreSQL: No (default)
   terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
   terminal.input("\r"); await tick(); // Engram summary: Confirm
-  terminal.input(" "); terminal.input("\r"); await tick(); // MCP picker: check Claude Code, submit
-  terminal.input("\r"); // MCP preview: Confirm
-  try { await run; } finally { restore(); }
-  expect(enginesCalls[0]).toEqual(["/Users/tester/.forge614/engines/bin/forge614-engines", "detect"]);
-  expect(enginesCalls[1]).toEqual(["/Users/tester/.forge614/engines/bin/forge614-engines", "capabilities", "--agent", "claude-code"]);
-  expect(enginesCalls[2]).toEqual([
-    "/Users/tester/.forge614/engines/bin/forge614-engines", "plan", "mcp-install",
-    "--agent", "claude-code", "--name", "forge614-engram",
-    "--command", "/Users/tester/.forge614/engram/bin/forge614-engram", "--args", "mcp",
-  ]);
-  expect(enginesCalls[3]).toEqual(["/Users/tester/.forge614/engines/bin/forge614-engines", "apply", "--plan-id", "plan-1"]);
-  expect(logs).toContain("Claude Code: configured");
-});
+}
 
-test("selecting no assistants initializes Engram without configuring any MCP", async () => {
+test("selecting no assistants initializes Engram without configuring any memory integration", async () => {
   const terminal = new TestTerminal();
   const enginesCalls: string[][] = [];
   const { logs, restore } = captureLogs();
@@ -236,36 +251,24 @@ test("selecting no assistants initializes Engram without configuring any MCP", a
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
     enginesRun: async (command, args) => {
       enginesCalls.push([command, ...args]);
-      if (args[0] === "detect") {
-        return {
-          status: 0,
-          stdout: JSON.stringify({ schemaVersion: 1, agents: [
-            { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude" },
-          ] }),
-          stderr: "",
-        };
-      }
-      return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, id: "claude-code", label: "Claude Code", supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true }), stderr: "" };
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
     },
   });
-  await tick();
-  terminal.input("\r"); await tick();
-  terminal.input("\r"); await tick();
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick();
-  terminal.input("\r"); await tick(); // Engram summary confirm
-  terminal.input("\r"); // MCP picker: submit with nothing checked
+  await driveEngramScreens(terminal);
+  terminal.input("\r"); // memory picker: submit with nothing checked
   try { await run; } finally { restore(); }
   expect(enginesCalls).toEqual([
     ["/Users/tester/.forge614/engines/bin/forge614-engines", "detect"],
     ["/Users/tester/.forge614/engines/bin/forge614-engines", "capabilities", "--agent", "claude-code"],
   ]);
-  expect(logs).toContain("No assistant was selected. No MCP was configured.");
+  expect(logs).toContain("No assistant was selected. No memory integration was configured.");
 });
 
-test("an already-configured assistant is reported without an apply call", async () => {
+test("Claude Code and Codex both plan, apply, and verify to a complete memory integration", async () => {
   const terminal = new TestTerminal();
-  const enginesCalls: string[][] = [];
   const { logs, restore } = captureLogs();
+  const enginesCalls: string[][] = [];
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -274,65 +277,66 @@ test("an already-configured assistant is reported without an apply call", async 
       if (args[0] === "detect") {
         return {
           status: 0,
-          stdout: JSON.stringify({ schemaVersion: 1, agents: [
-            { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude" },
-          ] }),
+          stdout: JSON.stringify(detectPayload([
+            { id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" },
+            { id: "codex", label: "Codex", executable: "/usr/local/bin/codex" },
+          ])),
           stderr: "",
         };
       }
-      if (args[0] === "capabilities") {
-        return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, id: "claude-code", label: "Claude Code", supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true }), stderr: "" };
-      }
-      return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, plan: { planId: "plan-1", agentId: "claude-code", action: "mcp-install", noop: true, writes: [] } }), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload(agentIdFrom(args))), stderr: "" };
+      if (args[0] === "plan") { const id = agentIdFrom(args); return { status: 0, stdout: JSON.stringify(planPayload(id)), stderr: "" }; }
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload(args[args.indexOf("--plan-id") + 1]!)), stderr: "" };
+      const id = agentIdFrom(args);
+      return { status: 0, stdout: JSON.stringify(verifyPayload(id)), stderr: "" };
     },
   });
-  await tick();
-  terminal.input("\r"); await tick();
-  terminal.input("\r"); await tick();
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick();
-  terminal.input("\r"); await tick();
-  terminal.input(" "); terminal.input("\r"); // check + submit
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\x1b[B"); terminal.input(" "); terminal.input("\r"); await tick(); // check both, submit
+  terminal.input("\r"); // preview: Confirm
   try { await run; } finally { restore(); }
-  expect(enginesCalls.filter(call => call.includes("apply")).length).toBe(0);
-  expect(logs).toContain("Claude Code: already configured");
+  expect(enginesCalls.filter(c => c[2] === "memory-install").map(c => agentIdFrom(c)).sort()).toEqual(["claude-code", "codex"]);
+  expect(enginesCalls.filter(c => c[2] === "memory-integration").map(c => agentIdFrom(c)).sort()).toEqual(["claude-code", "codex"]);
+  expect(logs).toContain("Claude Code: configured — MCP and memory instructions available");
+  expect(logs).toContain("Codex: configured — MCP and memory instructions available");
+  expect(logs).toContain("Close and reopen each configured assistant's session so it loads the new MCP server and memory instructions.");
 });
 
-test("a plan error is shown as not configured and never applied", async () => {
+test("Cursor's memory integration is reported partial, never as fully complete", async () => {
   const terminal = new TestTerminal();
-  const enginesCalls: string[][] = [];
   const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
-    enginesRun: async (command, args) => {
-      enginesCalls.push([command, ...args]);
-      if (args[0] === "detect") {
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "cursor", label: "Cursor", executable: "/Applications/Cursor.app/Contents/MacOS/Cursor" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("cursor")), stderr: "" };
+      if (args[0] === "plan") {
         return {
           status: 0,
-          stdout: JSON.stringify({ schemaVersion: 1, agents: [
-            { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude" },
-          ] }),
+          stdout: JSON.stringify(planPayload("cursor", {
+            instructionsStatus: { kind: "unsupported", reason: "Cursor has no officially supported mechanism to auto-load global instructions." },
+            overallStatus: "partial",
+          })),
           stderr: "",
         };
       }
-      if (args[0] === "capabilities") {
-        return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, id: "claude-code", label: "Claude Code", supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true }), stderr: "" };
-      }
-      return { status: 1, stdout: JSON.stringify({ schemaVersion: 1, error: { code: "CONFLICT", message: "A different MCP already uses this name." } }), stderr: "" };
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-cursor")), stderr: "" };
+      // Engines' own verify semantics: Cursor's instructions are structurally unsupported, so a
+      // present MCP entry is "the complete achievable state for this agent" — Shell must not
+      // pass this "complete" straight through.
+      return { status: 0, stdout: JSON.stringify(verifyPayload("cursor", { instructionsSupported: false, instructionsPresent: false, overallStatus: "complete" })), stderr: "" };
     },
   });
-  await tick();
-  terminal.input("\r"); await tick();
-  terminal.input("\r"); await tick();
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick();
-  terminal.input("\r"); await tick();
-  terminal.input(" "); terminal.input("\r"); // check + submit
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r"); await tick(); // check Cursor, submit
+  terminal.input("\r"); // preview: Confirm
   try { await run; } finally { restore(); }
-  expect(enginesCalls.filter(call => call.includes("apply")).length).toBe(0);
-  expect(logs).toContain("Claude Code: not configured — A different MCP already uses this name.");
+  expect(logs).toContain("Cursor: partially configured — this assistant has no official mechanism to auto-load global instructions");
+  expect(logs.some(line => line.startsWith("Cursor: configured"))).toBe(false);
 });
 
-test("cancelling the MCP preview confirmation applies nothing", async () => {
+test("a conflict on every component makes no apply call and reports the conflict", async () => {
   const terminal = new TestTerminal();
   const enginesCalls: string[][] = [];
   const { logs, restore } = captureLogs();
@@ -341,31 +345,138 @@ test("cancelling the MCP preview confirmation applies nothing", async () => {
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
     enginesRun: async (command, args) => {
       enginesCalls.push([command, ...args]);
-      if (args[0] === "detect") {
-        return {
-          status: 0,
-          stdout: JSON.stringify({ schemaVersion: 1, agents: [
-            { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude" },
-          ] }),
-          stderr: "",
-        };
-      }
-      if (args[0] === "capabilities") {
-        return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, id: "claude-code", label: "Claude Code", supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true }), stderr: "" };
-      }
-      return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, plan: { planId: "plan-1", agentId: "claude-code", action: "mcp-install", noop: false, writes: [{ path: "/Users/tester/.claude.json" }] } }), stderr: "" };
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      return {
+        status: 0,
+        stdout: JSON.stringify(planPayload("claude-code", {
+          noop: true,
+          mcpStatus: { kind: "blocked", reason: "mcp-conflict", details: 'An existing "forge614-engram" MCP entry with different content is already present.' },
+          instructionsStatus: { kind: "blocked", reason: "instructions-conflict", details: "An existing managed instructions block could not be reconciled." },
+          overallStatus: "unsupported",
+        })),
+        stderr: "",
+      };
     },
   });
-  await tick();
-  terminal.input("\r"); await tick();
-  terminal.input("\r"); await tick();
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick();
-  terminal.input("\r"); await tick();
-  terminal.input(" "); terminal.input("\r"); await tick(); // check + submit MCP picker
+  await driveEngramScreens(terminal);
+  // Both components are blocked, so the plan is noop:true — the memory picker's submit is the
+  // last screen: no preview/confirm screen appears (there is nothing pending to apply), so no
+  // further terminal input is sent here.
+  terminal.input(" "); terminal.input("\r"); // check Claude Code, submit
+  try { await run; } finally { restore(); }
+  expect(enginesCalls.some(c => c[0] === "apply" || c.includes("apply"))).toBe(false);
+  expect(logs).toContain('Claude Code: not supported — MCP: An existing "forge614-engram" MCP entry with different content is already present.; instructions: An existing managed instructions block could not be reconciled.');
+});
+
+test("cancelling the memory preview makes zero writes", async () => {
+  const terminal = new TestTerminal();
+  const enginesCalls: string[][] = [];
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (command, args) => {
+      enginesCalls.push([command, ...args]);
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      return { status: 0, stdout: JSON.stringify(planPayload("claude-code")), stderr: "" };
+    },
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
   terminal.input("\x1b[B"); terminal.input("\r"); // preview: move to Cancel, submit
   try { await run; } finally { restore(); }
-  expect(enginesCalls.filter(call => call.includes("apply")).length).toBe(0);
+  expect(enginesCalls.some(c => c.includes("apply"))).toBe(false);
   expect(logs).toContain("Claude Code: skipped");
+});
+
+test("a plan-level Engines failure for one assistant is reported without failing the already-successful Engram init", async () => {
+  const terminal = new TestTerminal();
+  const enginesCalls: string[][] = [];
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (command, args) => {
+      enginesCalls.push([command, ...args]);
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      return { status: 1, stdout: JSON.stringify({ schemaVersion: 1, error: { code: "ENGRAM_PROTOCOL_UNAVAILABLE", message: "Could not reach forge614-engram to read its memory protocol." } }), stderr: "" };
+    },
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r"); // check Claude Code, submit (no preview: nothing was planned)
+  try { await run; } finally { restore(); }
+  expect(enginesCalls.some(c => c.includes("apply"))).toBe(false);
+  expect(logs).toContain("Forge614 Engram memory initialization is complete.");
+  expect(logs).toContain("Claude Code: not configured — Could not reach forge614-engram to read its memory protocol.");
+  expect(process.exitCode as number | undefined).not.toBe(1);
+});
+
+test("an apply that reports applied: false is shown as not configured, without calling verify", async () => {
+  const terminal = new TestTerminal();
+  const enginesCalls: string[][] = [];
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (command, args) => {
+      enginesCalls.push([command, ...args]);
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("claude-code")), stderr: "" };
+      return { status: 0, stdout: JSON.stringify(applyPayload("plan-claude-code", false)), stderr: "" };
+    },
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
+  terminal.input("\r"); // preview: Confirm
+  try { await run; } finally { restore(); }
+  expect(enginesCalls.some(c => c.includes("memory-integration"))).toBe(false);
+  expect(logs).toContain("Claude Code: not configured — Forge614 Engines reported the change was not applied.");
+});
+
+test("verify reporting absent after a successful apply is communicated, never as success", async () => {
+  const terminal = new TestTerminal();
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("claude-code")), stderr: "" };
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-claude-code")), stderr: "" };
+      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { mcpPresent: false, instructionsPresent: false, overallStatus: "absent" })), stderr: "" };
+    },
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
+  terminal.input("\r"); // preview: Confirm
+  try { await run; } finally { restore(); }
+  expect(logs).toContain("Claude Code: not configured — Forge614 Engines could not confirm any memory integration for this assistant.");
+});
+
+test("verify reporting partial after a successful apply explains exactly what is missing", async () => {
+  const terminal = new TestTerminal();
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("claude-code")), stderr: "" };
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-claude-code")), stderr: "" };
+      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { instructionsPresent: false, overallStatus: "partial" })), stderr: "" };
+    },
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
+  terminal.input("\r"); // preview: Confirm
+  try { await run; } finally { restore(); }
+  expect(logs).toContain("Claude Code: partially configured — the memory instructions are not installed");
 });
 
 test("two selected assistants report independently when one apply fails", async () => {
@@ -378,94 +489,39 @@ test("two selected assistants report independently when one apply fails", async 
       if (args[0] === "detect") {
         return {
           status: 0,
-          stdout: JSON.stringify({ schemaVersion: 1, agents: [
-            { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude" },
-            { id: "codex", label: "Codex", installed: true, executable: "/usr/local/bin/codex" },
-          ] }),
+          stdout: JSON.stringify(detectPayload([
+            { id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" },
+            { id: "codex", label: "Codex", executable: "/usr/local/bin/codex" },
+          ])),
           stderr: "",
         };
       }
-      if (args[0] === "capabilities") {
-        const agentId = args[args.indexOf("--agent") + 1];
-        return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, id: agentId, label: agentId, supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true }), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload(agentIdFrom(args))), stderr: "" };
+      if (args[0] === "plan") { const id = agentIdFrom(args); return { status: 0, stdout: JSON.stringify(planPayload(id)), stderr: "" }; }
+      if (args[0] === "apply") {
+        const planId = args[args.indexOf("--plan-id") + 1]!;
+        if (planId === "plan-codex") return { status: 1, stdout: JSON.stringify({ schemaVersion: 1, error: { code: "STALE_PLAN", message: "File changed since the plan was computed: /Users/tester/.codex/config.toml" } }), stderr: "" };
+        return { status: 0, stdout: JSON.stringify(applyPayload(planId)), stderr: "" };
       }
-      if (args[0] === "plan") {
-        const agentId = args[args.indexOf("--agent") + 1];
-        return {
-          status: 0,
-          stdout: JSON.stringify({ schemaVersion: 1, plan: { planId: `plan-${agentId}`, agentId, action: "mcp-install", noop: false, writes: [{ path: `/Users/tester/.${agentId}.json` }] } }),
-          stderr: "",
-        };
-      }
-      if (args.includes("plan-codex")) {
-        return { status: 1, stdout: JSON.stringify({ schemaVersion: 1, error: { code: "WRITE_FAILED", message: "Could not write the Codex config file." } }), stderr: "" };
-      }
-      return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { planId: "plan-claude-code", applied: true, changedFiles: ["/Users/tester/.claude-code.json"] } }), stderr: "" };
+      return { status: 0, stdout: JSON.stringify(verifyPayload(agentIdFrom(args))), stderr: "" };
     },
   });
-  await tick();
-  terminal.input("\r"); await tick();
-  terminal.input("\r"); await tick();
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick();
-  terminal.input("\r"); await tick();
+  await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\x1b[B"); terminal.input(" "); terminal.input("\r"); await tick(); // check both, submit
   terminal.input("\r"); // preview: Confirm
   try { await run; } finally { restore(); }
-  expect(logs).toContain("Claude Code: configured");
-  expect(logs).toContain("Codex: not configured — Could not write the Codex config file.");
-});
-
-test("an apply that reports applied: false is shown as not configured, not configured", async () => {
-  const terminal = new TestTerminal();
-  const enginesCalls: string[][] = [];
-  const { logs, restore } = captureLogs();
-  const run = runInitCommand(["--product", "engram"], {
-    terminal, home: "/Users/tester",
-    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
-    enginesRun: async (command, args) => {
-      enginesCalls.push([command, ...args]);
-      if (args[0] === "detect") {
-        return {
-          status: 0,
-          stdout: JSON.stringify({ schemaVersion: 1, agents: [
-            { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude" },
-          ] }),
-          stderr: "",
-        };
-      }
-      if (args[0] === "capabilities") {
-        return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, id: "claude-code", label: "Claude Code", supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true }), stderr: "" };
-      }
-      if (args[0] === "plan") {
-        return {
-          status: 0,
-          stdout: JSON.stringify({ schemaVersion: 1, plan: { planId: "plan-1", agentId: "claude-code", action: "mcp-install", noop: false, writes: [{ path: "/Users/tester/.claude.json" }] } }),
-          stderr: "",
-        };
-      }
-      return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { planId: "plan-1", applied: false, changedFiles: [] } }), stderr: "" };
-    },
-  });
-  await tick();
-  terminal.input("\r"); await tick(); // Continue
-  terminal.input("\r"); await tick(); // PostgreSQL: No
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
-  terminal.input("\r"); await tick(); // Engram summary: Confirm
-  terminal.input(" "); terminal.input("\r"); await tick(); // MCP picker: check Claude Code, submit
-  terminal.input("\r"); // MCP preview: Confirm
-  try { await run; } finally { restore(); }
-  expect(logs).toContain("Claude Code: not configured — Forge614 Engines reported the change was not applied.");
-  expect(logs).not.toContain("Claude Code: configured");
+  expect(logs).toContain("Claude Code: configured — MCP and memory instructions available");
+  expect(logs).toContain("Codex: not configured — File changed since the plan was computed: /Users/tester/.codex/config.toml");
 });
 
 // pi-tui defers a screen's first paint to a `setTimeout`/`process.nextTick` callback outside any
 // promise chain, so throwing from `write()` on matching text can never be caught by a `try/catch`
-// around `runMcpSetupStep` (confirmed: it surfaces as an unrelated, uncatchable async exception).
-// `start()` is called synchronously inside `chooseMcpAgents`'s own `tui.start()` call instead, so
-// throwing there on the picker's turn reproduces an MCP-step UI failure that the fix can catch.
+// around `runMemorySetupStep` (confirmed: it surfaces as an unrelated, uncatchable async exception).
+// `start()` is called synchronously inside `chooseMemoryAgents`'s own `tui.start()` call instead, so
+// throwing there on the picker's turn reproduces a memory-setup UI failure that the fix can catch.
 // The Engram flow renders exactly four screens (intro, PostgreSQL, reinforcement, summary) before
-// the MCP picker starts its own TUI, so the fifth `start()` call is the picker's.
-class ThrowingMcpScreenTerminal extends TestTerminal {
+// the memory picker starts its own TUI, so the fifth `start()` call is the picker's.
+class ThrowingMemoryScreenTerminal extends TestTerminal {
   private starts = 0;
   start(input: (data: string) => void) {
     this.starts += 1;
@@ -474,33 +530,21 @@ class ThrowingMcpScreenTerminal extends TestTerminal {
   }
 }
 
-test("an exception during the MCP picker screen never fails an already-successful Engram init", async () => {
-  const terminal = new ThrowingMcpScreenTerminal();
+test("an exception during the memory picker screen never fails an already-successful Engram init", async () => {
+  const terminal = new ThrowingMemoryScreenTerminal();
   const { logs, restore } = captureLogs();
   process.exitCode = 0;
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
     enginesRun: async (_command, args) => {
-      if (args[0] === "detect") {
-        return {
-          status: 0,
-          stdout: JSON.stringify({ schemaVersion: 1, agents: [
-            { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude" },
-          ] }),
-          stderr: "",
-        };
-      }
-      return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, id: "claude-code", label: "Claude Code", supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true }), stderr: "" };
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
     },
   });
-  await tick();
-  terminal.input("\r"); await tick(); // Continue
-  terminal.input("\r"); await tick(); // PostgreSQL: No (default)
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
-  terminal.input("\r"); // Summary: Confirm (default)
+  await driveEngramScreens(terminal);
   try { await run; } finally { restore(); }
   expect(process.exitCode as number | undefined).not.toBe(1);
-  expect(logs.some(line => line.includes("MCP setup could not be completed"))).toBe(true);
+  expect(logs.some(line => line.includes("Memory setup could not be completed"))).toBe(true);
   process.exitCode = 0; // reset so this test's exit code doesn't leak into the overall `bun test` process exit status
 });

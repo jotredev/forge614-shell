@@ -51,7 +51,7 @@ Shell does not store subscription credentials or manage billing.
   --version, -v       Show the Shell version
   update              Download and activate the latest stable release
   uninstall           Remove Forge614 Shell from this computer
-  init --product <name>  Set up a Forge614 product's local memory and, for engram, its MCP setup
+  init --product <name>  Set up a Forge614 product's local memory and, for engram, its memory integration (MCP + instructions)
   --help, -h          Show this help
 
 Native chat: /login, /logout, /resume, /new, /model, /effort, /status, /stop, /quit
