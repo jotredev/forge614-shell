@@ -452,3 +452,68 @@ test("verifyMemoryIntegration rejects a malformed result instead of guessing its
     run: async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, verification: { agentId: "claude-code" } }), stderr: "" }),
   })).rejects.toThrow("forge614-engines returned an invalid verification result.");
 });
+
+import { updateEngines } from "./forge614-engines.ts";
+
+test("updateEngines sends the bare update command and reads the result", async () => {
+  const calls: string[][] = [];
+  const result = await updateEngines({
+    home: "/Users/tester",
+    run: async (command, args) => {
+      calls.push([command, ...args]);
+      return {
+        status: 0,
+        stdout: JSON.stringify({ schemaVersion: 1, result: { updated: true, currentVersion: "1.3.0", latestVersion: "1.4.0" } }),
+        stderr: "",
+      };
+    },
+  });
+  expect(calls).toEqual([["/Users/tester/.forge614/engines/bin/forge614-engines", "update"]]);
+  expect(result).toEqual({ updated: true, currentVersion: "1.3.0", latestVersion: "1.4.0" });
+});
+
+test("updateEngines reports already up to date, with no note field when Engines sends none", async () => {
+  const result = await updateEngines({
+    home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({ schemaVersion: 1, result: { updated: false, currentVersion: "1.4.0", latestVersion: "1.4.0" } }),
+      stderr: "",
+    }),
+  });
+  expect(result).toEqual({ updated: false, currentVersion: "1.4.0", latestVersion: "1.4.0" });
+  expect("note" in result).toBe(false);
+});
+
+test("updateEngines keeps Engines' own note when present", async () => {
+  const result = await updateEngines({
+    home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        result: { updated: true, currentVersion: "1.3.0", latestVersion: "1.4.0", note: "Restart your terminal to pick up the new PATH entry." },
+      }),
+      stderr: "",
+    }),
+  });
+  expect(result.note).toBe("Restart your terminal to pick up the new PATH entry.");
+});
+
+test("updateEngines throws Engines' own message for a hard failure", async () => {
+  await expect(updateEngines({
+    home: "/Users/tester",
+    run: async () => ({
+      status: 1,
+      stdout: JSON.stringify({ schemaVersion: 1, error: { code: "UPDATE_ASSET_MISSING", message: "The latest release has no Forge614 Engines asset for darwin-arm64" } }),
+      stderr: "",
+    }),
+  })).rejects.toThrow("The latest release has no Forge614 Engines asset for darwin-arm64");
+});
+
+test("updateEngines rejects a malformed result instead of guessing its shape", async () => {
+  await expect(updateEngines({
+    home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { updated: true } }), stderr: "" }),
+  })).rejects.toThrow("forge614-engines returned an invalid update result.");
+});

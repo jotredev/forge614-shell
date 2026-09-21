@@ -388,6 +388,45 @@ export async function verifyMemoryIntegration(options: {
   return toMemoryVerification(payload);
 }
 
+export interface EnginesUpdateResult {
+  readonly updated: boolean;
+  readonly currentVersion: string;
+  readonly latestVersion: string;
+  readonly note?: string;
+}
+
+interface EnginesUpdatePayload {
+  result?: { updated?: unknown; currentVersion?: unknown; latestVersion?: unknown; note?: unknown };
+}
+
+function toEnginesUpdateResult(payload: unknown): EnginesUpdateResult {
+  const result = (payload as EnginesUpdatePayload).result;
+  if (
+    !result || typeof result.updated !== "boolean" ||
+    typeof result.currentVersion !== "string" || typeof result.latestVersion !== "string" ||
+    (result.note !== undefined && typeof result.note !== "string")
+  ) {
+    throw new Error("forge614-engines returned an invalid update result.");
+  }
+  return {
+    updated: result.updated, currentVersion: result.currentVersion, latestVersion: result.latestVersion,
+    ...(result.note !== undefined ? { note: result.note } : {}),
+  };
+}
+
+/**
+ * Refreshes the installed Forge614 Engines binary in place via its own `update` command. Engines
+ * is a required Shell dependency, so `forge614-shell update` calls this unconditionally.
+ */
+export async function updateEngines(options: {
+  home?: string;
+  env?: NodeJS.ProcessEnv;
+  run?: DetectRun;
+} = {}): Promise<EnginesUpdateResult> {
+  const payload = await runEnginesCommand(["update"], "update", options);
+  return toEnginesUpdateResult(payload);
+}
+
 /**
  * Composed building block for a future `forge614-shell` uninstall flow: plans and immediately
  * applies removal of the `forge614-engram` MCP entry for one assistant. `server` must match what
