@@ -191,17 +191,21 @@ test("updateEngram throws Engram's own safe message on failure, reading it from 
   })).rejects.toThrow("forge614-engram update failed: No se pudo actualizar Forge614 Engram.");
 });
 
-test("updateEngram never leaks installer progress text: only the final JSON stdout is parsed", async () => {
-  const result = await updateEngram({
+test("updateEngram never leaks installer progress text mixed into stdout ahead of the JSON", async () => {
+  // Real forge614-engram update --json suppresses installer output when quiet, but this test locks
+  // in what happens if that guarantee is ever violated: stdout is parsed as JSON outright, not
+  // scanned for a trailing object, so leading text makes the whole payload fail to parse rather
+  // than silently finding and trusting the "real" JSON — installer text can never leak through.
+  const error = await updateEngram({
     home: "/Users/tester",
     run: async () => ({
-      // Real forge614-engram update --json suppresses installer output when quiet; this test locks
-      // in that stdout is trusted as pure JSON, with nothing else mixed in ahead of it.
-      status: 0, stdout: JSON.stringify({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" }), stderr: "",
+      status: 0,
+      stdout: `Downloading forge614-engram 1.4.0...\n${JSON.stringify({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" })}`,
+      stderr: "",
     }),
-  });
-  expect(JSON.stringify(result)).not.toContain("Downloading");
-  expect(result).toEqual({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" });
+  }).catch((thrown: Error) => thrown);
+  expect((error as Error).message).toBe("forge614-engram update returned an invalid result.");
+  expect((error as Error).message).not.toContain("Downloading");
 });
 
 test("updateEngram rejects a malformed result instead of guessing its shape", async () => {

@@ -18,10 +18,12 @@ The installer verifies downloads, prepares Shell under `~/.forge614/shell/`, and
 forge614-shell                    # starts the interactive picker
 forge614-shell --help             # displays help
 forge614-shell --version          # displays the version
-forge614-shell update             # installs the latest stable release
+forge614-shell update             # updates Shell, Engines, and Engram (if installed)
 forge614-shell uninstall          # removes only Shell after confirmation
 forge614-shell init --product engram
 ```
+
+`forge614-shell update` also refreshes Forge614 Engines, and Forge614 Engram if it is installed — each is reported independently (updated, already up to date, not installed, or failed with a safe message), and a failure in one never hides or is presented as success for the others; the command exits with a non-zero status if any of the three failed.
 
 `--engine claude|codex|pi` is a legacy option; in an interactive terminal it does not bypass pickers. `pi` is only for non-interactive automation. Native chat requires an interactive terminal.
 

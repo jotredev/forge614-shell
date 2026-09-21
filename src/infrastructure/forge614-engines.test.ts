@@ -517,3 +517,12 @@ test("updateEngines rejects a malformed result instead of guessing its shape", a
     run: async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { updated: true } }), stderr: "" }),
   })).rejects.toThrow("forge614-engines returned an invalid update result.");
 });
+
+test("updateEngines never echoes raw stdout when it can't be parsed as JSON", async () => {
+  const error = await updateEngines({
+    home: "/Users/tester",
+    run: async () => ({ status: 1, stdout: "Downloading forge614-engines 1.4.0...\ngarbage", stderr: "" }),
+  }).catch((thrown: Error) => thrown);
+  expect((error as Error).message).toBe("forge614-engines update failed.");
+  expect((error as Error).message).not.toContain("Downloading");
+});

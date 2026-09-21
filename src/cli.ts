@@ -14,7 +14,7 @@ const args = process.argv.slice(2);
 if (args.length === 1 && args[0] === "update") {
   try {
     const { runUpdateCommand } = await import("./app/update-command.ts");
-    await runUpdateCommand();
+    await runUpdateCommand({ env: process.env });
   } catch (error) {
     console.error(`Forge614-Shell update failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;

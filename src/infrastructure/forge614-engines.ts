@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { AvailableEngine } from "../contracts/available-engine.ts";
 import type { McpCapableAgent } from "../contracts/mcp-agent.ts";
 
-type DetectRun = (command: string, args: string[]) => Promise<{ status: number | null; stdout: string; stderr: string }>;
+export type DetectRun = (command: string, args: string[]) => Promise<{ status: number | null; stdout: string; stderr: string }>;
 
 interface EnginesAgent {
   id?: unknown;
