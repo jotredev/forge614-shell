@@ -51,39 +51,56 @@ export type MemoryPreviewItem =
     }
   | { readonly agentLabel: string; readonly kind: "blocked"; readonly detail: string };
 
+// Every status label is a short phrase with no embedded explanation: Engines' own message (a
+// blocked component's `details`, an unsupported one's `reason`) is rendered by `previewLine` on a
+// line of its own, so pi-tui's word wrap never splits it mid-sentence.
+//
 // MCP is never reported "unsupported": Engines only reaches the planning stage for agents whose
-// capabilities already confirmed MCP support, so this component's status is always noop/write/blocked.
+// capabilities already confirmed MCP support, so that branch is purely defensive.
 function mcpStatusLabel(status: MemoryComponentStatus): string {
-  if (status.kind === "write") return "will add";
-  if (status.kind === "noop") return "already configured";
-  return `blocked — ${(status as { details: string }).details}`;
+  switch (status.kind) {
+    case "write": return "will add";
+    case "noop": return "already configured";
+    case "blocked": return "blocked";
+    case "unsupported": return "blocked — unexpectedly unsupported";
+  }
 }
 
 function instructionsStatusLabel(status: MemoryComponentStatus): string {
-  if (status.kind === "write") return "will add";
-  if (status.kind === "noop") return "already present";
-  if (status.kind === "unsupported") return `not supported by this assistant — ${status.reason}`;
-  return `blocked — ${status.details}`;
+  switch (status.kind) {
+    case "write": return "will add";
+    case "noop": return "already present";
+    case "blocked": return "blocked";
+    case "unsupported": return "not supported by this assistant";
+  }
 }
 
+/** Engines' own explanation for a status, when it has one. Always rendered on its own line. */
+function statusDetail(status: MemoryComponentStatus): string | undefined {
+  if (status.kind === "blocked") return status.details;
+  if (status.kind === "unsupported") return status.reason;
+  return undefined;
+}
+
+/**
+ * Three lines per assistant (plus one detail line per explained status), so a preview covering
+ * several assistants still fits on a standard 80×24 terminal — the alt-screen renderer clips from
+ * the top, and nobody should be able to confirm a screen whose header scrolled away unseen.
+ */
 function previewLine(item: MemoryPreviewItem): string {
   if (item.kind === "blocked") return `${item.agentLabel}: blocked — ${item.detail}`;
   const paths = item.kind === "pending"
     ? [...(item.mcp.kind === "write" ? [item.mcpPath] : []), ...(item.instructions.kind === "write" ? item.instructionsPaths : [])]
     : [];
   const lines = [
-    `${item.agentLabel}:`,
+    `${item.agentLabel} — overall: ${item.overallStatus}`,
     `  paths to change: ${paths.length ? paths.join(", ") : "(none)"}`,
-    `  MCP forge614-engram: ${mcpStatusLabel(item.mcp)}`,
+    `  MCP forge614-engram: ${mcpStatusLabel(item.mcp)} · memory instructions: ${instructionsStatusLabel(item.instructions)}`,
   ];
-  // Put unsupported reason on a separate line to avoid word-wrapping
-  if (item.instructions.kind === "unsupported") {
-    lines.push(`  memory instructions: not supported by this assistant`);
-    lines.push(`    ${item.instructions.reason}`);
-  } else {
-    lines.push(`  memory instructions: ${instructionsStatusLabel(item.instructions)}`);
-  }
-  lines.push(`  overall: ${item.overallStatus}`);
+  const mcpDetail = statusDetail(item.mcp);
+  if (mcpDetail) lines.push(`    ${mcpDetail}`);
+  const instructionsDetail = statusDetail(item.instructions);
+  if (instructionsDetail) lines.push(`    ${instructionsDetail}`);
   return lines.join("\n");
 }
 

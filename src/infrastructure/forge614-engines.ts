@@ -228,8 +228,12 @@ export async function planMcpRemove(options: {
   return toMcpPlanResult(payload);
 }
 
-/** Applies a previously previewed and confirmed plan. Must never be called before Shell's own confirmation. */
-export async function applyMcpPlan(options: {
+/**
+ * Applies a previously previewed and confirmed plan of any kind — Engines' `apply --plan-id` is
+ * generic, so this serves MCP-install, MCP-remove, and memory-install plans alike. Must never be
+ * called before Shell's own confirmation.
+ */
+export async function applyEnginesPlan(options: {
   planId: string;
   home?: string;
   env?: NodeJS.ProcessEnv;
@@ -398,5 +402,5 @@ export async function removeEngramMcpFromAgent(
 ): Promise<{ applied: boolean; changedFiles: string[] }> {
   const plan = await planMcpRemove({ agentId, name: "forge614-engram", command: server.command, args: server.args, ...options });
   if (plan.noop) return { applied: false, changedFiles: [] };
-  return applyMcpPlan({ planId: plan.planId, ...options });
+  return applyEnginesPlan({ planId: plan.planId, ...options });
 }

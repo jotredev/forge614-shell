@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { applyMcpPlan, discoverMcpCapableAgents, discoverSelectableEngines, planMcpInstall, planMcpRemove, removeEngramMcpFromAgent } from "./forge614-engines.ts";
+import { applyEnginesPlan, discoverMcpCapableAgents, discoverSelectableEngines, planMcpInstall, planMcpRemove, planMemoryInstall, removeEngramMcpFromAgent, verifyMemoryIntegration } from "./forge614-engines.ts";
 
 const report = {
   schemaVersion: 1,
@@ -157,9 +157,9 @@ test("planMcpInstall throws Engines' own message for a conflict", async () => {
   })).rejects.toThrow("A different MCP already uses this name.");
 });
 
-test("applyMcpPlan sends the plan id and reports the changed files", async () => {
+test("applyEnginesPlan sends the plan id and reports the changed files", async () => {
   const calls: string[][] = [];
-  const result = await applyMcpPlan({
+  const result = await applyEnginesPlan({
     planId: "plan-1", home: "/Users/tester",
     run: async (command, args) => {
       calls.push([command, ...args]);
@@ -170,8 +170,8 @@ test("applyMcpPlan sends the plan id and reports the changed files", async () =>
   expect(result).toEqual({ applied: true, changedFiles: ["/Users/tester/.claude.json"] });
 });
 
-test("applyMcpPlan throws Engines' own message when the plan id is unknown", async () => {
-  await expect(applyMcpPlan({
+test("applyEnginesPlan throws Engines' own message when the plan id is unknown", async () => {
+  await expect(applyEnginesPlan({
     planId: "missing", home: "/Users/tester",
     run: async () => ({ status: 1, stdout: JSON.stringify({ schemaVersion: 1, error: { code: "PLAN_NOT_FOUND", message: 'No plan found with id "missing"' } }), stderr: "" }),
   })).rejects.toThrow('No plan found with id "missing"');
@@ -232,8 +232,6 @@ test("removeEngramMcpFromAgent skips apply when there is nothing to remove", asy
   expect(calls.length).toBe(1);
   expect(result).toEqual({ applied: false, changedFiles: [] });
 });
-
-import { planMemoryInstall, verifyMemoryIntegration } from "./forge614-engines.ts";
 
 test("planMemoryInstall sends only --agent and reads the full plan", async () => {
   const calls: string[][] = [];

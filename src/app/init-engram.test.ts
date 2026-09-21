@@ -530,6 +530,102 @@ class ThrowingMemoryScreenTerminal extends TestTerminal {
   }
 }
 
+test("an assistant whose plan is already complete and needs no writes is reported configured, with no restart hint", async () => {
+  const terminal = new TestTerminal();
+  const enginesCalls: string[][] = [];
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (command, args) => {
+      enginesCalls.push([command, ...args]);
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      return {
+        status: 0,
+        stdout: JSON.stringify(planPayload("claude-code", {
+          noop: true,
+          mcpStatus: { kind: "noop" },
+          instructionsStatus: { kind: "noop" },
+          overallStatus: "complete",
+        })),
+        stderr: "",
+      };
+    },
+  });
+  await driveEngramScreens(terminal);
+  // Nothing is pending, so the picker's submit is the last screen: no preview/confirm appears.
+  terminal.input(" "); terminal.input("\r"); // check Claude Code, submit
+  try { await run; } finally { restore(); }
+  expect(enginesCalls.some(c => c.includes("apply"))).toBe(false);
+  expect(enginesCalls.some(c => c.includes("memory-integration"))).toBe(false);
+  expect(logs).toContain("Claude Code: configured — MCP and memory instructions available");
+  // Nothing was written this run, so there is nothing for the assistant to reload.
+  expect(logs.some(line => line.startsWith("Close and reopen"))).toBe(false);
+});
+
+test("a plan that claims complete while the instructions are unsupported is still never reported as fully configured", async () => {
+  const terminal = new TestTerminal();
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "cursor", label: "Cursor", executable: "/Applications/Cursor.app/Contents/MacOS/Cursor" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("cursor")), stderr: "" };
+      // Engines is not expected to send this combination; Shell defends the invariant locally.
+      return {
+        status: 0,
+        stdout: JSON.stringify(planPayload("cursor", {
+          noop: true,
+          mcpStatus: { kind: "noop" },
+          instructionsStatus: { kind: "unsupported", reason: "Cursor has no officially supported mechanism to auto-load global instructions." },
+          overallStatus: "complete",
+        })),
+        stderr: "",
+      };
+    },
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r"); // check Cursor, submit
+  try { await run; } finally { restore(); }
+  expect(logs).toContain("Cursor: partially configured — instructions: Cursor has no officially supported mechanism to auto-load global instructions.");
+  expect(logs.some(line => line.startsWith("Cursor: configured"))).toBe(false);
+});
+
+test("a PostgreSQL connection string never reaches the screen or the log through the whole memory-integration flow", async () => {
+  const terminal = new TestTerminal();
+  const postgresUrl = "postgres://user:sup3rsecret@host:5432/db";
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("claude-code")), stderr: "" };
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-claude-code")), stderr: "" };
+      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code")), stderr: "" };
+    },
+  });
+  await tick();
+  terminal.input("\r"); await tick(); // Continue
+  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
+  terminal.input(postgresUrl);
+  terminal.input("\r"); await tick(); // submit connection string
+  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
+  terminal.input("\r"); await tick(); // Engram summary: Confirm
+  terminal.input(" "); terminal.input("\r"); await tick(); // memory picker: check Claude Code, submit
+  terminal.input("\r"); // preview: Confirm
+  try { await run; } finally { restore(); }
+  // The whole run really reached the end of the memory flow, not just the Engram summary.
+  expect(logs).toContain("Claude Code: configured — MCP and memory instructions available");
+  expect(terminal.output).not.toContain(postgresUrl);
+  expect(terminal.output).not.toContain("sup3rsecret");
+  expect(logs.join("\n")).not.toContain(postgresUrl);
+  expect(logs.join("\n")).not.toContain("sup3rsecret");
+});
+
 test("an exception during the memory picker screen never fails an already-successful Engram init", async () => {
   const terminal = new ThrowingMemoryScreenTerminal();
   const { logs, restore } = captureLogs();

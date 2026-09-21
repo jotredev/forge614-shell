@@ -4,7 +4,7 @@ import { chooseMemoryAgents, showMemoryPreviewConfirm } from "../ui/startup/memo
 import type { MemoryPreviewItem } from "../ui/startup/memory-setup.ts";
 import { applyEngramInit, type RunEngram } from "../infrastructure/forge614-engram.ts";
 import {
-  applyMcpPlan, discoverMcpCapableAgents, planMemoryInstall, verifyMemoryIntegration,
+  applyEnginesPlan, discoverMcpCapableAgents, planMemoryInstall, verifyMemoryIntegration,
   type MemoryInstallPlan, type MemoryVerification,
 } from "../infrastructure/forge614-engines.ts";
 import type { McpCapableAgent } from "../contracts/mcp-agent.ts";
@@ -54,6 +54,12 @@ interface MemoryOutcome {
   readonly detail?: string;
 }
 
+interface MemorySetupResult {
+  readonly outcomes: MemoryOutcome[];
+  /** True only when this run's own `apply` wrote something that then verified as configured or partial. */
+  readonly applied: boolean;
+}
+
 function outcomeLine(outcome: MemoryOutcome): string {
   if (outcome.status === "configured") return `${outcome.label}: configured — MCP and memory instructions available`;
   if (outcome.status === "partial") return `${outcome.label}: partially configured — ${outcome.detail}`;
@@ -70,9 +76,14 @@ function planDetail(plan: MemoryInstallPlan): string {
   return parts.join("; ") || "Forge614 Engines could not fully configure this assistant.";
 }
 
-/** Resolves an agent whose plan needs no writes (`noop: true`) directly from the plan — nothing to apply or verify. */
+/**
+ * Resolves an agent whose plan needs no writes (`noop: true`) directly from the plan — nothing to
+ * apply or verify. Mirrors `verificationOutcome`'s guard: a "complete" plan is never reported as
+ * fully configured when this assistant structurally cannot auto-load instructions (e.g. Cursor).
+ * Engines is not expected to combine those two, but Shell defends the invariant locally anyway.
+ */
 function planOutcome(label: string, plan: MemoryInstallPlan): MemoryOutcome {
-  if (plan.overallStatus === "complete") return { label, status: "configured" };
+  if (plan.overallStatus === "complete" && plan.instructions.status.kind !== "unsupported") return { label, status: "configured" };
   if (plan.overallStatus === "unsupported") return { label, status: "unsupported", detail: planDetail(plan) };
   return { label, status: "partial", detail: planDetail(plan) };
 }
@@ -112,27 +123,28 @@ function verificationOutcome(label: string, verification: MemoryVerification): M
 async function runMemorySetupStep(
   terminal: Terminal | undefined,
   options: { home?: string; env?: NodeJS.ProcessEnv; enginesRun?: RunEngram },
-): Promise<MemoryOutcome[]> {
+): Promise<MemorySetupResult> {
   let agents: McpCapableAgent[];
   try {
     agents = await discoverMcpCapableAgents({ home: options.home, env: options.env, run: options.enginesRun });
   } catch (error) {
     console.log(`Memory setup could not be offered: ${error instanceof Error ? error.message : String(error)}`);
-    return [];
+    return { outcomes: [], applied: false };
   }
   if (agents.length === 0) {
     console.log("No compatible AI assistants were found to configure with memory integration.");
-    return [];
+    return { outcomes: [], applied: false };
   }
   const selectedIds = await chooseMemoryAgents(agents, terminal);
   if (selectedIds === undefined) {
     console.log("Memory setup was skipped.");
-    return agents.map(agent => ({ label: agent.label, status: "skipped" as const }));
+    return { outcomes: agents.map(agent => ({ label: agent.label, status: "skipped" as const })), applied: false };
   }
   if (selectedIds.length === 0) {
     console.log("No assistant was selected. No memory integration was configured.");
-    return agents.map(agent => ({ label: agent.label, status: "skipped" as const }));
+    return { outcomes: agents.map(agent => ({ label: agent.label, status: "skipped" as const })), applied: false };
   }
+  let applied = false;
   const selectedSet = new Set(selectedIds);
   const outcomeMap = new Map<string, MemoryOutcome>();
   const planned: { agent: McpCapableAgent; plan: MemoryInstallPlan }[] = [];
@@ -168,20 +180,23 @@ async function runMemorySetupStep(
     } else {
       for (const p of pending) {
         try {
-          const applied = await applyMcpPlan({ planId: p.plan.planId, home: options.home, env: options.env, run: options.enginesRun });
-          if (!applied.applied) {
+          const applyResult = await applyEnginesPlan({ planId: p.plan.planId, home: options.home, env: options.env, run: options.enginesRun });
+          if (!applyResult.applied) {
             outcomeMap.set(p.agent.id, { label: p.agent.label, status: "not-configured", detail: "Forge614 Engines reported the change was not applied." });
             continue;
           }
           const verification = await verifyMemoryIntegration({ agentId: p.agent.id, home: options.home, env: options.env, run: options.enginesRun });
-          outcomeMap.set(p.agent.id, verificationOutcome(p.agent.label, verification));
+          const outcome = verificationOutcome(p.agent.label, verification);
+          // Only a plan this run actually wrote justifies the "restart your assistant" hint.
+          if (outcome.status === "configured" || outcome.status === "partial") applied = true;
+          outcomeMap.set(p.agent.id, outcome);
         } catch (error) {
           outcomeMap.set(p.agent.id, { label: p.agent.label, status: "not-configured", detail: error instanceof Error ? error.message : String(error) });
         }
       }
     }
   }
-  return agents.map(agent => outcomeMap.get(agent.id)!);
+  return { outcomes: agents.map(agent => outcomeMap.get(agent.id)!), applied };
 }
 
 /** Entry point for `forge614-shell init --product engram`. Makes no Engram call before confirmation. */
@@ -201,9 +216,11 @@ export async function runInitCommand(args: string[], options: RunInitOptions = {
   await applyEngramInit(flow.decisions, { run: options.run, home: options.home, env: options.env });
   console.log("Forge614 Engram memory initialization is complete.");
   try {
-    const outcomes = await runMemorySetupStep(options.terminal, { home: options.home, env: options.env, enginesRun: options.enginesRun });
+    const { outcomes, applied } = await runMemorySetupStep(options.terminal, { home: options.home, env: options.env, enginesRun: options.enginesRun });
     for (const outcome of outcomes) console.log(outcomeLine(outcome));
-    if (outcomes.some(outcome => outcome.status === "configured" || outcome.status === "partial")) {
+    // Nothing was written this run (everything was already configured, or the preview was
+    // cancelled) means there is nothing new for an assistant to reload.
+    if (applied) {
       console.log("Close and reopen each configured assistant's session so it loads the new MCP server and memory instructions.");
     }
   } catch (error) {

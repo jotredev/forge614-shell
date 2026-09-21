@@ -55,10 +55,36 @@ test("the preview screen shows a pending plan's paths, MCP status, instructions 
   }];
   const result = showMemoryPreviewConfirm(items, terminal);
   await tick();
-  expect(terminal.output).toContain("Claude Code");
-  expect(terminal.output).toContain("/Users/tester/.claude.json");
-  expect(terminal.output).toContain("/Users/tester/.claude/CLAUDE.md");
-  expect(terminal.output).toContain("complete");
+  expect(terminal.output).toContain("Claude Code — overall: complete");
+  expect(terminal.output).toContain("paths to change: /Users/tester/.claude.json, /Users/tester/.claude/CLAUDE.md");
+  expect(terminal.output).toContain("MCP forge614-engram: will add · memory instructions: will add");
+  terminal.input("\r");
+  expect(await result).toBe(true);
+});
+
+test("a pending assistant's whole preview block stays compact enough not to push the header off a small screen", async () => {
+  const terminal = new TestTerminal();
+  const items: MemoryPreviewItem[] = [
+    {
+      agentLabel: "Claude Code", kind: "pending",
+      mcpPath: "/Users/tester/.claude.json", instructionsPaths: ["/Users/tester/.claude/CLAUDE.md"],
+      mcp: { kind: "write" }, instructions: { kind: "write" }, overallStatus: "complete",
+    },
+    {
+      agentLabel: "Codex", kind: "pending",
+      mcpPath: "/Users/tester/.codex/config.toml", instructionsPaths: ["/Users/tester/.codex/AGENTS.md"],
+      mcp: { kind: "write" }, instructions: { kind: "write" }, overallStatus: "complete",
+    },
+  ];
+  const result = showMemoryPreviewConfirm(items, terminal);
+  await tick();
+  // Three lines per assistant: "<label> — overall: <status>", the paths, and both component
+  // statuses on one shared line — never a separate line per component, and never a bare
+  // "<label>:" line followed by a separate "overall:" line.
+  const lines = terminal.output.split("\n");
+  expect(lines.some(line => line.includes("memory instructions:") && !line.includes("MCP forge614-engram:"))).toBe(false);
+  expect(terminal.output).toContain("Claude Code — overall: complete");
+  expect(terminal.output).toContain("Codex — overall: complete");
   terminal.input("\r");
   expect(await result).toBe(true);
 });
@@ -77,10 +103,11 @@ test("an unsupported instructions component explains why, and a blocked componen
   ];
   const result = showMemoryPreviewConfirm(items, terminal);
   await tick();
+  expect(terminal.output).toContain("Cursor — overall: partial");
+  expect(terminal.output).toContain("MCP forge614-engram: will add · memory instructions: not supported by this assistant");
+  // Engines' own explanation always gets a line of its own, so word wrap never splits it.
   expect(terminal.output).toContain("Cursor has no officially supported mechanism to auto-load global instructions.");
-  expect(terminal.output).toContain("partial");
-  expect(terminal.output).toContain("Codex");
-  expect(terminal.output).toContain("A different MCP already uses this name.");
+  expect(terminal.output).toContain("Codex: blocked — A different MCP already uses this name.");
   expect(terminal.output).not.toContain("afterContent");
   expect(terminal.output).not.toContain("beforeHash");
   terminal.input("\r");
@@ -95,8 +122,8 @@ test("a resolved (already-configured) item shows its status without a paths line
   }];
   const result = showMemoryPreviewConfirm(items, terminal);
   await tick();
-  expect(terminal.output).toContain("already configured");
-  expect(terminal.output).toContain("already present");
+  expect(terminal.output).toContain("MCP forge614-engram: already configured · memory instructions: already present");
+  expect(terminal.output).toContain("paths to change: (none)");
   terminal.input("\r");
   expect(await result).toBe(true);
 });
