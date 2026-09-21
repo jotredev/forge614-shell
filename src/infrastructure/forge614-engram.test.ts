@@ -160,3 +160,53 @@ test("locateEngramBinary honors FORGE614_HOME over the given home", () => {
     "/custom/forge/engram/bin/forge614-engram",
   );
 });
+
+import { updateEngram } from "./forge614-engram.ts";
+
+test("updateEngram sends update --json and reads the result", async () => {
+  const calls: string[][] = [];
+  const result = await updateEngram({
+    home: "/Users/tester",
+    run: async (command, args) => {
+      calls.push([command, ...args]);
+      return { status: 0, stdout: JSON.stringify({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" }), stderr: "" };
+    },
+  });
+  expect(calls).toEqual([["/Users/tester/.forge614/engram/bin/forge614-engram", "update", "--json"]]);
+  expect(result).toEqual({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" });
+});
+
+test("updateEngram reports already up to date when previous and installed versions match", async () => {
+  const result = await updateEngram({
+    home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: JSON.stringify({ updated: false, previousVersion: "1.4.0", installedVersion: "1.4.0" }), stderr: "" }),
+  });
+  expect(result).toEqual({ updated: false, previousVersion: "1.4.0", installedVersion: "1.4.0" });
+});
+
+test("updateEngram throws Engram's own safe message on failure, reading it from stderr", async () => {
+  await expect(updateEngram({
+    home: "/Users/tester",
+    run: async () => ({ status: 1, stdout: "", stderr: JSON.stringify({ code: "UPDATE_FAILED", error: "No se pudo actualizar Forge614 Engram." }) }),
+  })).rejects.toThrow("forge614-engram update failed: No se pudo actualizar Forge614 Engram.");
+});
+
+test("updateEngram never leaks installer progress text: only the final JSON stdout is parsed", async () => {
+  const result = await updateEngram({
+    home: "/Users/tester",
+    run: async () => ({
+      // Real forge614-engram update --json suppresses installer output when quiet; this test locks
+      // in that stdout is trusted as pure JSON, with nothing else mixed in ahead of it.
+      status: 0, stdout: JSON.stringify({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" }), stderr: "",
+    }),
+  });
+  expect(JSON.stringify(result)).not.toContain("Downloading");
+  expect(result).toEqual({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" });
+});
+
+test("updateEngram rejects a malformed result instead of guessing its shape", async () => {
+  await expect(updateEngram({
+    home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: JSON.stringify({ updated: true }), stderr: "" }),
+  })).rejects.toThrow("forge614-engram update returned an invalid result.");
+});

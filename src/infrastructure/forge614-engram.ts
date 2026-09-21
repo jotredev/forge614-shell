@@ -89,3 +89,35 @@ export async function applyEngramInit(
   }
   return { initResult, reinforcementResult };
 }
+
+export interface EngramUpdateResult {
+  readonly updated: boolean;
+  readonly previousVersion: string;
+  readonly installedVersion: string;
+}
+
+interface EngramUpdatePayload {
+  updated?: unknown;
+  previousVersion?: unknown;
+  installedVersion?: unknown;
+}
+
+function toEngramUpdateResult(payload: unknown): EngramUpdateResult {
+  const result = payload as EngramUpdatePayload;
+  if (typeof result.updated !== "boolean" || typeof result.previousVersion !== "string" || typeof result.installedVersion !== "string") {
+    throw new Error("forge614-engram update returned an invalid result.");
+  }
+  return { updated: result.updated, previousVersion: result.previousVersion, installedVersion: result.installedVersion };
+}
+
+/**
+ * Refreshes the installed Forge614 Engram binary in place via its own `update --json`, which
+ * suppresses the installer's own progress text so only the final JSON reaches stdout. Callers must
+ * check `locateEngramBinary` exists first — Engram is optional for Shell, unlike Engines.
+ */
+export async function updateEngram(
+  options: { home?: string; env?: NodeJS.ProcessEnv; run?: RunEngram } = {},
+): Promise<EngramUpdateResult> {
+  const payload = await runEngramCommand("update", ["update", "--json"], options);
+  return toEngramUpdateResult(payload);
+}
