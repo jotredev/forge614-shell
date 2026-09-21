@@ -1,5 +1,25 @@
 import { expect, test } from "bun:test";
-import { applyEnginesPlan, discoverMcpCapableAgents, discoverSelectableEngines, planMcpInstall, planMcpRemove, planMemoryInstall, removeEngramMcpFromAgent, verifyMemoryIntegration } from "./forge614-engines.ts";
+import { applyEnginesPlan, defaultRun, discoverMcpCapableAgents, discoverSelectableEngines, planMcpInstall, planMcpRemove, planMemoryInstall, removeEngramMcpFromAgent, verifyMemoryIntegration } from "./forge614-engines.ts";
+
+test("the real runner execs asynchronously — it does not block the event loop, so a caller can show live progress while it runs", async () => {
+  let tickedWhileRunning = false;
+  const timer = setInterval(() => { tickedWhileRunning = true; }, 0);
+  const result = await defaultRun(process.execPath, ["-e", "console.log('ready')"]);
+  clearInterval(timer);
+  expect(tickedWhileRunning).toBe(true);
+  expect(result).toEqual({ status: 0, stdout: "ready\n", stderr: "" });
+});
+
+test("the real runner reports a non-zero exit with its stdout/stderr intact, not a thrown rejection", async () => {
+  const result = await defaultRun(process.execPath, ["-e", "console.error('boom'); process.exit(3)"]);
+  expect(result.status).toBe(3);
+  expect(result.stderr).toContain("boom");
+});
+
+test("the real runner reports a missing binary as no exit status, not a crash", async () => {
+  const result = await defaultRun("/definitely/not/a/real/forge614-engines-binary", []);
+  expect(result.status).toBeNull();
+});
 
 const report = {
   schemaVersion: 1,

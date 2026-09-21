@@ -5,7 +5,7 @@ import { readProjectInfo, type ProjectInfo } from "../../infrastructure/project-
 import { formatMemory } from "../../infrastructure/runtime-resources.ts";
 
 import { accent as mint, warning as amber, muted, border, success } from "./theme.ts";
-import { contextRing, isDisplayableUsage, progressBar, resetLabel, usageTitle } from "./metrics.ts";
+import { REASONING_DEFAULT_LABEL, compactNumber, contextRing, isDisplayableUsage, progressBar, resetLabel, usageTitle } from "./metrics.ts";
 
 function cut(text: string, width: number): string {
   return truncateToWidth(text, Math.max(0, width), "…");
@@ -13,10 +13,6 @@ function cut(text: string, width: number): string {
 
 function percent(used: number, window: number): number {
   return Math.round((used / window) * 100);
-}
-
-function compactNumber(value: number): string {
-  return value >= 1_000 ? `${Math.round(value / 1_000)}k` : String(value);
 }
 
 export class ShellSidebar implements Component {
@@ -58,8 +54,8 @@ export class ShellSidebar implements Component {
 
     const lines = [...heading("SESSION"), line(`Account  ${mint("Connected")}`), line(`${muted("Provider")}  ${snapshot.provider}`)];
     lines.push(line(`${muted("User")}  ${snapshot.user ?? "Not reported"}`));
-    lines.push("", line(`${muted("Model")}  ${snapshot.model ?? "Engine default"}`));
-    lines.push(line(`${muted("Reasoning")}  ${amber(snapshot.reasoning ?? "Provider default")}`));
+    lines.push("", line(`${muted("Model")}  ${snapshot.model ?? "Not reported yet"}`));
+    lines.push(line(`${muted("Reasoning")}  ${amber(snapshot.reasoning ?? REASONING_DEFAULT_LABEL)}`));
     lines.push("", line(`${muted("Session")}  ${snapshot.sessionId ?? "New conversation"}`));
     if (snapshot.startedAt) {
       lines.push(line(`${muted("Opened")}  ${new Date(snapshot.startedAt).toLocaleTimeString()}`));
@@ -79,13 +75,19 @@ export class ShellSidebar implements Component {
         "",
       ]));
     } else lines.push("", ...heading("PLAN USAGE"), line(muted("Usage unavailable from provider")));
+    // Token/cost figures for the last turn live right under PLAN USAGE — they're consumption info
+    // too, not a system resource like RAM below.
+    if (snapshot.inputTokens !== undefined || snapshot.outputTokens !== undefined) {
+      lines.push(line(`${muted("Last turn")}  ${snapshot.inputTokens ?? "?"} in · ${snapshot.outputTokens ?? "?"} out`));
+    }
+    if (snapshot.estimateUSD !== undefined) {
+      lines.push(line(`${muted("Est. API cost")}  $${snapshot.estimateUSD.toFixed(4)}`));
+      lines.push(line(muted("Reference only, not billed")));
+    }
     if (snapshot.resources) {
       lines.push("", ...heading("RESOURCES"), line(`${muted("Shell RAM")}  ${formatMemory(snapshot.resources.shellRssBytes)}`));
       lines.push(line(`${muted("Engine RAM")}  ${snapshot.resources.engineRssBytes === undefined ? "Not reported by engine" : formatMemory(snapshot.resources.engineRssBytes)}`));
     }
-    if (snapshot.inputTokens !== undefined) lines.push(line(`Last input  ${snapshot.inputTokens} tokens`));
-    if (snapshot.outputTokens !== undefined) lines.push(line(`Last output  ${snapshot.outputTokens} tokens`));
-    if (snapshot.estimateUSD !== undefined) lines.push(line(`API estimate  $${snapshot.estimateUSD.toFixed(4)}`), line(muted("Not your subscription bill")));
     return lines;
   }
 }

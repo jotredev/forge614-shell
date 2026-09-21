@@ -1,7 +1,7 @@
-import { HStack, VStack, ScrollView, Text } from "@earendil-works/pi-tui";
-import type { Component, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
+import { HStack, VStack, ScrollView, Text, visibleWidth } from "@earendil-works/pi-tui";
+import type { Component, OverlayHandle, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { basename } from "node:path";
-import { accent, border, fit, muted } from "./theme.ts";
+import { accent, border, fit, foreground, muted } from "./theme.ts";
 
 // Pi currently forwards residual wheel movement to the primary view even
 // with overscroll=contain. Consume the residual at this independent pane.
@@ -44,6 +44,42 @@ export class IndependentScrollView extends ScrollView {
   override scrollBy(lines: number): number { this.cancelAnimation(); super.scrollBy(lines); return 0; }
 }
 
+/** Small pill, styled like the rest of Shell's chrome, offering a click back to the latest message. */
+class JumpToLatestButton implements Component {
+  constructor(private readonly onClick: () => void) {}
+  invalidate(): void {}
+  handleMouse(event: TuiMouseEvent) {
+    if (event.type === "click" && event.button === "left") { this.onClick(); return { handled: true as const, render: true }; }
+    return undefined;
+  }
+  render(width: number): string[] {
+    const label = " ↓ New messages · jump to latest ";
+    const inner = Math.min(Math.max(0, width - 2), visibleWidth(label));
+    return [
+      accent(`╭${"─".repeat(inner)}╮`),
+      `${accent("│")}${foreground(fit(label, inner))}${accent("│")}`,
+      accent(`╰${"─".repeat(inner)}╯`),
+    ];
+  }
+}
+
+/**
+ * Shows the jump-to-latest pill above the composer whenever the transcript has been scrolled away
+ * from the newest message, and hides it again once the person is back at the end.
+ */
+export function attachJumpToLatest(tui: TUI, scroll: IndependentScrollView): OverlayHandle {
+  return tui.showOverlay(new JumpToLatestButton(() => scroll.scrollToEnd()), {
+    // Near the top, not the bottom: a fixed bottom position sits over whatever text happens to be
+    // scrolled to the last visible row, which is usually mid-paragraph. Just under the header is
+    // reliably clear of chat content, and matches where a "new messages" banner belongs anyway —
+    // it points back down to what you're missing, so it reads naturally near the top of your view.
+    anchor: "top-center",
+    margin: { top: 3 },
+    nonCapturing: true,
+    visible: () => !scroll.isFollowingEnd,
+  });
+}
+
 /** Apply a session-local background, restoring the terminal on leaving alternate screen. */
 export function workspaceTerminal(terminal: Terminal): Terminal {
   let active = false;
@@ -59,7 +95,7 @@ export function workspaceTerminal(terminal: Terminal): Terminal {
   } });
 }
 
-export function workspaceLayout(transcript: Component, composer: Component, sidebar: Component, footer: Component, terminal: Terminal, cwd: string): Component {
+export function workspaceLayout(transcriptScroll: Component, composer: Component, sidebar: Component, footer: Component, terminal: Terminal, cwd: string): Component {
   const header: Component = { invalidate() {}, render(width) {
     const title = accent("FORGE614") + " / SHELL";
     const location = basename(cwd);
@@ -74,7 +110,7 @@ export function workspaceLayout(transcript: Component, composer: Component, side
   } };
   const left = new VStack([
     header,
-    { component: new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" }), basis: 0, grow: 1, minSize: 1 },
+    { component: transcriptScroll, basis: 0, grow: 1, minSize: 1 },
     composer,
     new Text("", 0, 0),
   ], { gap: 0 });

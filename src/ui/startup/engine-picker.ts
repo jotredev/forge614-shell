@@ -7,6 +7,7 @@ import { accent } from "../basic/theme.ts";
 export async function chooseEngine(
   engines: AvailableEngine[],
   terminal: Terminal = new ProcessTerminal(),
+  version?: string,
 ): Promise<AvailableEngine | undefined> {
   if (!engines.length) {
     throw new Error("Forge614 Engines found no Shell-compatible AI engines. Install Claude Code or Codex, then restart Forge614-Shell.");
@@ -16,7 +17,7 @@ export async function chooseEngine(
     selectedPrefix: accent, selectedText: accent,
     description: plain, scrollInfo: plain, noMatch: plain,
   });
-  const tui = startupFrame(terminal, "Choose your AI engine", list);
+  const tui = startupFrame(terminal, "Choose your AI engine", list, undefined, undefined, version);
   let finish!: (engine?: AvailableEngine) => void;
   const selection = new Promise<AvailableEngine | undefined>(resolve => { finish = resolve; });
   list.onSelect = item => finish(engines.find(engine => engine.id === item.value));

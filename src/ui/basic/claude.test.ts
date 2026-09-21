@@ -19,6 +19,11 @@ test.skipIf(process.platform === "win32")("Claude UI accepts logout consent and 
   const executable = join(root, "claude"); const marker = join(root, "calls");
   const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+  // Shell persists /model and /effort picks to $FORGE614_HOME/shell/preferences.json (see
+  // shell-preferences.ts) — isolate it so this test never reads or writes the real developer's
+  // ~/.forge614 preferences file.
+  const previousForgeHome = process.env.FORGE614_HOME;
+  process.env.FORGE614_HOME = join(root, "forge614-home");
   try {
     await writeFile(executable, `#!${process.execPath}
 const fs=require('fs');
@@ -63,5 +68,8 @@ if(process.argv[2]==='auth') {
     for (let i = 0; i < 30 && !terminal.output.includes("Connected to Claude in Shell"); i++) await tick();
     expect(await readFile(marker, "utf8")).toBe("auth status --json\nauth status --json\n");
     expect(terminal.output).toContain("Connected to Claude in Shell");
-  } finally { enter("/quit!"); await ui; await rm(root, { recursive: true, force: true }); }
+  } finally {
+    enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
+    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+  }
 });

@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createLaunch } from "./engines/pi/launcher.ts";
 import { parseEngine } from "./app/options.ts";
 import { discoverSelectableEngines } from "./infrastructure/forge614-engines.ts";
+import { startTerminalSpinner } from "./app/startup-spinner.ts";
 
 const metadata = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
@@ -73,12 +74,15 @@ The selected engine's project settings and permissions apply. This is not a sand
     const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
     // Only the legacy non-interactive Pi automation path bypasses the UI.
     if (interactive || selected.engine !== "pi") {
-      const installed = await discoverSelectableEngines({ env: process.env });
+      const stopSpinner = startTerminalSpinner("Detecting installed AI engines…");
+      let installed: Awaited<ReturnType<typeof discoverSelectableEngines>>;
+      try { installed = await discoverSelectableEngines({ env: process.env }); }
+      finally { stopSpinner(); }
       if (!interactive) {
         throw new Error("Shell startup requires an interactive terminal to select the visual interface and AI engine.");
       }
       const { chooseStartup } = await import("./ui/startup/visual-picker.ts");
-      const choice = await chooseStartup(installed);
+      const choice = await chooseStartup(installed, undefined, metadata.version);
       selected.engine = choice?.id;
       selectedExecutable = choice?.executable;
     }

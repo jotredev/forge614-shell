@@ -1,10 +1,27 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Terminal } from "@earendil-works/pi-tui";
 import type { Approve } from "../../engines/types.ts";
 import { runNativeUI } from "./native.ts";
 import { CodexSession } from "../../engines/codex/session.ts";
 import { FixtureRpc } from "../../../tests/support/rpc-fixture.ts";
+
+// Shell persists /model and /effort picks to $FORGE614_HOME/shell/preferences.json (see
+// shell-preferences.ts). Without isolating this, a test run would read and write the real
+// developer's ~/.forge614 preferences file — cross-contaminating tests and their machine.
+let forgeHome: string; let previousForgeHome: string | undefined;
+beforeEach(() => {
+  previousForgeHome = process.env.FORGE614_HOME;
+  forgeHome = mkdtempSync(join(tmpdir(), "forge614-shell-native-test-"));
+  process.env.FORGE614_HOME = forgeHome;
+});
+afterEach(() => {
+  if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+  rmSync(forgeHome, { recursive: true, force: true });
+});
 
 class TestTerminal implements Terminal {
   columns = 100; rows = 40; kittyProtocolActive = false;

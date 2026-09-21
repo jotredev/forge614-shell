@@ -5,15 +5,16 @@ import { ShellStatusBar } from "./status-bar.ts";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { renderLayoutFrame } from "../../../node_modules/@earendil-works/pi-tui/dist/layout.js";
 import { ChatText, accent, muted, warning } from "./theme.ts";
-import { workspaceLayout, IndependentScrollView } from "./workspace.ts";
+import { workspaceLayout, IndependentScrollView, attachJumpToLatest } from "./workspace.ts";
 import { ShellSidebar } from "./sidebar.ts";
-import type { Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
+import type { Component, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
 
 const plain = (lines: string[]) => lines.map(stripVTControlCharacters);
 
 test("both workspace panes keep scrollbars hidden even after scrolling", () => {
   const content = { render: () => Array(100).fill("line") as string[], invalidate() {} };
-  const root = workspaceLayout(content, content, content, content, { rows: 40 } as Terminal, "/project");
+  const transcriptScroll = new IndependentScrollView(content, { follow: "end", primary: true, scrollbar: "hidden" });
+  const root = workspaceLayout(transcriptScroll, content, content, content, { rows: 40 } as Terminal, "/project");
   const frame = renderLayoutFrame(root, 140, 40, () => {});
   const panes: IndependentScrollView[] = [];
   const visit = (box: typeof frame.root): void => {
@@ -52,6 +53,33 @@ test("wheel bursts animate within one pane and direct navigation cancels queued 
   expect(pane.scrollTop).toBe(0);
 });
 
+test("jump-to-latest pill only shows once scrolled away from the newest message, and a click returns to it", () => {
+  const content = { render: () => Array(50).fill("line") as string[], invalidate() {} };
+  const scroll = new IndependentScrollView(content, { follow: "end", primary: true, scrollbar: "hidden" });
+  scroll.updateLayout(50, 10, () => {});
+  scroll.scrollToEnd();
+
+  let shown: { component: Component; options?: { visible?: () => boolean } } | undefined;
+  const fakeTui = {
+    showOverlay: (component: Component, options?: { visible?: () => boolean }) => {
+      shown = { component, options };
+      return { hide() {}, setHidden() {}, isHidden: () => false, focus() {}, unfocus() {}, isFocused: () => false, getBounds: () => undefined };
+    },
+  } as unknown as TUI;
+
+  attachJumpToLatest(fakeTui, scroll);
+  expect(shown?.options?.visible?.()).toBe(false);
+
+  scroll.scrollToStart();
+  expect(scroll.isFollowingEnd).toBe(false);
+  expect(shown?.options?.visible?.()).toBe(true);
+
+  const result = shown!.component.handleMouse!({ type: "click", button: "left", x: 1, y: 1, width: 40 } as TuiMouseEvent);
+  expect(result).toMatchObject({ handled: true });
+  expect(scroll.isFollowingEnd).toBe(true);
+  expect(shown?.options?.visible?.()).toBe(false);
+});
+
 test("sidebar consumes wheel movement at both edges instead of chaining to chat", () => {
   const view = new IndependentScrollView({ render: () => [], invalidate() {} });
   view.updateLayout(100, 20, () => {});
@@ -85,8 +113,8 @@ test("command menu visibly groups provider commands before Forge614 controls", (
 
   const menu = plain(input.render(90)).join("\n");
   expect(menu.indexOf("CLAUDE CODE")).toBeLessThan(menu.indexOf("FORGE614"));
-  expect(menu).toContain("/commit  Create a commit");
-  expect(menu).toContain("/refresh  Refresh usage");
+  expect(menu).toMatch(/\/commit\s+Create a commit/);
+  expect(menu).toMatch(/\/refresh\s+Refresh usage/);
 });
 
 test("dollar input lists Codex skills separately from slash commands", () => {
@@ -117,6 +145,25 @@ test("slash suggestions filter, navigate and submit a command without a model me
   expect(plain(input.render(72)).join("\n")).toContain("Select model");
   input.handleInput("\r");
   expect(submitted).toBe("/model");
+});
+
+test("choice picker numbers rows and marks the active value with a checkmark, even after the cursor moves away", async () => {
+  const { input } = createComposer();
+  const items = [
+    { value: "opus", display: "Opus", label: "Best for everyday, complex tasks" },
+    { value: "sonnet", display: "Sonnet", label: "Efficient for routine tasks" },
+    { value: "haiku", display: "Haiku", label: "Fastest for quick answers" },
+  ];
+  void input.choose("Select model", items, "sonnet");
+  const before = plain(input.render(90)).join("\n");
+  expect(before).toContain("2. Sonnet ✓");
+  expect(before).not.toContain("1. Opus ✓");
+  expect(before).not.toContain("3. Haiku ✓");
+
+  input.handleInput("\x1b[B"); // cursor moves to Haiku, active value stays on Sonnet
+  const after = plain(input.render(90)).join("\n");
+  expect(after).toContain("2. Sonnet ✓");
+  expect(after).toMatch(/›\s+3\. Haiku/);
 });
 
 test("choice picker navigates and cancels without changing a model", async () => {
@@ -156,6 +203,38 @@ test("Forge composer is a framed writing surface instead of a highlighted placeh
   expect(lines[5]).toContain("/help or /commands");
   expect(lines[6]).toContain("╰");
   expect(lines.join("\n")).not.toContain("Ask anything");
+});
+
+test("the status dot changes color so Working reads as busy instead of blending into Ready", () => {
+  const { component, input } = createComposer();
+  const readyLine = component.render(72)[1]!;
+  input.setStatus("Working");
+  const workingLine = component.render(72)[1]!;
+  input.setStatus("Awaiting permission");
+  const awaitingLine = component.render(72)[1]!;
+
+  expect(readyLine).not.toBe(workingLine);
+  expect(readyLine).not.toBe(awaitingLine);
+  expect(workingLine).not.toBe(awaitingLine);
+  expect(stripVTControlCharacters(workingLine)).toContain("Working");
+  expect(stripVTControlCharacters(awaitingLine)).toContain("Awaiting permission");
+});
+
+test("a running elapsed-time counter still reads as the busy color, and the dot itself is a spinner frame instead of the static bullet", () => {
+  const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  const { component, input } = createComposer();
+  input.setStatus("Ready");
+  const readyLine = stripVTControlCharacters(component.render(72)[1]!);
+  const readyDot = readyLine.match(/╭─\s+(\S)/)?.[1];
+  input.setStatus("Working · 12s");
+  const workingLine = component.render(72)[1]!;
+  const workingDot = stripVTControlCharacters(workingLine).match(/╭─\s+(\S)/)?.[1];
+
+  expect(readyDot).toBe("●");
+  expect(SPINNER_FRAMES).toContain(workingDot!);
+  expect(stripVTControlCharacters(workingLine)).toContain("Working · 12s");
+  expect(workingLine).toContain("237;183;88"); // same warning color as plain "Working"
+  expect(readyLine).not.toContain("12s");
 });
 
 test("native work modes use clear English labels and the matching semantic colors", () => {

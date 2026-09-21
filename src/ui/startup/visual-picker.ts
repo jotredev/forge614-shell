@@ -5,7 +5,7 @@ import { chooseEngine } from "./engine-picker.ts";
 import { startupFrame } from "./frame.ts";
 import { accent, muted } from "../basic/theme.ts";
 
-async function chooseVisual(terminal: Terminal): Promise<"basic" | undefined> {
+async function chooseVisual(terminal: Terminal, version?: string): Promise<"basic" | undefined> {
   const plain = (text: string) => text;
   const list = new SelectList([
     { value: "basic", label: "Basic — Minimal interface" },
@@ -16,7 +16,7 @@ async function chooseVisual(terminal: Terminal): Promise<"basic" | undefined> {
     description: plain, scrollInfo: plain, noMatch: plain,
   });
   const hint = new Text("Choose Basic to continue. Full is not available yet.");
-  const tui = startupFrame(terminal, "Choose your visual interface", list, hint);
+  const tui = startupFrame(terminal, "Choose your visual interface", list, hint, undefined, version);
   let finish!: (mode?: "basic") => void;
   const selection = new Promise<"basic" | undefined>(resolve => { finish = resolve; });
   list.onSelect = item => {
@@ -36,8 +36,8 @@ async function chooseVisual(terminal: Terminal): Promise<"basic" | undefined> {
 
 // No stored defaults: each interactive launch has two explicit selections.
 export async function chooseStartup(
-  engines: AvailableEngine[], terminal: Terminal = new ProcessTerminal(),
+  engines: AvailableEngine[], terminal: Terminal = new ProcessTerminal(), version?: string,
 ): Promise<AvailableEngine | undefined> {
-  if (!await chooseVisual(terminal)) return undefined;
-  return chooseEngine(engines, terminal);
+  if (!await chooseVisual(terminal, version)) return undefined;
+  return chooseEngine(engines, terminal, version);
 }

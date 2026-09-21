@@ -6,10 +6,12 @@ import { createComposer } from "./composer.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { readRuntimeResources } from "../../infrastructure/runtime-resources.ts";
+import { loadEnginePreference, saveEnginePreference } from "../../infrastructure/shell-preferences.ts";
 import { ShellStatusBar } from "./status-bar.ts";
 import { ActivityCard, chatMessage } from "./transcript.ts";
-import { ChatText } from "./theme.ts";
-import { workspaceLayout, workspaceTerminal } from "./workspace.ts";
+import { effortDescription, effortLabel } from "./metrics.ts";
+import { ChatText, danger } from "./theme.ts";
+import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
 import { discoverCodexSkills } from "../../engines/codex/skills.ts";
 
 const clean = (text: string) => stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
@@ -22,13 +24,15 @@ export async function runNativeUI(
   const surface = workspaceTerminal(terminal);
   const tui = new TuiAltScreen(surface, true, undefined, { mouse: true });
   const transcript = new Container();
+  const transcriptScroll = new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" });
   const composer = createComposer(tui);
   const { input } = composer;
   const engineLabel = "Codex";
   const shellState = new ShellState(engineLabel);
   const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd);
   const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version);
-  tui.setLayoutRoot(workspaceLayout(transcript, composer.component, sidebar, statusBar, surface, cwd));
+  tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface, cwd));
+  attachJumpToLatest(tui, transcriptScroll);
   tui.setFocus(input);
   const providerCommands = [
     ["/model", "Select model"],
@@ -48,8 +52,14 @@ export async function runNativeUI(
   let sessions: { id: string; title: string }[] = [];
   let session: NativeSession;
   const write = (text: string) => { const component = new ChatText(clean(text)); transcript.addChild(component); tui.requestRender(); return component; };
+  /** Red, so an error reads as an error at a glance instead of blending into a normal reply. */
+  const writeError = (text: string) => { const component = new ChatText(clean(text), danger); transcript.addChild(component); tui.requestRender(); return component; };
   const writeChat = (role: "user" | "assistant" | "system", text: string) => write(chatMessage(role, clean(text)));
-  const writeActivity = (title: string, detail: string) => { transcript.addChild(new ActivityCard(title, clean(detail))); tui.requestRender(); };
+  const writeActivity = (title: string, detail: string, expanded = false) => {
+    const card = new ActivityCard(title, "", clean(detail), expanded);
+    transcript.addChild(card); tui.requestRender();
+    return card;
+  };
   const writeEngineText = (text: string) => {
     if (text.startsWith("You: ")) writeChat("user", text.slice(5));
     else if (text.startsWith("Tool:")) {
@@ -62,17 +72,37 @@ export async function runNativeUI(
     const visual = session.visual?.();
     if (visual) {
       if (visual.account === "disconnected") shellState.disconnect();
-      else shellState.connect({ user: visual.user, sessionId: session.sessionId, model: visual.model, reasoning: visual.reasoning, context: visual.context, usage: visual.usage, resources: readRuntimeResources() });
+      else shellState.connect({
+        user: visual.user, sessionId: session.sessionId,
+        model: session.models.find(model => model.id === visual.model)?.name ?? visual.model,
+        reasoning: effortLabel(visual.reasoning), context: visual.context, usage: visual.usage, resources: readRuntimeResources(),
+      });
     } else {
       const status = session.status().join(" ");
       if (/disconnected|login required|sign-in required|not logged in|not checked|could not be verified/i.test(status)) shellState.disconnect();
       else shellState.connect({ resources: readRuntimeResources() });
     }
     sidebar.invalidate();
-    input.setStatus(session.busy || commandBusy ? "Working" : shellState.snapshot().account === "connected" ? "Ready" : "Connect with /login");
+    const elapsed = turnStartedAt ? ` · ${Math.max(0, Math.floor((Date.now() - turnStartedAt) / 1000))}s` : "";
+    input.setStatus(session.busy || commandBusy ? `Working${elapsed}` : shellState.snapshot().account === "connected" ? "Ready" : "Connect with /login");
     input.setWorkModeHint(session.workMode?.());
     statusBar.invalidate();
     tui.requestRender();
+  };
+  // See claude.ts for why this ticker exists: without it the status line only moves when an SDK
+  // event happens to arrive, which can go quiet during tool execution and reads as "it froze".
+  let turnStartedAt: number | undefined;
+  let turnTicker: ReturnType<typeof setInterval> | undefined;
+  const beginTurn = () => {
+    turnStartedAt = Date.now();
+    clearInterval(turnTicker);
+    turnTicker = setInterval(refresh, 500);
+    turnTicker.unref?.();
+  };
+  const endTurn = () => {
+    turnStartedAt = undefined;
+    clearInterval(turnTicker);
+    turnTicker = undefined;
   };
   const emit = (event: NativeEvent) => {
     if (closed) return;
@@ -116,13 +146,21 @@ export async function runNativeUI(
     closed = true;
     input.cancelChoice();
     for (const approval of [...approvals]) approval.answer(false);
+    endTurn();
     session.close(); tui.stop({ preserveScreen: true }); finish();
+  };
+  // Remembers the person's own /model and /effort picks across Shell restarts — see claude.ts for
+  // why this lives in Shell's own preferences file rather than the native CLI's config.
+  const persistPreference = () => {
+    if (id !== "codex") return;
+    const visual = session.visual?.();
+    saveEnginePreference("codex", { model: visual?.model, effort: visual?.reasoning }, { env: process.env });
   };
   const command = async (value: string) => {
     if (value.trim() === "/refresh") { await sidebar.refreshUsage(); return; }
     const [name, ...parts] = value.trim().split(/\s+/); const argument = parts.join(" ");
     if (name === "/quit" || name === "/quit!") {
-      if ((session.busy || commandBusy) && name !== "/quit!") write("Work or login is active. Use /quit! to stop it and exit. Nothing was stopped.");
+      if ((session.busy || commandBusy) && name !== "/quit!") writeError("Work or login is active. Use /quit! to stop it and exit. Nothing was stopped.");
       else shutdown();
       return;
     }
@@ -147,26 +185,31 @@ export async function runNativeUI(
         await session.logout();
       }
       else if (name === "/model") {
-        if (argument) { await session.setModel(argument); write(`Selected model: ${argument}`); }
+        if (argument) { await session.setModel(argument); persistPreference(); write(`Selected model: ${argument}`); }
         else if (session.models.length) {
-          const selected = await input.choose("Select model", session.models.map(model => ({ value: model.id, label: model.name })), session.visual?.().model);
+          const selected = await input.choose("Select model", session.models.map(model => ({ value: model.id, display: model.name, label: "" })), session.visual?.().model);
           if (selected) {
             await session.setModel(selected);
+            persistPreference();
             const model = session.models.find(item => item.id === selected);
             if (id === "codex" && model?.efforts?.length) {
-              const effort = await input.choose("Select reasoning", model.efforts.map(value => ({ value, label: "" })), model.defaultEffort);
-              if (effort) await session.setEffort(effort);
+              const effort = await input.choose("Select reasoning", model.efforts.map(value => ({
+                value, display: effortLabel(value), label: effortDescription(value),
+              })), model.defaultEffort);
+              if (effort) { await session.setEffort(effort); persistPreference(); }
             }
           }
         } else write("Use /login to load the native model catalog.");
       } else if (name === "/effort" || name === "/thinking") {
-        if (argument) await session.setEffort(argument);
+        if (argument) { await session.setEffort(argument); persistPreference(); }
         else {
           const visual = session.visual?.();
           const levels = session.models.find(model => model.id === visual?.model)?.efforts;
           if (levels?.length) {
-            const selected = await input.choose("Select reasoning", levels.map(value => ({ value, label: "" })), visual?.reasoning);
-            if (selected) await session.setEffort(selected);
+            const selected = await input.choose("Select reasoning", levels.map(value => ({
+              value, display: effortLabel(value), label: effortDescription(value),
+            })), visual?.reasoning);
+            if (selected) { await session.setEffort(selected); persistPreference(); }
           } else write("This engine has not reported reasoning options for the selected model.");
         }
       } else if (name === "/resume") {
@@ -191,11 +234,12 @@ export async function runNativeUI(
   input.onSubmit = value => {
     if (closed || !value.trim()) return;
     input.setValue("");
-    if (value.startsWith("/")) void command(value).catch(error => write(`Error: ${error.message}`));
-    else if (!ready || commandBusy || session.busy) write("Wait for the current operation to finish, or use /stop.");
+    if (value.startsWith("/")) void command(value).catch(error => writeError(`Error: ${error.message}`));
+    else if (!ready || commandBusy || session.busy) writeError("Wait for the current operation to finish, or use /stop.");
     else {
       streaming.clear(); writeChat("user", value);
-      void session.send(value).catch(error => { if (!closed) write(`Turn stopped: ${error.message}`); }).finally(refresh);
+      beginTurn();
+      void session.send(value).catch(error => { if (!closed) writeError(`Turn stopped: ${error.message}`); }).finally(() => { endTurn(); refresh(); });
       refresh();
     }
   };
@@ -209,7 +253,7 @@ export async function runNativeUI(
     refresh();
   };
   tui.addInputListener(data => {
-    if (matchesKey(data, "shift+tab")) { void cycleWorkMode().catch(error => write(`Error: ${error.message}`)); return { consume: true }; }
+    if (matchesKey(data, "shift+tab")) { void cycleWorkMode().catch(error => writeError(`Error: ${error.message}`)); return { consume: true }; }
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { void command("/quit"); return { consume: true }; }
     return undefined;
   });
@@ -225,7 +269,19 @@ export async function runNativeUI(
   void updateProject();
   try {
     refresh(); tui.start();
-    void session.initialize().then(() => { ready = true; refresh(); }).catch(error => write(`Connection failed: ${error.message}\nUse /quit, verify the native CLI installation, and reopen Shell.`));
+    void session.initialize().then(async () => {
+      if (id === "codex") {
+        const saved = loadEnginePreference("codex", { env: process.env });
+        const model = saved?.model && session.models.some(item => item.id === saved.model) ? saved.model : undefined;
+        if (model) {
+          try {
+            await session.setModel(model);
+            if (saved?.effort) await session.setEffort(saved.effort);
+          } catch { /* stale preference from an older catalog — ignore, keep the engine's own default */ }
+        }
+      }
+      ready = true; refresh();
+    }).catch(error => writeError(`Connection failed: ${error.message}\nUse /quit, verify the native CLI installation, and reopen Shell.`));
     await exited;
   } finally { clearInterval(clock); process.removeListener("SIGTERM", shutdown); session.close(); tui.stop({ preserveScreen: true }); }
 }

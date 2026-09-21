@@ -1,6 +1,7 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import type { AvailableEngine } from "../contracts/available-engine.ts";
 import type { McpCapableAgent } from "../contracts/mcp-agent.ts";
 
@@ -35,13 +36,24 @@ const supportedShellAdapters: Record<string, AvailableEngine["id"]> = {
   codex: "codex",
 };
 
-const defaultRun: DetectRun = async (command, args) => {
-  const result = spawnSync(command, args, { encoding: "utf8", windowsHide: true });
-  return {
-    status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
+const execFileAsync = promisify(execFile);
+
+// Async so the event loop keeps running — a caller can show real loading feedback (spinner, message)
+// while this is in flight instead of the terminal going silent for however long detection takes.
+/** Exported only so the async, non-blocking exec behavior itself can be unit-tested against a real process. */
+export const defaultRun: DetectRun = async (command, args) => {
+  try {
+    const { stdout, stderr } = await execFileAsync(command, args, { encoding: "utf8", windowsHide: true });
+    return { status: 0, stdout, stderr };
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; code?: number | string };
+    // A numeric code means the process ran and exited non-zero; anything else (e.g. ENOENT) means it never started.
+    return {
+      status: typeof failure.code === "number" ? failure.code : null,
+      stdout: failure.stdout ?? "",
+      stderr: failure.stderr ?? (typeof failure.code !== "number" ? String(failure.message ?? "") : ""),
+    };
+  }
 };
 
 function validateReport(value: unknown): EnginesReport {

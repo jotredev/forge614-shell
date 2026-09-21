@@ -2,6 +2,33 @@ import { expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
+import { REASONING_DEFAULT_LABEL } from "./metrics.ts";
+
+test("the default-reasoning fallback text fits the sidebar's narrow column without getting cut off", () => {
+  const state = new ShellState("Claude Code");
+  state.connect({ model: "Opus 5 with 1M context" }); // no reasoning reported — the fallback path
+  const output = stripVTControlCharacters(new ShellSidebar(() => state.snapshot()).render(36).join("\n"));
+  expect(output).toContain(REASONING_DEFAULT_LABEL);
+  expect(output).not.toContain("…");
+});
+
+test("token/cost figures sit right under plan usage, not down by RAM, and the cost wording explains itself without getting cut off", () => {
+  const state = new ShellState("Claude Code");
+  state.connect({ inputTokens: 908, outputTokens: 1263, estimateUSD: 0.6645, resources: { shellRssBytes: 1_000_000 } });
+  const output = stripVTControlCharacters(new ShellSidebar(() => state.snapshot()).render(36).join("\n"));
+
+  expect(output).not.toContain("…");
+  expect(output).toContain("908 in");
+  expect(output).toContain("1263 out");
+  expect(output).toContain("$0.6645");
+  expect(output).toContain("Reference only, not billed");
+  const planUsageAt = output.indexOf("PLAN USAGE");
+  const resourcesAt = output.indexOf("RESOURCES");
+  const tokensAt = output.indexOf("908 in");
+  expect(planUsageAt).toBeGreaterThan(-1); expect(resourcesAt).toBeGreaterThan(-1);
+  expect(tokensAt).toBeGreaterThan(planUsageAt);
+  expect(tokensAt).toBeLessThan(resourcesAt);
+});
 
 test("usage refresh remains callable without rendering a sidebar button", async () => {
   const state = new ShellState("Codex"); state.connect();

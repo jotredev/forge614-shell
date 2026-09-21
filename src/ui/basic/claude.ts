@@ -2,7 +2,7 @@ import { stripVTControlCharacters } from "node:util";
 import { Container, HStack, ProcessTerminal, ScrollView, Text, TuiAltScreen, VStack, matchesKey } from "@earendil-works/pi-tui";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { getSessionMessages, listSessions } from "@anthropic-ai/claude-agent-sdk";
-import type { EffortLevel, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { EffortLevel, ModelInfo, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { claudeEnvironment, claudeLoginState, findClaude, officialLogin } from "../../engines/claude/auth.ts";
 import { confirmedLogout } from "../../engines/logout.ts";
 import { ClaudeSession } from "../../engines/claude/session.ts";
@@ -11,14 +11,63 @@ import { createComposer } from "./composer.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { readRuntimeResources } from "../../infrastructure/runtime-resources.ts";
+import { loadEnginePreference, saveEnginePreference } from "../../infrastructure/shell-preferences.ts";
 import { ShellStatusBar } from "./status-bar.ts";
-import { isDisplayableUsage } from "./metrics.ts";
+import { effortDescription, effortLabel, isDisplayableUsage } from "./metrics.ts";
 import { ActivityCard, chatMessage } from "./transcript.ts";
+import { lineDiff } from "./diff.ts";
 import { engramToolLabel, parseClaudeMcpToolName } from "../../engines/mcp-labels.ts";
-import { ChatText } from "./theme.ts";
-import { workspaceLayout, workspaceTerminal } from "./workspace.ts";
+import { ChatText, danger } from "./theme.ts";
+import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
 
 const clean = (text: string) => stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+
+/** Strips a trailing context-window tag like "[1m]" — catalog rows carry it on `resolvedModel` (e.g. "claude-opus-5[1m]") but a live event reports the bare wire id ("claude-opus-5"), so an exact match misses. */
+function stripContextTag(id: string): string {
+  return id.replace(/\[[^[\]]*\]$/, "");
+}
+
+/** Turns an unrecognized wire id into something readable without inventing a name: "claude-opus-5" → "Opus 5". Only used when the catalog genuinely has no matching row — never overrides a real displayName. */
+function prettifyModelId(id: string): string {
+  const words = id.replace(/^claude-/, "").split("-").filter(Boolean);
+  if (!words.length) return id;
+  return words.map(word => /^\d/.test(word) ? word : word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+}
+
+/**
+ * `selectedModel` (what the person picked in /model) always matches a catalog row exactly — it is
+ * literally the same `value` the picker returned. `liveModel` (what the live SDK event reports once
+ * a turn has run) does not: the SDK's `resolvedModel` field is optional, not populated for every row,
+ * and can carry a context-window tag the live id doesn't. Prefer the person's own explicit pick; only
+ * fall back to the live-reported id when they left it on "default" and Claude Code resolved it on its
+ * own — and even then, never show the bare technical id if a nicer one can be produced honestly.
+ * Exported standalone so this priority order is unit-testable without spinning up a full session.
+ */
+export function resolveModelDisplay(models: ModelInfo[], selectedModel: string | undefined, liveModel: string | undefined): string | undefined {
+  if (selectedModel && selectedModel !== "default") {
+    return models.find(model => model.value === selectedModel)?.displayName ?? selectedModel;
+  }
+  if (!liveModel) return undefined;
+  const match = models.find(model =>
+    model.resolvedModel === liveModel || model.value === liveModel ||
+    (model.resolvedModel !== undefined && stripContextTag(model.resolvedModel) === liveModel));
+  return match?.displayName ?? prettifyModelId(liveModel);
+}
+
+/**
+ * File edits are the one tool call worth showing in full by default: extracts the before/after
+ * text straight from the request (no disk read) so the card can render a real diff instead of a
+ * JSON dump. `Write` has no "before" available without reading the file, so it renders as pure
+ * additions, which is still accurate for a new file and honest (not misleading) for an overwrite.
+ */
+function editContent(name: string, input: unknown): { before: string; after: string; path?: string } | undefined {
+  const record = input as Record<string, unknown> | undefined;
+  if (!record) return undefined;
+  const path = typeof record.file_path === "string" ? record.file_path : typeof record.notebook_path === "string" ? record.notebook_path : undefined;
+  if (name === "Edit" && typeof record.old_string === "string" && typeof record.new_string === "string") return { before: record.old_string, after: record.new_string, path };
+  if (name === "Write" && typeof record.content === "string") return { before: "", after: record.content, path };
+  return undefined;
+}
 
 export async function startClaudeUI(args: string[], selectedExecutable?: string, terminal?: Terminal, version?: string): Promise<void> {
   if (args.length) throw new Error("Claude mode currently accepts no CLI options. Use the in-chat commands, or --engine pi for Pi options.");
@@ -30,13 +79,15 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const surface = workspaceTerminal(terminal ?? new ProcessTerminal());
   const tui = new TuiAltScreen(surface, true, undefined, { mouse: true });
   const transcript = new Container();
+  const transcriptScroll = new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" });
   const composer = createComposer(tui);
   const { input } = composer;
   const shellState = new ShellState("Claude Code");
   shellState.checking();
   const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd);
   const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version);
-  tui.setLayoutRoot(workspaceLayout(transcript, composer.component, sidebar, statusBar, surface, cwd));
+  tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface, cwd));
+  attachJumpToLatest(tui, transcriptScroll);
   tui.setFocus(input);
   let telemetry = emptyTelemetry();
   let activeTurn: Promise<void> | undefined;
@@ -53,9 +104,23 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   let sessions: Awaited<ReturnType<typeof listSessions>> = [];
   let streaming: ChatText | undefined;
   let streamedText = "";
-  const tools = new Map<string, { card: ActivityCard; startedAt: number }>();
+  const tools = new Map<string, { card: ActivityCard; startedAt: number; isEdit: boolean }>();
+  // Remembers the person's own /model and /effort picks across Shell restarts — the native `claude`
+  // CLI remembers its own picks the same way when used directly; Shell keeps its own copy rather
+  // than writing into the native CLI's config file, which Shell does not own.
+  let preferenceApplied = false;
+  const persistPreference = () => saveEnginePreference("claude", { model: session.model, effort: session.effort }, { env: process.env });
   const loadCatalog = async (signal?: AbortSignal) => {
-    try { await session.initialize(signal); syncCommandGroups(); }
+    try {
+      await session.initialize(signal);
+      if (!preferenceApplied) {
+        preferenceApplied = true;
+        const saved = loadEnginePreference("claude", { env: process.env });
+        if (saved?.model && session.models.some(model => model.value === saved.model)) session.model = saved.model;
+        if (saved?.effort) session.effort = saved.effort as EffortLevel;
+      }
+      syncCommandGroups();
+    }
     catch { if (!closed && !signal?.aborted) write("Could not load the native model catalog. Use /model to retry. Your account remains connected."); }
   };
   const syncCommandGroups = () => {
@@ -76,8 +141,20 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     tui.requestRender();
     return component;
   };
+  /** Red, so an error reads as an error at a glance instead of blending into a normal reply. */
+  const writeError = (text: string): ChatText => {
+    const component = new ChatText(clean(text), danger);
+    transcript.addChild(component);
+    tui.requestRender();
+    return component;
+  };
   const writeChat = (role: "user" | "assistant" | "system", text: string): ChatText => write(chatMessage(role, clean(text)));
-  const writeActivity = (title: string, detail: string): void => { transcript.addChild(new ActivityCard(title, clean(detail))); tui.requestRender(); };
+  const writeActivity = (title: string, detail: string, expanded = false): ActivityCard => {
+    const card = new ActivityCard(title, "", clean(detail), expanded);
+    transcript.addChild(card); tui.requestRender();
+    return card;
+  };
+  const modelDisplay = (): string | undefined => resolveModelDisplay(session.models, session.model, telemetry.model);
   const refresh = () => {
     if (accountUnknown) shellState.unknown();
     else if (!accountChecked) shellState.checking();
@@ -89,18 +166,35 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       shellState.connect({
         user: session.user, sessionId: session.sessionId,
         inputTokens: telemetry.inputTokens, outputTokens: telemetry.outputTokens, estimateUSD: telemetry.estimateUSD,
-        model: telemetry.model ?? session.models.find(model => model.value === session.model)?.resolvedModel ?? session.model,
-        reasoning: telemetry.effort ?? session.effort,
+        model: modelDisplay(),
+        reasoning: effortLabel(telemetry.effort ?? session.effort),
         ...(session.context ? { context: session.context } : telemetry.contextTokens !== undefined && telemetry.contextWindow !== undefined ? { context: { used: telemetry.contextTokens, window: telemetry.contextWindow } } : {}),
         usage: usage.length ? usage : session.usage,
         resources: readRuntimeResources(),
       });
     }
     sidebar.invalidate();
-    input.setStatus(commandBusy || session.busy ? "Working" : shellState.snapshot().account === "connected" ? "Ready" : shellState.snapshot().account === "checking" ? "Checking account" : "Connect with /login");
+    const elapsed = turnStartedAt ? ` · ${Math.max(0, Math.floor((Date.now() - turnStartedAt) / 1000))}s` : "";
+    input.setStatus(commandBusy || session.busy ? `Working${elapsed}` : shellState.snapshot().account === "connected" ? "Ready" : shellState.snapshot().account === "checking" ? "Checking account" : "Connect with /login");
     input.setWorkModeHint(session.workMode());
     statusBar.invalidate();
     tui.requestRender();
+  };
+  // Ticks refresh() while a turn is in flight so the elapsed-time counter and spinner actually
+  // move — without this the status line only updates when a new SDK event happens to arrive,
+  // which can go quiet for a while during tool execution and reads as "it froze".
+  let turnStartedAt: number | undefined;
+  let turnTicker: ReturnType<typeof setInterval> | undefined;
+  const beginTurn = () => {
+    turnStartedAt = Date.now();
+    clearInterval(turnTicker);
+    turnTicker = setInterval(refresh, 500);
+    turnTicker.unref?.();
+  };
+  const endTurn = () => {
+    turnStartedAt = undefined;
+    clearInterval(turnTicker);
+    turnTicker = undefined;
   };
   const shutdown = async () => {
     if (closed) return;
@@ -110,13 +204,14 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     session.stop();
     for (const approval of [...approvals]) approval.finish(false);
     await activeTurn;
+    endTurn();
     tui.stop({ preserveScreen: true });
     resolveExit();
   };
   const showApproval = () => {
     const approval = approvals[0];
     if (!approval) return;
-    writeActivity("Permission requested", approval.label);
+    writeActivity("Permission requested", approval.label, true);
     input.setStatus("Awaiting permission");
     void input.choose("Permission · /yes allow once · /no deny · /stop cancel turn", [
       { value: "/no", label: "Deny" }, { value: "/yes", label: "Allow this call only" },
@@ -125,7 +220,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const approve = (tool: string, value: Record<string, unknown>, signal: AbortSignal): Promise<boolean> => {
     const details = JSON.stringify(value, null, 2);
     if (details.length > 20000) {
-      write(`Denied ${tool}: permission details are too large to display safely. Ask Claude to split the operation.`);
+      writeError(`Denied ${tool}: permission details are too large to display safely. Ask Claude to split the operation.`);
       return Promise.resolve(false);
     }
     if (tool === "AskUserQuestion") {
@@ -173,10 +268,13 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         streaming = undefined; streamedText = "";
       }
       for (const block of event.message.content) if (block.type === "tool_use" && !tools.has(block.id)) {
+        const edit = editContent(block.name, block.input);
         const parsed = parseClaudeMcpToolName(block.name);
-        const label = (parsed && engramToolLabel(parsed.server, parsed.tool)) ?? block.name;
-        const card = new ActivityCard(label, "Requested\n" + clean(JSON.stringify(block.input, null, 2)).slice(0, 2000));
-        tools.set(block.id, { card, startedAt: Date.now() }); transcript.addChild(card);
+        const label = (parsed && engramToolLabel(parsed.server, parsed.tool)) ?? (edit?.path ? `${block.name} · ${edit.path.split("/").pop()}` : block.name);
+        const card = edit
+          ? new ActivityCard(label, "Requested", "", true, lineDiff(edit.before, edit.after))
+          : new ActivityCard(label, "Requested", clean(JSON.stringify(block.input, null, 2)).slice(0, 2000));
+        tools.set(block.id, { card, startedAt: Date.now(), isEdit: Boolean(edit) }); transcript.addChild(card);
       }
     }
     if (event.type === "tool_progress") {
@@ -188,12 +286,16 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       for (const block of event.message.content) if (block.type === "tool_result") {
         const tool = tools.get(block.tool_use_id);
         if (tool) {
-          const detail = typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
-          tool.card.update(`${block.is_error ? "Failed" : "Completed"} · ${((Date.now() - tool.startedAt) / 1000).toFixed(1)}s\n${clean(detail).slice(0, 3000)}`);
+          const status = `${block.is_error ? "Failed" : "Completed"} · ${((Date.now() - tool.startedAt) / 1000).toFixed(1)}s`;
+          if (tool.isEdit) tool.card.update(status);
+          else {
+            const detail = typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
+            tool.card.update(status, clean(detail).slice(0, 3000));
+          }
         }
       }
     }
-    if (event.type === "result" && event.is_error) write(`Claude error: ${event.subtype === "success" ? event.result : event.errors.join("\n")}`);
+    if (event.type === "result" && event.is_error) writeError(`Claude error: ${event.subtype === "success" ? event.result : event.errors.join("\n")}`);
     refresh();
   };
   const command = async (value: string) => {
@@ -206,7 +308,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     if (name && !["/model", "/effort", "/thinking"].includes(name) && session.commands.some(command => `/${command.name}` === name || command.aliases?.some(alias => `/${alias}` === name))) {
       if (session.busy) throw new Error("Finish or /stop the current turn first.");
       writeChat("user", value); telemetry = { ...emptyTelemetry(), quotas: telemetry.quotas };
-      activeTurn = session.send(value, onEvent, approve).catch(error => { write(`Turn stopped: ${error instanceof Error ? error.message : String(error)}`); }).finally(() => { activeTurn = undefined; refresh(); });
+      beginTurn();
+      activeTurn = session.send(value, onEvent, approve).catch(error => { writeError(`Turn stopped: ${error instanceof Error ? error.message : String(error)}`); }).finally(() => { activeTurn = undefined; endTurn(); refresh(); });
       refresh(); return;
     }
     if (name === "/yes" || name === "/no") {
@@ -268,14 +371,15 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         else {
           const selected = await input.choose("Select model", session.models.map(model => ({
             value: model.value,
-            label: model.description ? `${model.displayName} · ${model.description}` : model.displayName,
+            display: model.displayName,
+            label: model.description ?? "",
           })), session.model);
-          if (selected) { session.model = selected; telemetry = { ...telemetry, model: undefined }; }
+          if (selected) { session.model = selected; telemetry = { ...telemetry, model: undefined }; persistPreference(); }
         }
       }
       else {
         if (session.models.length && !session.models.some(model => model.value === argument || model.resolvedModel === argument)) throw new Error("Choose a model from /model.");
-        session.model = argument; telemetry = { ...telemetry, model: undefined }; write(`Requested model for next turn: ${argument}`);
+        session.model = argument; telemetry = { ...telemetry, model: undefined }; persistPreference(); write(`Requested model for next turn: ${argument}`);
       }
     } else if (name === "/effort" || name === "/thinking") {
       if (!session.models.length && accountConnected && !disconnected) await loadCatalog();
@@ -284,15 +388,20 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         const levels = model?.supportedEffortLevels;
         if (!levels?.length) write("The engine has not reported reasoning options for this model.");
         else {
-          const selected = await input.choose("Select reasoning", ["default", ...levels].map(value => ({ value, label: value === "default" ? "Engine default" : "" })), session.effort ?? "default");
-          if (selected) { session.effort = selected === "default" ? undefined : selected as EffortLevel; telemetry = { ...telemetry, effort: undefined }; }
+          // Claude Code does not report what level "default" actually resolves to ahead of time —
+          // only Codex's SDK exposes that. Say so plainly instead of implying we know and hiding it.
+          const selected = await input.choose("Select reasoning", ["default", ...levels].map(value => ({
+            value, display: value === "default" ? "Default (recommended)" : effortLabel(value),
+            label: value === "default" ? "Claude Code decides — shown in the sidebar after you send a message" : effortDescription(value),
+          })), session.effort ?? "default");
+          if (selected) { session.effort = selected === "default" ? undefined : selected as EffortLevel; telemetry = { ...telemetry, effort: undefined }; persistPreference(); }
         }
       }
-      else if (argument === "default") session.effort = undefined;
+      else if (argument === "default") { session.effort = undefined; persistPreference(); }
       else if (["low", "medium", "high", "xhigh", "max"].includes(argument)) {
         const model = session.models.find(model => model.value === session.model || model.resolvedModel === telemetry.model);
         if (model?.supportedEffortLevels && !model.supportedEffortLevels.includes(argument as EffortLevel)) throw new Error("This effort level is not supported by the selected model.");
-        session.effort = argument as EffortLevel;
+        session.effort = argument as EffortLevel; persistPreference();
       } else throw new Error("Invalid effort level. Use /effort for options.");
     } else if (name === "/resume") {
       if (!argument) {
@@ -324,20 +433,21 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     if (closed || !value.trim()) return;
     input.setValue("");
     if (["/yes", "/no", "/stop", "/quit", "/quit!", "/status", "/help", "/commands", "/refresh"].includes(value.trim())) {
-      void command(value).catch(error => write(`Error: ${error.message}`)).finally(refresh); return;
+      void command(value).catch(error => writeError(`Error: ${error.message}`)).finally(refresh); return;
     }
-    if (commandBusy) { write("Wait for the current operation, or use /stop."); return; }
+    if (commandBusy) { writeError("Wait for the current operation, or use /stop."); return; }
     if (value.startsWith("/")) {
       commandBusy = true;
-      void command(value).catch(error => write(`Error: ${error.message}`)).finally(() => { commandBusy = false; refresh(); });
-    } else if (disconnected) write("Use /login to reconnect this Shell session before sending a message.");
-    else if (session.busy) write("A turn is already running. Wait, or use /stop.");
+      void command(value).catch(error => writeError(`Error: ${error.message}`)).finally(() => { commandBusy = false; refresh(); });
+    } else if (disconnected) writeError("Use /login to reconnect this Shell session before sending a message.");
+    else if (session.busy) writeError("A turn is already running. Wait, or use /stop.");
     else {
       writeChat("user", value);
       telemetry = { ...emptyTelemetry(), quotas: telemetry.quotas };
+      beginTurn();
       activeTurn = session.send(value, onEvent, approve)
-        .catch(error => { write(`Turn stopped: ${error instanceof Error ? error.message : String(error)}`); })
-        .finally(() => { streaming = undefined; refresh(); });
+        .catch(error => { writeError(`Turn stopped: ${error instanceof Error ? error.message : String(error)}`); })
+        .finally(() => { streaming = undefined; endTurn(); refresh(); });
       refresh();
     }
   };
@@ -346,7 +456,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       const modes = session.workModes();
       const index = modes.findIndex(mode => mode.id === session.workMode());
       const next = modes[(index + 1) % modes.length]!;
-      void session.setWorkMode(next.id).then(refresh).catch(error => write(`Error: ${error.message}`));
+      void session.setWorkMode(next.id).then(refresh).catch(error => writeError(`Error: ${error.message}`));
       return { consume: true };
     }
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) {

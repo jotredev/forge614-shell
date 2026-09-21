@@ -1,16 +1,15 @@
 import { Editor, TuiAltScreen, ProcessTerminal, visibleWidth, matchesKey } from "@earendil-works/pi-tui";
 import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
-import { accent as cyan, muted, fit, paint, warning } from "./theme.ts";
+import { accent as cyan, danger, muted, fit, paint, success, warning } from "./theme.ts";
 
 const forgeCommands = [
   ["/model", "Select model"], ["/effort", "Reasoning level"], ["/resume", "Chat history"],
   ["/refresh", "Refresh plan usage (supported engines)"], ["/new", "New conversation"], ["/login", "Connect account"], ["/logout", "Disconnect locally"],
   ["/status", "Session details"], ["/stop", "Cancel current operation; keep Shell open"], ["/help", "Browse all commands"], ["/commands", "Browse all commands"], ["/quit", "Exit Shell"],
 ].map(([value, label]) => ({ value: value!, label: label! }));
-export interface ComposerChoice { value: string; label: string; group?: string; }
+export interface ComposerChoice { value: string; label: string; display?: string; group?: string; }
 export interface ComposerCommandGroup { title: string; items: ComposerChoice[]; }
 
-const danger = paint("255;102;136");
 const purple = paint("176;132;255");
 const planning = paint("52;170;166");
 export type WorkModePresentation = { text: string; help: string };
@@ -41,11 +40,29 @@ function rule(width: number): string {
   return "─".repeat(Math.max(0, width));
 }
 
+/** Gives the status dot its own color per state, so "Working" reads as busy at a glance instead of blending into "Ready". */
+function statusColor(status: string): (text: string) => string {
+  if (status.startsWith("Working")) return warning;
+  switch (status) {
+    case "Ready": return success;
+    case "Awaiting permission": return danger;
+    case "Checking account": return muted;
+    default: return warning; // e.g. "Connect with /login" — needs the person's attention
+  }
+}
+
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+/** A live-moving dot while busy — a static "Working" label reads as frozen once the person stares at it. */
+function statusDot(status: string): string {
+  return status.startsWith("Working") ? SPINNER_FRAMES[Math.floor(Date.now() / 120) % SPINNER_FRAMES.length]! : "●";
+}
+
 /** A focused editor rendered as Forge614's primary writing surface. */
 export class ForgeComposer extends Editor {
   private status = "Ready";
   private workModeHint?: string;
   private selectedChoice = 0;
+  private currentValue?: string;
   private dismissed = "";
   private commandGroups: ComposerCommandGroup[] = [{ title: "FORGE614", items: forgeCommands }];
   private skillChoices: ComposerChoice[] = [];
@@ -59,9 +76,10 @@ export class ForgeComposer extends Editor {
     this.cancelChoice();
     if (!items.length) return Promise.resolve(undefined);
     this.selectedChoice = Math.max(0, items.findIndex(item => item.value === current));
+    this.currentValue = current;
     return new Promise(resolve => { this.picker = { title, items, resolve }; this.repaint(); });
   }
-  cancelChoice(): void { const picker = this.picker; this.picker = undefined; picker?.resolve(); this.repaint(); }
+  cancelChoice(): void { const picker = this.picker; this.picker = undefined; this.currentValue = undefined; picker?.resolve(); this.repaint(); }
   setCommandGroups(groups: ComposerCommandGroup[]): void {
     this.commandGroups = groups.filter(group => group.items.length).map(group => ({ ...group, items: group.items.map(item => ({ ...item, group: group.title })) }));
     this.selectedChoice = 0; this.dismissed = ""; this.repaint();
@@ -126,7 +144,7 @@ export class ForgeComposer extends Editor {
     const innerWidth = Math.max(1, width - 4);
     if (width < 10) return super.render(Math.max(1, width));
     const editor = super.render(innerWidth).slice(1, -1);
-    const title = `  ● ${this.status}  `;
+    const title = `  ${statusDot(this.status)} ${this.status}  `;
     const topFill = rule(Math.max(0, width - visibleWidth(title) - 5));
     const mode = this.workModeHint ? workModePresentation(this.workModeHint) : undefined;
     const hint = mode ? mode.text : muted("/help or /commands · Browse commands");
@@ -137,17 +155,29 @@ export class ForgeComposer extends Editor {
     const items = this.picker?.items ?? this.suggestions();
     const start = Math.max(0, this.selectedChoice - 4);
     const visibleItems = items.slice(start, start + 5);
+    // Numbering and the ✓ for the active value only make sense for a deliberate choose() menu
+    // (/model, /effort, /resume…) — not for the live "/" or "$" autocomplete-as-you-type list.
+    const numbered = Boolean(this.picker);
+    const leftText = (item: ComposerChoice, index: number) =>
+      `${numbered ? `${start + index + 1}. ` : ""}${item.display ?? item.value}${item.value === this.currentValue ? " ✓" : ""}`;
+    const leftWidth = Math.max(0, ...visibleItems.map((item, offset) => visibleWidth(leftText(item, offset))));
     const menu = items.length ? [
       ...visibleItems.flatMap((item, offset) => [
         ...(offset === 0 || item.group !== visibleItems[offset - 1]?.group ? [fit(cyan(item.group ?? this.picker?.title ?? "Commands"), width)] : []),
-        fit((start + offset === this.selectedChoice ? cyan : muted)(`${start + offset === this.selectedChoice ? "›" : " "} ${item.value}  ${item.label}`), width),
+        fit((() => {
+          const isCursor = start + offset === this.selectedChoice;
+          const isCurrent = item.value === this.currentValue;
+          const color = isCursor ? cyan : isCurrent ? success : muted;
+          const left = color(`${isCursor ? "›" : " "} ${fit(leftText(item, offset), leftWidth)}`);
+          return item.label ? `${left}  ${muted(item.label)}` : left;
+        })(), width),
       ]),
       fit(muted(`${this.picker?.title ?? "Commands"} · ${start + 1}–${Math.min(start + 5, items.length)} of ${items.length} · ↑/↓ choose · Enter confirm · Esc cancel`), width),
     ] : [];
     return [
       ...menu,
       "",
-      fit(`${cyan("╭─")} ${cyan(title)} ${cyan(`${topFill}╮`)}`, width),
+      fit(`${cyan("╭─")} ${statusColor(this.status)(title)} ${cyan(`${topFill}╮`)}`, width),
       `${cyan("│")} ${" ".repeat(innerWidth)} ${cyan("│")}`,
       ...editor.map(line => `${cyan("│")} ${fit(line, innerWidth)} ${cyan("│")}`),
       `${cyan("│")} ${" ".repeat(innerWidth)} ${cyan("│")}`,
