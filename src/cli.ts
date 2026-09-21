@@ -13,8 +13,8 @@ const args = process.argv.slice(2);
 
 if (args.length === 1 && args[0] === "update") {
   try {
-    const { updateInstalledShell } = await import("./infrastructure/updater.ts");
-    await updateInstalledShell();
+    const { runUpdateCommand } = await import("./app/update-command.ts");
+    await runUpdateCommand();
   } catch (error) {
     console.error(`Forge614-Shell update failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
@@ -49,7 +49,7 @@ Shell does not store subscription credentials or manage billing.
   --engine <name>      Legacy option; does not bypass interactive selectors
   --engine pi          Legacy Pi automation in non-interactive mode only
   --version, -v       Show the Shell version
-  update              Download and activate the latest stable release
+  update              Download and activate the latest stable release, and refresh Forge614 Engines (and Engram, if installed)
   uninstall           Remove Forge614 Shell from this computer
   init --product <name>  Set up a Forge614 product's local memory and, for engram, its memory integration (MCP + instructions)
   --help, -h          Show this help
