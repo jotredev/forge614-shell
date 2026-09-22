@@ -187,3 +187,22 @@ test("clicking the visible title row of an expanded activity card collapses it a
   expect(collapsed).not.toContain("Ruta: /src/foo.ts");
   expect(collapsed).toContain("Investigar X");
 });
+
+test("an activity's detail is truncated to 2000 characters, matching claude.ts's tool-argument cap", () => {
+  const now = Date.now();
+  const longDetail = "a".repeat(2000) + "OVERFLOW MARKER";
+  const sidebar = new ShellSidebar(() => ({
+    account: "connected", provider: "Claude",
+    backgroundActivitySupported: true,
+    backgroundActivity: [{
+      id: "t1", kind: "agent", label: "Investigar X", state: "done", startedAt: now - 5000, endedAt: now,
+      detail: longDetail,
+    }],
+  }));
+
+  const collapsedRow = sidebar.render(60).findIndex(line => line.includes("Investigar X"));
+  sidebar.handleMouse({ type: "click", button: "left", x: 0, y: collapsedRow, width: 60, height: 1 } as any);
+  const expanded = sidebar.render(60).join("\n");
+  expect(expanded).not.toContain("OVERFLOW MARKER");
+  expect(expanded).toContain("a".repeat(20));
+});
