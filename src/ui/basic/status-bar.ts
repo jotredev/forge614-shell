@@ -3,6 +3,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import type { ShellSnapshot } from "./shell-state.ts";
 import type { ProjectInfo } from "../../infrastructure/project-info.ts";
 import { homeRelativePath } from "../../infrastructure/runtime-resources.ts";
+import { spinnerFrame } from "./composer.ts";
 
 import { accent as cyan, muted, warning } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
@@ -12,6 +13,12 @@ const separator = muted(" · ");
 function contextPercent(snapshot: ShellSnapshot): string | undefined {
   if (!snapshot.context || snapshot.context.window <= 0) return undefined;
   return `ctx ${Math.round((snapshot.context.used / snapshot.context.window) * 100)}%`;
+}
+
+function backgroundActivityLabel(snapshot: ShellSnapshot, locale: Locale): string | undefined {
+  const running = snapshot.backgroundActivity?.filter(activity => activity.state === "running").length ?? 0;
+  if (!running) return undefined;
+  return `${spinnerFrame(true)} ${getCatalog(locale).backgroundActivity.statusBarCount({ count: running })}`;
 }
 
 /** A deliberately compact workspace footer: unknown data is never represented. */
@@ -31,7 +38,7 @@ export class ShellStatusBar implements Component {
     const t = getCatalog(this.locale).statusBar;
     const snapshot = this.getSnapshot();
     const details = snapshot.account === "connected"
-      ? [snapshot.provider, snapshot.model, snapshot.reasoning, contextPercent(snapshot)].filter((part): part is string => Boolean(part))
+      ? [snapshot.provider, snapshot.model, snapshot.reasoning, contextPercent(snapshot), backgroundActivityLabel(snapshot, this.locale)].filter((part): part is string => Boolean(part))
       : snapshot.account === "checking" ? [t.checkingAccount] : [snapshot.account === "unknown" ? t.accountUnverified : t.disconnected, "/login"];
     const projectInfo = this.getProject?.();
     const project = this.cwd ? [

@@ -332,3 +332,12 @@ test("spinnerFrame exposes the same animated dot the composer status uses", () =
   const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
   expect(SPINNER_FRAMES).toContain(spinnerFrame(true));
 });
+
+test("status bar shows a running-count segment with the animated dot only while something is running", () => {
+  const running = [{ id: "t1", kind: "agent" as const, label: "x", state: "running" as const, startedAt: Date.now() }];
+  const bar = new ShellStatusBar(() => ({ account: "connected", provider: "Claude", backgroundActivity: running }), "/proj");
+  expect(bar.render(80).join("\n")).toContain("1 background");
+
+  const idle = new ShellStatusBar(() => ({ account: "connected", provider: "Claude", backgroundActivity: [] }), "/proj");
+  expect(idle.render(80).join("\n")).not.toContain("background");
+});
