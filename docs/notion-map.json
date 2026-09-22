@@ -19,7 +19,9 @@
     {"localPath":"docs/en/06-release-1.0.0-bundle-installer.md","language":"en","notionUrl":"https://app.notion.com/p/3e121943d129817497f8f047bc359ff6?pvs=204","fingerprint":"32859d13e1acd5665b8aa7f6df37fbb926dfa2795e7b23923e793d804eca6d69"},
     {"localPath":"docs/es/07-inicializacion-engram-y-mcp.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d12981aaafeed21038dfeb08?pvs=204","fingerprint":"f992cedccdd20b4361a2c0a9138b92f65ea934ab1b81f9abee439efdd6bd6d07"},
     {"localPath":"docs/en/07-engram-initialization-and-mcp.md","language":"en","notionUrl":"https://app.notion.com/p/3e121943d129812cb6afdf65c798bade?pvs=204","fingerprint":"b77cbccafe1b59fb0f48482558992b6494f28234d9dadd269cf5ff186ed3d12f"},
-    {"localPath":"docs/es/08-diagnostico-y-limites.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d12981cdb951cdc7867cb12b?pvs=204","fingerprint":"cc13f8b2e36478a9d7caeddf3a40665bc3b6b0abe1f4db1044da526e3d9f9518"},
-    {"localPath":"docs/en/08-troubleshooting-and-limits.md","language":"en","notionUrl":"https://app.notion.com/p/3e121943d12981f9a13bcc532157f20f?pvs=204","fingerprint":"b4e4bf5b3eb52bf1ad81b887b36f88c557125ec9eab0a96ca6ef8281b3894bd9"}
+    {"localPath":"docs/es/08-diagnostico-y-limites.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d12981cdb951cdc7867cb12b?pvs=204","fingerprint":"227a0496f1ce953cd49354f5721eead5ceefb07b1ff93aa97affee811264ff8a"},
+    {"localPath":"docs/en/08-troubleshooting-and-limits.md","language":"en","notionUrl":"https://app.notion.com/p/3e121943d12981f9a13bcc532157f20f?pvs=204","fingerprint":"e67ef9c4542aab3476edcfd9248c8e56fa57a2b35a110f800adc7201095a5a95"},
+    {"localPath":"docs/es/09-idioma-y-configuracion-regional.md","language":"es","notionUrl":"https://app.notion.com/p/3e321943d1298180847dc2d97b1adecf?pvs=204","fingerprint":"b5b524c3a15dded0cc7006f490e5050fd47cea401b06a5491575064162d6d493"},
+    {"localPath":"docs/en/09-language-and-locale.md","language":"en","notionUrl":"https://app.notion.com/p/3e321943d1298189a370f915db257e30?pvs=204","fingerprint":"bf182b0d35b6338d5e224538d45e14bfe6764cb517c992b04e8c76af76b0d351"}
   ]
 }
