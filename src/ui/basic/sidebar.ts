@@ -115,9 +115,13 @@ export class ShellSidebar implements Component {
           const elapsedMs = (activity.endedAt ?? Date.now()) - activity.startedAt;
           const elapsed = elapsedMs < 60_000 ? ba.elapsedSeconds({ seconds: Math.max(0, Math.floor(elapsedMs / 1000)) }) : ba.elapsedMinutes({ minutes: Math.floor(elapsedMs / 60_000) });
           const stateLabel = activity.state === "running" ? ba.running : activity.state === "done" ? ba.done : ba.failed;
-          const card = new ActivityCard(activity.label, `${stateLabel} · ${elapsed}`, activity.detail ?? "", this.expandedActivityIds.has(activity.id));
-          this.activityRows.set(lines.length + 1, activity.id);
-          lines.push(...card.render(width));
+          const expanded = this.expandedActivityIds.has(activity.id);
+          const card = new ActivityCard(activity.label, `${stateLabel} · ${elapsed}`, activity.detail ?? "", expanded);
+          const cardLines = card.render(width);
+          // Collapsed cards render ["", summary, preview?] — the title sits at index 1.
+          // Expanded cards render ["", padding, "▾ title", ...body, padding, ""] — the title sits at index 2.
+          this.activityRows.set(lines.length + (expanded ? 2 : 1), activity.id);
+          lines.push(...cardLines);
         }
       }
     }

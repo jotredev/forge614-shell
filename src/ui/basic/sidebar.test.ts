@@ -158,3 +158,32 @@ test("clicking a background activity row expands it to show the engine's own res
   const expanded = sidebar.render(60).join("\n");
   expect(expanded).toContain("Encontré 3 archivos");
 });
+
+test("clicking the visible title row of an expanded activity card collapses it again", () => {
+  // ActivityCard always shows a one-line preview of the detail's first line even when
+  // collapsed, so a second detail line is used here as the signal that only appears in the
+  // full expanded body — a reliable way to distinguish expanded from collapsed rendering.
+  const now = Date.now();
+  const sidebar = new ShellSidebar(() => ({
+    account: "connected", provider: "Claude",
+    backgroundActivitySupported: true,
+    backgroundActivity: [{
+      id: "t1", kind: "agent", label: "Investigar X", state: "done", startedAt: now - 5000, endedAt: now,
+      detail: "Encontré 3 archivos\nRuta: /src/foo.ts",
+    }],
+  }));
+
+  // First click: expand. Must land on the collapsed card's title row.
+  const collapsedRow = sidebar.render(60).findIndex(line => line.includes("Investigar X"));
+  sidebar.handleMouse({ type: "click", button: "left", x: 0, y: collapsedRow, width: 60, height: 1 } as any);
+  const expandedLines = sidebar.render(60);
+  expect(expandedLines.join("\n")).toContain("Ruta: /src/foo.ts");
+
+  // Second click: on the row that actually shows the title text once expanded (one row below
+  // the blank padding row that used to be mis-registered) — this must collapse the card back.
+  const expandedTitleRow = expandedLines.findIndex(line => line.includes("Investigar X"));
+  sidebar.handleMouse({ type: "click", button: "left", x: 0, y: expandedTitleRow, width: 60, height: 1 } as any);
+  const collapsed = sidebar.render(60).join("\n");
+  expect(collapsed).not.toContain("Ruta: /src/foo.ts");
+  expect(collapsed).toContain("Investigar X");
+});
