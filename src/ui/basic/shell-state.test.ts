@@ -25,3 +25,19 @@ test("connected state preserves measured Shell memory without inventing engine m
   expect(state.snapshot().resources).toEqual({ shellRssBytes: 48 * 1024 * 1024 });
   expect(state.snapshot().resources?.engineRssBytes).toBeUndefined();
 });
+
+test("connect() carries background activity and its support flag through to the snapshot", () => {
+  const state = new ShellState("claude");
+  const activity = { id: "t1", kind: "agent" as const, label: "Investigar X", state: "running" as const, startedAt: Date.now() };
+  state.connect({ backgroundActivity: [activity], backgroundActivitySupported: true });
+  const snapshot = state.snapshot();
+  expect(snapshot.backgroundActivity).toEqual([activity]);
+  expect(snapshot.backgroundActivitySupported).toBe(true);
+});
+
+test("snapshot omits background activity fields when the engine never reported them", () => {
+  const state = new ShellState("codex");
+  state.connect({});
+  expect(state.snapshot().backgroundActivity).toBeUndefined();
+  expect(state.snapshot().backgroundActivitySupported).toBeUndefined();
+});

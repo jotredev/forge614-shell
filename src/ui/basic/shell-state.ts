@@ -1,3 +1,5 @@
+import type { BackgroundActivity } from "../../engines/types.ts";
+
 export type AccountState = "connected" | "disconnected" | "checking" | "unknown";
 
 export type ContextUsage = { used: number; window: number };
@@ -14,6 +16,8 @@ export type ConnectedDetails = {
   context?: ContextUsage;
   usage?: ProviderUsage[];
   resources?: ResourceUsage;
+  backgroundActivity?: BackgroundActivity[];
+  backgroundActivitySupported?: boolean;
 };
 
 export type ShellSnapshot = {
@@ -30,6 +34,8 @@ export type ShellSnapshot = {
   context?: ContextUsage;
   usage?: ProviderUsage[];
   resources?: ResourceUsage;
+  backgroundActivity?: BackgroundActivity[];
+  backgroundActivitySupported?: boolean;
 };
 
 export class ShellState {

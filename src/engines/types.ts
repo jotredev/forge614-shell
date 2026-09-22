@@ -11,6 +11,17 @@ export type NativeVisualState = {
   context?: { used: number; window: number };
   usage?: { label: string; usedPercent: number; reset?: string }[];
 };
+export type BackgroundActivityKind = "agent" | "process";
+export type BackgroundActivityState = "running" | "done" | "failed";
+export interface BackgroundActivity {
+  id: string;
+  kind: BackgroundActivityKind;
+  label: string;
+  state: BackgroundActivityState;
+  startedAt: number;
+  endedAt?: number;
+  detail?: string;
+}
 export interface NativeEvent { type: "text" | "delta" | "status" | "reset"; text: string; id?: string }
 export type Emit = (event: NativeEvent) => void;
 export type Approve = (description: string, signal: AbortSignal) => Promise<boolean>;
@@ -32,6 +43,7 @@ export interface NativeSession {
   workModes?(): NativeWorkMode[];
   workMode?(): string | undefined;
   setWorkMode?(id: string): Promise<void>;
+  backgroundActivity?(): BackgroundActivity[];
   status(): string[];
   visual?(): NativeVisualState;
   refreshUsage?(): Promise<void>;
