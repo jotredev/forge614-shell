@@ -189,7 +189,9 @@ function planPayload(agentId: string, opts: {
   planId?: string; noop?: boolean;
   mcpStatus?: { kind: string; reason?: string; details?: string };
   instructionsStatus?: { kind: string; reason?: string; details?: string };
-  overallStatus?: string; mcpPath?: string; instructionsPaths?: string[];
+  hookStatus?: { kind: string; reason?: string; details?: string };
+  hookRuntimeStatus?: { kind: string; reason?: string };
+  overallStatus?: string; mcpPath?: string; instructionsPaths?: string[]; hookPath?: string;
 } = {}) {
   return {
     schemaVersion: 1,
@@ -202,6 +204,11 @@ function planPayload(agentId: string, opts: {
       metadata: {
         mcp: { path: opts.mcpPath ?? `/Users/tester/.${agentId}.json`, status: opts.mcpStatus ?? { kind: "write" } },
         instructions: { paths: opts.instructionsPaths ?? [`/Users/tester/.${agentId}/instructions.md`], status: opts.instructionsStatus ?? { kind: "write" } },
+        hook: {
+          path: opts.hookPath ?? `/Users/tester/.${agentId}/hook-target`,
+          status: opts.hookStatus ?? { kind: "write" },
+          runtimeStatus: opts.hookRuntimeStatus ?? { kind: "pending-runtime-verification", reason: "no-evidence" },
+        },
         overallStatus: opts.overallStatus ?? "complete",
       },
     },
@@ -213,7 +220,10 @@ function applyPayload(planId: string, applied = true) {
 }
 
 function verifyPayload(agentId: string, opts: {
-  mcpPresent?: boolean; instructionsSupported?: boolean; instructionsPresent?: boolean; overallStatus?: string;
+  mcpPresent?: boolean; instructionsSupported?: boolean; instructionsPresent?: boolean;
+  hookSupported?: boolean; hookPresent?: boolean; hookDryRunOk?: boolean;
+  hookRuntimeStatus?: { kind: string; reason?: string };
+  overallStatus?: string;
 } = {}) {
   return {
     schemaVersion: 1,
@@ -224,6 +234,13 @@ function verifyPayload(agentId: string, opts: {
         supported: opts.instructionsSupported ?? true,
         paths: [`/Users/tester/.${agentId}/instructions.md`],
         present: opts.instructionsPresent ?? true,
+      },
+      hook: {
+        supported: opts.hookSupported ?? true,
+        path: `/Users/tester/.${agentId}/hook-target`,
+        present: opts.hookPresent ?? true,
+        dryRunOk: opts.hookDryRunOk ?? true,
+        runtimeStatus: opts.hookRuntimeStatus ?? { kind: "runtime-observed" },
       },
       overallStatus: opts.overallStatus ?? "complete",
     },
@@ -347,16 +364,24 @@ test("a conflict on every component makes no apply call and reports the conflict
       enginesCalls.push([command, ...args]);
       if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
       if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
-      return {
-        status: 0,
-        stdout: JSON.stringify(planPayload("claude-code", {
-          noop: true,
-          mcpStatus: { kind: "blocked", reason: "mcp-conflict", details: 'An existing "forge614-engram" MCP entry with different content is already present.' },
-          instructionsStatus: { kind: "blocked", reason: "instructions-conflict", details: "An existing managed instructions block could not be reconciled." },
-          overallStatus: "unsupported",
-        })),
-        stderr: "",
-      };
+      if (args[0] === "plan") {
+        return {
+          status: 0,
+          stdout: JSON.stringify(planPayload("claude-code", {
+            noop: true,
+            mcpStatus: { kind: "blocked", reason: "mcp-conflict", details: 'An existing "forge614-engram" MCP entry with different content is already present.' },
+            instructionsStatus: { kind: "blocked", reason: "instructions-conflict", details: "An existing managed instructions block could not be reconciled." },
+            hookRuntimeStatus: { kind: "absent" },
+            overallStatus: "unsupported",
+          })),
+          stderr: "",
+        };
+      }
+      // Nothing was ever written due to the conflict — verify honestly reports absent, since
+      // MemoryVerification carries no equivalent "blocked reason" field to echo the plan's own
+      // conflict-detail text (that field only ever existed on the plan side, via `planDetail`,
+      // which this task deletes).
+      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { mcpPresent: false, instructionsPresent: false, hookRuntimeStatus: { kind: "absent" }, overallStatus: "absent" })), stderr: "" };
     },
   });
   await driveEngramScreens(terminal);
@@ -366,7 +391,7 @@ test("a conflict on every component makes no apply call and reports the conflict
   terminal.input(" "); terminal.input("\r"); // check Claude Code, submit
   try { await run; } finally { restore(); }
   expect(enginesCalls.some(c => c[0] === "apply" || c.includes("apply"))).toBe(false);
-  expect(logs).toContain('Claude Code: not supported — MCP: An existing "forge614-engram" MCP entry with different content is already present.; instructions: An existing managed instructions block could not be reconciled.');
+  expect(logs).toContain("Claude Code: not configured — Forge614 Engines could not confirm any memory integration for this assistant.");
 });
 
 test("cancelling the memory preview makes zero writes", async () => {
@@ -541,16 +566,19 @@ test("an assistant whose plan is already complete and needs no writes is reporte
       enginesCalls.push([command, ...args]);
       if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
       if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
-      return {
-        status: 0,
-        stdout: JSON.stringify(planPayload("claude-code", {
-          noop: true,
-          mcpStatus: { kind: "noop" },
-          instructionsStatus: { kind: "noop" },
-          overallStatus: "complete",
-        })),
-        stderr: "",
-      };
+      if (args[0] === "plan") {
+        return {
+          status: 0,
+          stdout: JSON.stringify(planPayload("claude-code", {
+            noop: true,
+            mcpStatus: { kind: "noop" },
+            instructionsStatus: { kind: "noop" },
+            overallStatus: "complete",
+          })),
+          stderr: "",
+        };
+      }
+      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: { kind: "runtime-observed" } })), stderr: "" };
     },
   });
   await driveEngramScreens(terminal);
@@ -558,7 +586,7 @@ test("an assistant whose plan is already complete and needs no writes is reporte
   terminal.input(" "); terminal.input("\r"); // check Claude Code, submit
   try { await run; } finally { restore(); }
   expect(enginesCalls.some(c => c.includes("apply"))).toBe(false);
-  expect(enginesCalls.some(c => c.includes("memory-integration"))).toBe(false);
+  expect(enginesCalls.some(c => c.includes("memory-integration"))).toBe(true);
   expect(logs).toContain("Claude Code: configured — MCP and memory instructions available");
   // Nothing was written this run, so there is nothing for the assistant to reload.
   expect(logs.some(line => line.startsWith("Close and reopen"))).toBe(false);
@@ -573,13 +601,24 @@ test("a plan that claims complete while the instructions are unsupported is stil
     enginesRun: async (_command, args) => {
       if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "cursor", label: "Cursor", executable: "/Applications/Cursor.app/Contents/MacOS/Cursor" }])), stderr: "" };
       if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("cursor")), stderr: "" };
-      // Engines is not expected to send this combination; Shell defends the invariant locally.
+      if (args[0] === "plan") {
+        // Engines is not expected to send this combination; Shell defends the invariant locally.
+        return {
+          status: 0,
+          stdout: JSON.stringify(planPayload("cursor", {
+            noop: true,
+            mcpStatus: { kind: "noop" },
+            instructionsStatus: { kind: "unsupported", reason: "Cursor has no officially supported mechanism to auto-load global instructions." },
+            overallStatus: "complete",
+          })),
+          stderr: "",
+        };
+      }
       return {
         status: 0,
-        stdout: JSON.stringify(planPayload("cursor", {
-          noop: true,
-          mcpStatus: { kind: "noop" },
-          instructionsStatus: { kind: "unsupported", reason: "Cursor has no officially supported mechanism to auto-load global instructions." },
+        stdout: JSON.stringify(verifyPayload("cursor", {
+          instructionsSupported: false, instructionsPresent: false,
+          hookSupported: false, hookRuntimeStatus: { kind: "unsupported" },
           overallStatus: "complete",
         })),
         stderr: "",
@@ -589,7 +628,7 @@ test("a plan that claims complete while the instructions are unsupported is stil
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\r"); // check Cursor, submit
   try { await run; } finally { restore(); }
-  expect(logs).toContain("Cursor: partially configured — instructions: Cursor has no officially supported mechanism to auto-load global instructions.");
+  expect(logs).toContain("Cursor: partially configured — this assistant has no official mechanism to auto-load global instructions");
   expect(logs.some(line => line.startsWith("Cursor: configured"))).toBe(false);
 });
 
@@ -643,4 +682,353 @@ test("an exception during the memory picker screen never fails an already-succes
   expect(process.exitCode as number | undefined).not.toBe(1);
   expect(logs.some(line => line.includes("Memory setup could not be completed"))).toBe(true);
   process.exitCode = 0; // reset so this test's exit code doesn't leak into the overall `bun test` process exit status
+});
+
+test("a freshly-configured Claude Code starts pending-runtime-verification and is never shown as complete before evidence exists", async () => {
+  const terminal = new TestTerminal();
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("claude-code", { hookStatus: { kind: "write" }, hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } })), stderr: "" };
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-claude-code")), stderr: "" };
+      // verify is called twice: once right after apply, once after the hand-off. Both times nothing
+      // was ever really observed on this fake machine, so both report the same pending state.
+      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } })), stderr: "" };
+    },
+    launch: async () => {}, // fake hand-off: the client "opened and closed" instantly
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
+  terminal.input("\r"); // preview: Confirm
+  try { await run; } finally { restore(); }
+  expect(logs).toContain("Claude Code: configured; pending verification — the MCP server and memory instructions are already configured and untouched — only the runtime check needs to run again; open this assistant once more so Forge614 Engines can confirm it");
+  expect(logs.some(line => line.startsWith("Claude Code: configured —"))).toBe(false);
+});
+
+test("Claude Code is reported fully configured once the hand-off's re-verify observes the runtime evidence", async () => {
+  const terminal = new TestTerminal();
+  const { logs, restore } = captureLogs();
+  let verifyCalls = 0;
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("claude-code", { hookStatus: { kind: "write" }, hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } })), stderr: "" };
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-claude-code")), stderr: "" };
+      verifyCalls += 1;
+      // First verify (right after apply): still pending. Second verify (after the hand-off): observed.
+      const runtimeStatus = verifyCalls === 1 ? { kind: "pending-runtime-verification", reason: "no-evidence" } : { kind: "runtime-observed" };
+      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: runtimeStatus })), stderr: "" };
+    },
+    launch: async () => {},
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
+  terminal.input("\r"); // preview: Confirm
+  try { await run; } finally { restore(); }
+  expect(verifyCalls).toBe(2);
+  expect(logs).toContain("Claude Code: configured — MCP and memory instructions available");
+});
+
+test("Codex reporting needs-user-trust is launched automatically, with no extra confirmation prompt, and Shell never attempts to approve the hook itself", async () => {
+  const terminal = new TestTerminal();
+  const { logs, restore } = captureLogs();
+  const launches: { executable: string }[] = [];
+  let verifyCalls = 0;
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "codex", label: "Codex", executable: "/usr/local/bin/codex" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("codex")), stderr: "" };
+      if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("codex", { hookStatus: { kind: "write" }, hookRuntimeStatus: { kind: "needs-user-trust" } })), stderr: "" };
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-codex")), stderr: "" };
+      verifyCalls += 1;
+      const runtimeStatus = verifyCalls === 1 ? { kind: "needs-user-trust" } : { kind: "runtime-observed" };
+      return { status: 0, stdout: JSON.stringify(verifyPayload("codex", { hookRuntimeStatus: runtimeStatus })), stderr: "" };
+    },
+    launch: async executable => { launches.push({ executable }); },
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r"); await tick(); // check Codex, submit
+  terminal.input("\r"); // preview: Confirm — this is the ONLY confirmation in the whole run
+  try { await run; } finally { restore(); }
+  expect(launches).toEqual([{ executable: "/usr/local/bin/codex" }]);
+  expect(logs.some(line => line.includes("trust its new memory hook"))).toBe(true);
+  expect(logs).toContain("Codex: configured — MCP and memory instructions available");
+});
+
+test("Codex still needing trust after the hand-off is reported as pending, never as success or a hard error", async () => {
+  const terminal = new TestTerminal();
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "codex", label: "Codex", executable: "/usr/local/bin/codex" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("codex")), stderr: "" };
+      if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("codex", { hookStatus: { kind: "write" }, hookRuntimeStatus: { kind: "needs-user-trust" } })), stderr: "" };
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-codex")), stderr: "" };
+      // The user closed Codex without running /hooks: it is still untrusted both times.
+      return { status: 0, stdout: JSON.stringify(verifyPayload("codex", { hookRuntimeStatus: { kind: "needs-user-trust" } })), stderr: "" };
+    },
+    launch: async () => {},
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r"); await tick(); // check Codex, submit
+  terminal.input("\r"); // preview: Confirm
+  try { await run; } finally { restore(); }
+  expect(logs).toContain("Codex: configured; pending verification — Codex has not trusted the memory hook yet — approve it inside Codex, then run this command again");
+});
+
+test("evidence-expired for an already-fully-configured Claude Code is reported as a stale check, never as lost memory or a failed install, and triggers exactly one renewal hand-off", async () => {
+  const terminal = new TestTerminal();
+  const { logs, restore } = captureLogs();
+  const launches: { executable: string }[] = [];
+  let verifyCalls = 0;
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      if (args[0] === "plan") {
+        // Everything is already on disk (mcp/instructions/hook all noop) — only the 7-day evidence
+        // window lapsed. `plan.noop` is true: nothing for `apply` to write, so this goes through the
+        // `resolved` branch, not the preview/confirm/apply branch.
+        return {
+          status: 0,
+          stdout: JSON.stringify(planPayload("claude-code", {
+            noop: true,
+            mcpStatus: { kind: "noop" }, instructionsStatus: { kind: "noop" },
+            hookStatus: { kind: "noop" }, hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "evidence-expired" },
+            overallStatus: "partial",
+          })),
+          stderr: "",
+        };
+      }
+      verifyCalls += 1;
+      // First verify (before any hand-off): still expired. Second verify (after the renewal
+      // hand-off): a fresh session ran, so Engines now reports runtime-observed.
+      const runtimeStatus = verifyCalls === 1
+        ? { kind: "pending-runtime-verification", reason: "evidence-expired" }
+        : { kind: "runtime-observed" };
+      const overallStatus = verifyCalls === 1 ? "partial" : "complete";
+      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: runtimeStatus, overallStatus })), stderr: "" };
+    },
+    launch: async executable => { launches.push({ executable }); },
+  });
+  await driveEngramScreens(terminal);
+  // Nothing is pending (plan.noop is true), so no preview/confirm screen appears — the picker's
+  // submit is the last screen before the unified verify(+relaunch) path runs on its own.
+  terminal.input(" "); terminal.input("\r");
+  try { await run; } finally { restore(); }
+  expect(verifyCalls).toBe(2);
+  expect(launches).toEqual([{ executable: "/usr/local/bin/claude" }]);
+  const allText = logs.join("\n");
+  expect(allText).not.toMatch(/lost|failed|not configured/i);
+  expect(logs).toContain("Claude Code: configured — MCP and memory instructions available");
+});
+
+test("evidence-expired that produces no fresh evidence after the hand-off stays honestly pending, with a clear cause, never a false success", async () => {
+  const terminal = new TestTerminal();
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      if (args[0] === "plan") {
+        return {
+          status: 0,
+          stdout: JSON.stringify(planPayload("claude-code", {
+            noop: true,
+            mcpStatus: { kind: "noop" }, instructionsStatus: { kind: "noop" },
+            hookStatus: { kind: "noop" }, hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "evidence-expired" },
+            overallStatus: "partial",
+          })),
+          stderr: "",
+        };
+      }
+      // The user closed the client immediately; the check stays expired both times.
+      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "evidence-expired" }, overallStatus: "partial" })), stderr: "" };
+    },
+    launch: async () => {},
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r");
+  try { await run; } finally { restore(); }
+  expect(logs).toContain("Claude Code: configured; pending verification — the MCP server and memory instructions are already configured and untouched — only the runtime check needs to run again; open this assistant once more so Forge614 Engines can confirm it");
+});
+
+test("Codex's expired evidence is never reported or worded as a lack of trust — needs-user-trust stays its own distinct case", async () => {
+  const terminal = new TestTerminal();
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "codex", label: "Codex", executable: "/usr/local/bin/codex" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("codex")), stderr: "" };
+      if (args[0] === "plan") {
+        return {
+          status: 0,
+          stdout: JSON.stringify(planPayload("codex", {
+            noop: true,
+            mcpStatus: { kind: "noop" }, instructionsStatus: { kind: "noop" },
+            hookStatus: { kind: "noop" }, hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "evidence-expired" },
+            overallStatus: "partial",
+          })),
+          stderr: "",
+        };
+      }
+      return { status: 0, stdout: JSON.stringify(verifyPayload("codex", { hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "evidence-expired" }, overallStatus: "partial" })), stderr: "" };
+    },
+    launch: async () => {},
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r");
+  try { await run; } finally { restore(); }
+  expect(logs.some(line => line.includes("has not trusted the memory hook"))).toBe(false);
+  expect(logs).toContain("Codex: configured; pending verification — the MCP server and memory instructions are already configured and untouched — only the runtime check needs to run again; open this assistant once more so Forge614 Engines can confirm it");
+});
+
+test("a genuine MCP/hook conflict is never written and is reported with Engines' own concrete cause", async () => {
+  const terminal = new TestTerminal();
+  const enginesCalls: string[][] = [];
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (command, args) => {
+      enginesCalls.push([command, ...args]);
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      return {
+        status: 0,
+        stdout: JSON.stringify(planPayload("claude-code", {
+          noop: true,
+          mcpStatus: { kind: "noop" }, instructionsStatus: { kind: "noop" },
+          hookStatus: { kind: "blocked", reason: "hook-conflict", details: "An existing SessionStart hook with different content is already present in /Users/tester/.claude/settings.json" },
+          hookRuntimeStatus: { kind: "absent" },
+          overallStatus: "partial",
+        })),
+        stderr: "",
+      };
+    },
+  });
+  await driveEngramScreens(terminal);
+  // The plan is noop:true (nothing Engines can write), so no preview/confirm screen appears, and no
+  // apply call is made, but Task 4's unified path still calls verify to report the real state.
+  terminal.input(" "); terminal.input("\r"); await tick();
+  await tick();
+  try { await run; } finally { restore(); }
+  expect(enginesCalls.some(c => c.includes("apply"))).toBe(false);
+  expect(logs.some(line => line.startsWith("Claude Code: configured —"))).toBe(false);
+});
+
+test("Cursor never appears as a complete automatic memory integration, even with the hook component present", async () => {
+  const terminal = new TestTerminal();
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "cursor", label: "Cursor", executable: "/Applications/Cursor.app/Contents/MacOS/Cursor" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("cursor")), stderr: "" };
+      if (args[0] === "plan") {
+        return {
+          status: 0,
+          stdout: JSON.stringify(planPayload("cursor", {
+            instructionsStatus: { kind: "unsupported", reason: "Cursor has no officially supported mechanism to auto-load global instructions." },
+            hookStatus: { kind: "unsupported", reason: "Cursor has no officially supported, stable session-start hook mechanism this installer configures" },
+            hookRuntimeStatus: { kind: "unsupported" },
+            overallStatus: "partial",
+          })),
+          stderr: "",
+        };
+      }
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-cursor")), stderr: "" };
+      return {
+        status: 0,
+        stdout: JSON.stringify(verifyPayload("cursor", {
+          instructionsSupported: false, instructionsPresent: false,
+          hookSupported: false, hookRuntimeStatus: { kind: "unsupported" },
+          overallStatus: "complete",
+        })),
+        stderr: "",
+      };
+    },
+    launch: async () => { throw new Error("Cursor must never be launched by this flow."); },
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r"); await tick(); // check Cursor, submit
+  terminal.input("\r"); // preview: Confirm
+  try { await run; } finally { restore(); }
+  expect(logs.some(line => line.startsWith("Cursor: configured"))).toBe(false);
+  expect(logs).toContain("Cursor: partially configured — this assistant has no official mechanism to auto-load global instructions");
+});
+
+test("no run of this flow ever prints a PostgreSQL connection string, a token, or an afterContent/beforeHash value, across every log line and every terminal frame", async () => {
+  const terminal = new TestTerminal();
+  const postgresUrl = "postgres://user:sup3rsecret@host:5432/db";
+  const fakeSecret = "github_pat_FAKE_VALUE_FOR_TEST_ONLY";
+  const { logs, restore } = captureLogs();
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      if (args[0] === "plan") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            schemaVersion: 1,
+            plan: {
+              planId: "plan-claude-code", agentId: "claude-code", action: "memory-install", noop: false,
+              writes: [{ path: "/Users/tester/.claude/settings.json", beforeHash: "abc123", afterContent: `{"env":{"GITHUB_TOKEN":"${fakeSecret}"}}` }],
+              metadata: {
+                mcp: { path: "/Users/tester/.claude.json", status: { kind: "noop" } },
+                instructions: { paths: ["/Users/tester/.claude/CLAUDE.md"], status: { kind: "noop" } },
+                hook: { path: "/Users/tester/.claude/settings.json", status: { kind: "write" }, runtimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } },
+                overallStatus: "partial",
+              },
+            },
+          }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-claude-code")), stderr: "" };
+      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: { kind: "runtime-observed" } })), stderr: "" };
+    },
+    launch: async () => {},
+  });
+  await tick();
+  terminal.input("\r"); await tick(); // Continue
+  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
+  terminal.input(postgresUrl);
+  terminal.input("\r"); await tick(); // submit connection string
+  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
+  terminal.input("\r"); await tick(); // Engram summary: Confirm
+  terminal.input(" "); terminal.input("\r"); await tick(); // memory picker: check Claude Code, submit
+  terminal.input("\r"); // preview: Confirm
+  try { await run; } finally { restore(); }
+  for (const forbidden of [postgresUrl, "sup3rsecret", fakeSecret, "afterContent", "beforeHash", "abc123"]) {
+    expect(terminal.output).not.toContain(forbidden);
+    expect(logs.join("\n")).not.toContain(forbidden);
+  }
+});
+
+test("Shell never calls memory-hook-run and never reads the hook-evidence directory itself", async () => {
+  const source = await readFile(new URL("./init-engram.ts", import.meta.url), "utf8");
+  expect(source).not.toMatch(/memory-hook-run/);
+  expect(source).not.toMatch(/hook-evidence/);
 });
