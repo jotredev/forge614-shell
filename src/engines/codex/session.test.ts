@@ -406,3 +406,9 @@ test("Codex's own status/login narration renders in the session's own locale, no
   await session.logout();
   expect(events.some(event => event.type === "text" && event.text === "Se desconectó localmente de Codex en esta sesión de Shell. Tu cuenta nativa y otras aplicaciones no cambiaron. Usa /login para reconectar.")).toBe(true);
 });
+
+test("Codex reports no background activity today — no session emits it until a live app-server probe proves otherwise (see docs/superpowers/specs/2026-09-22-background-activity-indicator-design.md §3.2)", async () => {
+  const rpc = codexFixture();
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  expect(typeof (session as unknown as { backgroundActivity?: () => unknown }).backgroundActivity).toBe("undefined");
+});
