@@ -123,3 +123,38 @@ test("sidebar leaves project status to the footer", async () => {
   expect(output).not.toContain("PROJECT");
   expect(output).not.toContain("Directory");
 });
+
+test("sidebar lists running and finished background activity with elapsed time", () => {
+  const now = Date.now();
+  const sidebar = new ShellSidebar(() => ({
+    account: "connected", provider: "Claude",
+    backgroundActivitySupported: true,
+    backgroundActivity: [
+      { id: "t1", kind: "agent", label: "Investigar X", state: "running", startedAt: now - 12_000 },
+      { id: "t2", kind: "process", label: "build.sh", state: "failed", startedAt: now - 90_000, endedAt: now - 30_000, detail: "exit 1" },
+    ],
+  }));
+  const lines = sidebar.render(60).join("\n");
+  expect(lines).toContain("Investigar X");
+  expect(lines).toContain("build.sh");
+});
+
+test("sidebar tells the person plainly when the engine doesn't report background activity", () => {
+  const sidebar = new ShellSidebar(() => ({ account: "connected", provider: "Codex", backgroundActivitySupported: false }));
+  const lines = sidebar.render(60).join("\n");
+  expect(lines).toContain("This engine doesn't report background activity.");
+});
+
+test("clicking a background activity row expands it to show the engine's own result", () => {
+  const now = Date.now();
+  const sidebar = new ShellSidebar(() => ({
+    account: "connected", provider: "Claude",
+    backgroundActivitySupported: true,
+    backgroundActivity: [{ id: "t1", kind: "agent", label: "Investigar X", state: "done", startedAt: now - 5000, endedAt: now, detail: "Encontré 3 archivos" }],
+  }));
+  sidebar.render(60);
+  const rowIndex = sidebar.render(60).findIndex(line => line.includes("Investigar X"));
+  sidebar.handleMouse({ type: "click", button: "left", x: 0, y: rowIndex, width: 60, height: 1 } as any);
+  const expanded = sidebar.render(60).join("\n");
+  expect(expanded).toContain("Encontré 3 archivos");
+});

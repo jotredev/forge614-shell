@@ -3,6 +3,7 @@ import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
 import type { ShellSnapshot } from "./shell-state.ts";
 import { readProjectInfo, type ProjectInfo } from "../../infrastructure/project-info.ts";
 import { formatMemory } from "../../infrastructure/runtime-resources.ts";
+import { ActivityCard } from "./transcript.ts";
 
 import { accent as mint, warning as amber, muted, border, success } from "./theme.ts";
 import { compactNumber, contextRing, isDisplayableUsage, progressBar, resetLabel, usageTitle } from "./metrics.ts";
@@ -23,6 +24,8 @@ export class ShellSidebar implements Component {
   private refreshRow = -1;
   private refreshing = false;
   private refreshMessage = "";
+  private expandedActivityIds = new Set<string>();
+  private activityRows = new Map<number, string>();
   setRefreshAction(action: () => Promise<void | string>, repaint: () => void): void { this.refreshAction = action; this.repaint = repaint; }
   async refreshUsage(): Promise<void> {
     const t = getCatalog(this.locale).sidebar;
@@ -35,6 +38,13 @@ export class ShellSidebar implements Component {
     finally { this.refreshing = false; this.repaint(); }
   }
   handleMouse(event: TuiMouseEvent) {
+    const activityId = this.activityRows.get(event.y);
+    if (activityId !== undefined && event.type === "click" && event.button === "left" && event.x >= 0) {
+      if (this.expandedActivityIds.has(activityId)) this.expandedActivityIds.delete(activityId);
+      else this.expandedActivityIds.add(activityId);
+      this.repaint();
+      return { handled: true, render: true };
+    }
     if (this.refreshRow < 0 || event.y !== this.refreshRow || event.x < 0 || event.type !== "click" || event.button !== "left") return undefined;
     void this.refreshUsage(); return { handled: true, render: true };
   }
@@ -91,6 +101,25 @@ export class ShellSidebar implements Component {
     if (snapshot.resources) {
       lines.push("", ...heading(t.headingResources), line(`${muted(t.fieldShellRam)}  ${formatMemory(snapshot.resources.shellRssBytes)}`));
       lines.push(line(`${muted(t.fieldEngineRam)}  ${snapshot.resources.engineRssBytes === undefined ? t.notReportedByEngine : formatMemory(snapshot.resources.engineRssBytes)}`));
+    }
+    this.activityRows = new Map();
+    if (snapshot.backgroundActivitySupported !== undefined) {
+      const ba = getCatalog(this.locale).backgroundActivity;
+      lines.push("", ...heading(ba.heading));
+      if (!snapshot.backgroundActivitySupported) {
+        lines.push(line(muted(ba.notReportedByEngine)));
+      } else if (!snapshot.backgroundActivity?.length) {
+        lines.push(line(muted(ba.idle)));
+      } else {
+        for (const activity of snapshot.backgroundActivity) {
+          const elapsedMs = (activity.endedAt ?? Date.now()) - activity.startedAt;
+          const elapsed = elapsedMs < 60_000 ? ba.elapsedSeconds({ seconds: Math.max(0, Math.floor(elapsedMs / 1000)) }) : ba.elapsedMinutes({ minutes: Math.floor(elapsedMs / 60_000) });
+          const stateLabel = activity.state === "running" ? ba.running : activity.state === "done" ? ba.done : ba.failed;
+          const card = new ActivityCard(activity.label, `${stateLabel} · ${elapsed}`, activity.detail ?? "", this.expandedActivityIds.has(activity.id));
+          this.activityRows.set(lines.length + 1, activity.id);
+          lines.push(...card.render(width));
+        }
+      }
     }
     return lines;
   }
