@@ -51,7 +51,8 @@ test("the preview screen shows a pending plan's paths, MCP status, instructions 
   const items: MemoryPreviewItem[] = [{
     agentLabel: "Claude Code", kind: "pending",
     mcpPath: "/Users/tester/.claude.json", instructionsPaths: ["/Users/tester/.claude/CLAUDE.md"],
-    mcp: { kind: "write" }, instructions: { kind: "write" }, overallStatus: "complete",
+    hookPath: "/Users/tester/.claude/settings.json",
+    mcp: { kind: "write" }, instructions: { kind: "write" }, hook: { kind: "noop" }, overallStatus: "complete",
   }];
   const result = showMemoryPreviewConfirm(items, terminal);
   await tick();
@@ -68,12 +69,14 @@ test("a pending assistant's whole preview block stays compact enough not to push
     {
       agentLabel: "Claude Code", kind: "pending",
       mcpPath: "/Users/tester/.claude.json", instructionsPaths: ["/Users/tester/.claude/CLAUDE.md"],
-      mcp: { kind: "write" }, instructions: { kind: "write" }, overallStatus: "complete",
+      hookPath: "/Users/tester/.claude/settings.json",
+      mcp: { kind: "write" }, instructions: { kind: "write" }, hook: { kind: "noop" }, overallStatus: "complete",
     },
     {
       agentLabel: "Codex", kind: "pending",
       mcpPath: "/Users/tester/.codex/config.toml", instructionsPaths: ["/Users/tester/.codex/AGENTS.md"],
-      mcp: { kind: "write" }, instructions: { kind: "write" }, overallStatus: "complete",
+      hookPath: "/Users/tester/.codex/config.toml",
+      mcp: { kind: "write" }, instructions: { kind: "write" }, hook: { kind: "noop" }, overallStatus: "complete",
     },
   ];
   const result = showMemoryPreviewConfirm(items, terminal);
@@ -95,8 +98,10 @@ test("an unsupported instructions component explains why, and a blocked componen
     {
       agentLabel: "Cursor", kind: "pending",
       mcpPath: "/Users/tester/.cursor/mcp.json", instructionsPaths: [],
+      hookPath: "/Users/tester/.cursor/config.json",
       mcp: { kind: "write" },
       instructions: { kind: "unsupported", reason: "Cursor has no officially supported mechanism to auto-load global instructions." },
+      hook: { kind: "noop" },
       overallStatus: "partial",
     },
     { agentLabel: "Codex", kind: "blocked", detail: "A different MCP already uses this name." },
@@ -118,7 +123,7 @@ test("a resolved (already-configured) item shows its status without a paths line
   const terminal = new TestTerminal();
   const items: MemoryPreviewItem[] = [{
     agentLabel: "Claude Code", kind: "resolved",
-    mcp: { kind: "noop" }, instructions: { kind: "noop" }, overallStatus: "complete",
+    mcp: { kind: "noop" }, instructions: { kind: "noop" }, hook: { kind: "noop" }, overallStatus: "complete",
   }];
   const result = showMemoryPreviewConfirm(items, terminal);
   await tick();
@@ -133,7 +138,8 @@ test("cancelling the preview returns false", async () => {
   const items: MemoryPreviewItem[] = [{
     agentLabel: "Claude Code", kind: "pending",
     mcpPath: "/Users/tester/.claude.json", instructionsPaths: ["/Users/tester/.claude/CLAUDE.md"],
-    mcp: { kind: "write" }, instructions: { kind: "write" }, overallStatus: "complete",
+    hookPath: "/Users/tester/.claude/settings.json",
+    mcp: { kind: "write" }, instructions: { kind: "write" }, hook: { kind: "noop" }, overallStatus: "complete",
   }];
   const result = showMemoryPreviewConfirm(items, terminal);
   await tick();
@@ -143,10 +149,47 @@ test("cancelling the preview returns false", async () => {
 
 test("the preview always states that nothing has changed yet", async () => {
   const terminal = new TestTerminal();
-  const items: MemoryPreviewItem[] = [{ agentLabel: "Claude Code", kind: "resolved", mcp: { kind: "noop" }, instructions: { kind: "noop" }, overallStatus: "complete" }];
+  const items: MemoryPreviewItem[] = [{ agentLabel: "Claude Code", kind: "resolved", mcp: { kind: "noop" }, instructions: { kind: "noop" }, hook: { kind: "noop" }, overallStatus: "complete" }];
   const result = showMemoryPreviewConfirm(items, terminal);
   await tick();
   expect(terminal.output).toContain("Nothing has been changed yet");
   terminal.input("\r");
   await result;
+});
+
+test("the preview shows the memory-hook status on its own segment of the summary line", async () => {
+  const terminal = new TestTerminal();
+  const run = showMemoryPreviewConfirm([
+    {
+      agentLabel: "Claude Code", kind: "pending",
+      mcpPath: "/Users/tester/.claude.json", instructionsPaths: ["/Users/tester/.claude/CLAUDE.md"],
+      hookPath: "/Users/tester/.claude/settings.json",
+      mcp: { kind: "write" }, instructions: { kind: "noop" },
+      hook: { kind: "noop" },
+      overallStatus: "partial",
+    },
+  ], terminal);
+  await tick();
+  expect(terminal.output).toContain("hook:");
+  terminal.input("\r");
+  await run;
+});
+
+test("the preview never shows a hook write's afterContent or beforeHash — only its status", async () => {
+  const terminal = new TestTerminal();
+  const run = showMemoryPreviewConfirm([
+    {
+      agentLabel: "Codex", kind: "pending",
+      mcpPath: "/Users/tester/.codex/config.toml", instructionsPaths: ["/Users/tester/.codex/AGENTS.md"],
+      hookPath: "/Users/tester/.codex/config.toml",
+      mcp: { kind: "noop" }, instructions: { kind: "noop" },
+      hook: { kind: "write" },
+      overallStatus: "partial",
+    },
+  ], terminal);
+  await tick();
+  expect(terminal.output).not.toContain("afterContent");
+  expect(terminal.output).not.toContain("beforeHash");
+  terminal.input("\r");
+  await run;
 });

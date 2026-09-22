@@ -38,8 +38,10 @@ export type MemoryPreviewItem =
       readonly kind: "pending";
       readonly mcpPath: string;
       readonly instructionsPaths: string[];
+      readonly hookPath: string;
       readonly mcp: MemoryComponentStatus;
       readonly instructions: MemoryComponentStatus;
+      readonly hook: MemoryComponentStatus;
       readonly overallStatus: MemoryOverallStatus;
     }
   | {
@@ -47,6 +49,7 @@ export type MemoryPreviewItem =
       readonly kind: "resolved";
       readonly mcp: MemoryComponentStatus;
       readonly instructions: MemoryComponentStatus;
+      readonly hook: MemoryComponentStatus;
       readonly overallStatus: MemoryOverallStatus;
     }
   | { readonly agentLabel: string; readonly kind: "blocked"; readonly detail: string };
@@ -75,6 +78,15 @@ function instructionsStatusLabel(status: MemoryComponentStatus): string {
   }
 }
 
+function hookStatusLabel(status: MemoryComponentStatus): string {
+  switch (status.kind) {
+    case "write": return "will add";
+    case "noop": return "already installed";
+    case "blocked": return "blocked";
+    case "unsupported": return "not supported by this assistant";
+  }
+}
+
 /** Engines' own explanation for a status, when it has one. Always rendered on its own line. */
 function statusDetail(status: MemoryComponentStatus): string | undefined {
   if (status.kind === "blocked") return status.details;
@@ -90,17 +102,23 @@ function statusDetail(status: MemoryComponentStatus): string | undefined {
 function previewLine(item: MemoryPreviewItem): string {
   if (item.kind === "blocked") return `${item.agentLabel}: blocked — ${item.detail}`;
   const paths = item.kind === "pending"
-    ? [...(item.mcp.kind === "write" ? [item.mcpPath] : []), ...(item.instructions.kind === "write" ? item.instructionsPaths : [])]
+    ? [
+        ...(item.mcp.kind === "write" ? [item.mcpPath] : []),
+        ...(item.instructions.kind === "write" ? item.instructionsPaths : []),
+        ...(item.hook.kind === "write" ? [item.hookPath] : []),
+      ]
     : [];
   const lines = [
     `${item.agentLabel} — overall: ${item.overallStatus}`,
     `  paths to change: ${paths.length ? paths.join(", ") : "(none)"}`,
-    `  MCP forge614-engram: ${mcpStatusLabel(item.mcp)} · memory instructions: ${instructionsStatusLabel(item.instructions)}`,
+    `  MCP forge614-engram: ${mcpStatusLabel(item.mcp)} · memory instructions: ${instructionsStatusLabel(item.instructions)} · memory hook: ${hookStatusLabel(item.hook)}`,
   ];
   const mcpDetail = statusDetail(item.mcp);
   if (mcpDetail) lines.push(`    ${mcpDetail}`);
   const instructionsDetail = statusDetail(item.instructions);
   if (instructionsDetail) lines.push(`    ${instructionsDetail}`);
+  const hookDetail = statusDetail(item.hook);
+  if (hookDetail) lines.push(`    ${hookDetail}`);
   return lines.join("\n");
 }
 
