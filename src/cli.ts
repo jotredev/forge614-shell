@@ -6,94 +6,119 @@ import { createLaunch } from "./engines/pi/launcher.ts";
 import { parseEngine } from "./app/options.ts";
 import { discoverSelectableEngines } from "./infrastructure/forge614-engines.ts";
 import { startTerminalSpinner } from "./app/startup-spinner.ts";
+import { getCatalog, resolveConfiguredLocale } from "./i18n/index.ts";
+import { describeError } from "./shell-error.ts";
 
 const metadata = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
 };
 const args = process.argv.slice(2);
 
+// Non-interactive commands never open the language selector, but they do resolve an effective
+// locale for their own text: a valid FORGE614_SHELL_LOCALE, then a saved preference.json locale,
+// then English. No selector means no translation is a myth — only the prompt is skipped.
+const staticLocale = resolveConfiguredLocale({ env: process.env }) ?? "en";
+
 if (args.length === 1 && args[0] === "update") {
   try {
     const { runUpdateCommand } = await import("./app/update-command.ts");
-    await runUpdateCommand({ env: process.env });
+    await runUpdateCommand({ env: process.env, locale: staticLocale });
   } catch (error) {
-    console.error(`Forge614-Shell update failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(getCatalog(staticLocale).cli.updateFailed({ message: describeError(error, staticLocale) }));
     process.exitCode = 1;
   }
 } else if (args.length === 1 && args[0] === "uninstall") {
   try {
     const { uninstallInstalledShell } = await import("./infrastructure/updater.ts");
-    await uninstallInstalledShell();
+    await uninstallInstalledShell({ locale: staticLocale, env: process.env });
   } catch (error) {
-    console.error(`Forge614-Shell uninstall failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(getCatalog(staticLocale).cli.uninstallFailed({ message: describeError(error, staticLocale) }));
     process.exitCode = 1;
   }
 } else if (args[0] === "init") {
+  // Mutable: starts at the static (non-prompting) resolution, then becomes whatever the person
+  // just chose in the selector below. Every catch in this branch uses this variable, never
+  // `staticLocale` directly — otherwise a person who just picked Español would see a Shell-own
+  // error from `runInitCommand` printed in English.
+  let effectiveLocale = staticLocale;
   try {
-    const { runInitCommand } = await import("./app/init-engram.ts");
-    await runInitCommand(args.slice(1), { version: metadata.version, env: process.env });
+    const { requireEngramProduct, runInitCommand } = await import("./app/init-engram.ts");
+    requireEngramProduct(args.slice(1));
+    const { ProcessTerminal } = await import("@earendil-works/pi-tui");
+    // One real terminal shared across the language selector and the Engram flow: two independent
+    // `ProcessTerminal` instances each toggling raw mode and attaching/detaching their own stdin
+    // listener left the second alt-screen deaf to all input on a real PTY (confirmed with a live
+    // pty harness) — `chooseStartup` below avoids this the same way, by reusing one instance.
+    const terminal = new ProcessTerminal();
+    const { ensureLocale } = await import("./app/language-gate.ts");
+    const locale = await ensureLocale({ env: process.env, version: metadata.version, terminal });
+    if (locale === undefined) {
+      process.exitCode = 130;
+    } else {
+      effectiveLocale = locale;
+      await runInitCommand(args.slice(1), { version: metadata.version, env: process.env, locale, terminal });
+    }
   } catch (error) {
-    console.error(`Forge614-Shell init failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(getCatalog(effectiveLocale).cli.initFailed({ message: describeError(error, effectiveLocale) }));
+    process.exitCode = 1;
+  }
+} else if (args[0] === "language") {
+  try {
+    const { runLanguageCommand } = await import("./app/language-command.ts");
+    await runLanguageCommand(args.slice(1), { version: metadata.version, env: process.env });
+  } catch (error) {
+    console.error(getCatalog(staticLocale).cli.languageFailed({ message: describeError(error, staticLocale) }));
     process.exitCode = 1;
   }
 } else if (args.includes("--help") || args.includes("-h")) {
-  console.log(`Forge614-Shell ${metadata.version}
-
-Usage: forge614-shell [--engine claude|codex|pi]
-
-Every interactive startup asks for visual interface, then installed AI engine.
-Basic is available; Full — Coming later is disabled.
-Selections are not saved. Even a single available option waits for confirmation.
-The selected native CLI must already be installed. /login uses its official account flow.
-Shell does not store subscription credentials or manage billing.
-
-  --engine <name>      Legacy option; does not bypass interactive selectors
-  --engine pi          Legacy Pi automation in non-interactive mode only
-  --version, -v       Show the Shell version
-  update              Download and activate the latest stable release, and refresh Forge614 Engines (and Engram, if installed)
-  uninstall           Remove Forge614 Shell from this computer
-  init --product <name>  Set up a Forge614 product's local memory and, for engram, its memory integration (MCP + instructions)
-  --help, -h          Show this help
-
-Native chat: /login, /logout, /resume, /new, /model, /effort, /status, /stop, /quit
-/logout disconnects only the current Shell session; native accounts and other apps are unchanged.
-Claude sessions: managed by Claude Code, shared with its native history.
-Codex: native history, model catalog, reasoning and reported account limits.
-Login reuses existing accounts.
-Headless uses native permissions, with no interactive tool approvals.
-Pi profile only: ~/.forge614-shell/agent (FORGE614_SHELL_HOME override)
-Pass Pi-specific options after --engine pi.
-
-The selected engine's project settings and permissions apply. This is not a sandbox.`);
+  console.log(getCatalog(staticLocale).cli.help({ version: metadata.version }));
 } else if (args.includes("--version") || args.includes("-v")) {
   console.log(`forge614-shell ${metadata.version}`);
 } else {
+  let effectiveLocale = staticLocale;
   try {
-    const selected = parseEngine(args);
+    const selected = parseEngine(args, staticLocale);
     let selectedExecutable: string | undefined;
     const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
     // Only the legacy non-interactive Pi automation path bypasses the UI.
     if (interactive || selected.engine !== "pi") {
-      const stopSpinner = startTerminalSpinner("Detecting installed AI engines…");
-      let installed: Awaited<ReturnType<typeof discoverSelectableEngines>>;
-      try { installed = await discoverSelectableEngines({ env: process.env }); }
-      finally { stopSpinner(); }
       if (!interactive) {
-        throw new Error("Shell startup requires an interactive terminal to select the visual interface and AI engine.");
+        throw new Error(getCatalog(staticLocale).cli.requiresInteractiveStartup);
       }
-      const { chooseStartup } = await import("./ui/startup/visual-picker.ts");
-      const choice = await chooseStartup(installed, undefined, metadata.version);
-      selected.engine = choice?.id;
-      selectedExecutable = choice?.executable;
+      // Language first, before any other visible text or work: the spinner and engine detection
+      // below must never run (and the person must never see anything) until a locale is settled.
+      // Cancelling the language selector cancels this whole startup — no detection, no picker.
+      const { ProcessTerminal } = await import("@earendil-works/pi-tui");
+      // Shared with `chooseStartup` below for the same reason as the `init` dispatch above: two
+      // independent `ProcessTerminal` instances chained back to back left the second alt-screen
+      // deaf to input on a real PTY.
+      const terminal = new ProcessTerminal();
+      const { ensureLocale } = await import("./app/language-gate.ts");
+      const locale = await ensureLocale({ env: process.env, version: metadata.version, terminal });
+      if (locale === undefined) {
+        process.exitCode = 130;
+        selected.engine = undefined;
+      } else {
+        effectiveLocale = locale;
+        const t = getCatalog(locale);
+        const stopSpinner = startTerminalSpinner(t.spinner.detectingEngines);
+        let installed: Awaited<ReturnType<typeof discoverSelectableEngines>>;
+        try { installed = await discoverSelectableEngines({ env: process.env }); }
+        finally { stopSpinner(); }
+        const { chooseStartup } = await import("./ui/startup/visual-picker.ts");
+        const choice = await chooseStartup(installed, terminal, metadata.version, locale);
+        selected.engine = choice?.id;
+        selectedExecutable = choice?.executable;
+      }
     }
     if (selected.engine === "claude") {
       const { startClaudeUI } = await import("./ui/basic/claude.ts");
-      await startClaudeUI(selected.args, selectedExecutable, undefined, metadata.version);
+      await startClaudeUI(selected.args, selectedExecutable, undefined, metadata.version, effectiveLocale);
     } else if (selected.engine === "codex") {
       const executable = selectedExecutable;
-      if (!executable) throw new Error(`${selected.engine} is not installed on PATH.`);
+      if (!executable) throw new Error(getCatalog(effectiveLocale).cli.engineNotOnPath({ engine: selected.engine }));
       const { startNativeUI } = await import("./app/native-chat.ts");
-      await startNativeUI(selected.engine, executable, selected.args, metadata.version);
+      await startNativeUI(selected.engine, executable, selected.args, metadata.version, effectiveLocale);
     } else if (selected.engine === "pi") {
     const piModule = import.meta.resolve("@earendil-works/pi-coding-agent");
     const piRoot = new URL("../", piModule);
@@ -118,7 +143,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     await import(pathToFileURL(launch.args[0]!).href);
     }
   } catch (error) {
-    console.error(`Forge614-Shell could not start: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(getCatalog(effectiveLocale).cli.couldNotStart({ message: describeError(error, effectiveLocale) }));
     process.exitCode = 1;
   }
 }

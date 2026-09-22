@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 export type EngineId = "claude" | "codex";
 export interface EnginePreference {
@@ -8,9 +9,25 @@ export interface EnginePreference {
   effort?: string;
 }
 
+/** The only locale values Shell's i18n layer currently ships a catalog for. */
+export type Locale = "es" | "en";
+const SUPPORTED_LOCALES: readonly Locale[] = ["es", "en"];
+const CURRENT_FORMAT = 1;
+
 interface PreferenceOptions {
   home?: string;
   env?: NodeJS.ProcessEnv;
+}
+
+interface PreferencesFile {
+  format?: unknown;
+  locale?: unknown;
+  claude?: EnginePreference;
+  codex?: EnginePreference;
+}
+
+function isSupportedLocale(value: unknown): value is Locale {
+  return typeof value === "string" && (SUPPORTED_LOCALES as readonly string[]).includes(value);
 }
 
 /**
@@ -25,13 +42,31 @@ function preferencesPath(options: PreferenceOptions = {}): string {
   return join(forgeHome, "shell", "preferences.json");
 }
 
-function readAll(options: PreferenceOptions = {}): Partial<Record<EngineId, EnginePreference>> {
+function readAll(options: PreferenceOptions = {}): PreferencesFile {
   try {
     const raw = JSON.parse(readFileSync(preferencesPath(options), "utf8"));
     if (!raw || typeof raw !== "object") return {};
-    return raw as Partial<Record<EngineId, EnginePreference>>;
+    return raw as PreferencesFile;
   } catch {
     return {};
+  }
+}
+
+/**
+ * Writes JSON to `path` atomically: a temp file in the same directory, then a rename over the
+ * target. A crash or concurrent read can never observe a partially-written file this way. Returns
+ * `false` instead of throwing — persistence here is always secondary to Shell staying usable.
+ */
+function writeAtomic(path: string, data: unknown): boolean {
+  try {
+    const dir = join(path, "..");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const tmpPath = join(dir, `.preferences.${randomUUID()}.tmp`);
+    writeFileSync(tmpPath, JSON.stringify(data, null, 2));
+    renameSync(tmpPath, path);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -45,14 +80,34 @@ export function loadEnginePreference(engine: EngineId, options: PreferenceOption
 }
 
 export function saveEnginePreference(engine: EngineId, preference: EnginePreference, options: PreferenceOptions = {}): void {
-  try {
-    const path = preferencesPath(options);
-    const all = readAll(options);
-    all[engine] = { ...(preference.model ? { model: preference.model } : {}), ...(preference.effort ? { effort: preference.effort } : {}) };
-    const dir = join(path, "..");
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(path, JSON.stringify(all, null, 2));
-  } catch {
-    // Best-effort only — a failed write just means the next session starts from scratch.
-  }
+  const path = preferencesPath(options);
+  const all = readAll(options);
+  all[engine] = { ...(preference.model ? { model: preference.model } : {}), ...(preference.effort ? { effort: preference.effort } : {}) };
+  // Best-effort only — a failed write just means the next session starts from scratch.
+  writeAtomic(path, all);
+}
+
+/**
+ * Shell's own persistent language choice, read from the same file as the model/reasoning
+ * preferences. Never throws: a missing file, corrupt JSON, an unrecognized `format`, or an
+ * unsupported `locale` value are all treated identically as "no preference" rather than an error.
+ */
+export function loadLocale(options: PreferenceOptions = {}): Locale | undefined {
+  const all = readAll(options);
+  if (all.format !== undefined && all.format !== CURRENT_FORMAT) return undefined;
+  return isSupportedLocale(all.locale) ? all.locale : undefined;
+}
+
+/**
+ * Persists the chosen locale, preserving any existing Claude/Codex preferences already in the
+ * file. Returns whether the write actually succeeded — unlike `saveEnginePreference`, a caller
+ * here (the language selector, the `language` command) is expected to warn the person when it
+ * returns `false`, rather than silently continuing as if it were saved.
+ */
+export function saveLocale(locale: Locale, options: PreferenceOptions = {}): boolean {
+  if (!isSupportedLocale(locale)) return false;
+  const path = preferencesPath(options);
+  const all = readAll(options);
+  const next: PreferencesFile = { ...all, format: CURRENT_FORMAT, locale };
+  return writeAtomic(path, next);
 }
