@@ -1,6 +1,6 @@
 {
   "product": "forge614-shell",
-  "reviewedVersion": "1.9.0",
+  "reviewedVersion": "1.10.0",
   "notionHub": "https://app.notion.com/p/3de21943d129818b9cd6ca4ab12c44ad?pvs=204",
   "pages": [
     {"localPath":"docs/es/00-instalacion-y-prueba-local-release.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d12981f4ba25c60272f1ca73?pvs=204","fingerprint":"0fa422d846c66290ddde63b57e149af13335b211787f40dfcf4a238ef531dd7d"},
