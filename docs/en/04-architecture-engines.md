@@ -17,6 +17,10 @@ At interactive startup Shell runs `~/.forge614/engines/bin/forge614-engines dete
 
 Claude Code uses its official subscription flow and Codex uses `app-server` with ChatGPT sign-in. Both retain credentials managed by their native client. `/login` reuses the existing account or opens the official flow; `/logout` clears only Shell-session state.
 
+## Launch mechanisms
+
+Shell has two chat adapters for interactive conversation: Claude Code (which uses Anthropic's official SDK) and Codex (which uses JSON-RPC over `app-server`). For memory-hook verification and other scenarios where a native client's own startup behavior must run unmodified, Shell also uses a third, minimal mechanism: `native-handoff.ts`. This is not a chat adapter — it has no protocol at all. It simply hands the entire terminal to the real `claude` or `codex` binary via `stdio: "inherit"` and waits for it to exit. This exists solely so a native client's startup behavior (hooks, trust prompts) runs exactly as it would if the person had typed the command themselves. Shell reads no output from the hand-off and provides no chat interface during it.
+
 ## Pi, Cursor, and removed engines
 
 `--engine pi` is a legacy non-interactive automation path. Cursor is not Shell chat, although Engines can report it for MCP. Gemini and Antigravity no longer have Shell directories, processes, authentication, or picker entries.
