@@ -273,6 +273,7 @@ test("planMemoryInstall sends only --agent and reads the full plan", async () =>
             metadata: {
               mcp: { path: "/Users/tester/.claude.json", status: { kind: "write" } },
               instructions: { paths: ["/Users/tester/.claude/CLAUDE.md"], status: { kind: "write" } },
+              hook: { path: "/Users/tester/.claude/settings.json", status: { kind: "write" }, runtimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } },
               overallStatus: "complete",
             },
           },
@@ -290,6 +291,7 @@ test("planMemoryInstall sends only --agent and reads the full plan", async () =>
     noop: false,
     mcp: { path: "/Users/tester/.claude.json", status: { kind: "write" } },
     instructions: { paths: ["/Users/tester/.claude/CLAUDE.md"], status: { kind: "write" } },
+    hook: { path: "/Users/tester/.claude/settings.json", status: { kind: "write" }, runtimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } },
     overallStatus: "complete",
   });
 });
@@ -307,6 +309,7 @@ test("planMemoryInstall never exposes afterContent or beforeHash", async () => {
           metadata: {
             mcp: { path: "/p", status: { kind: "write" } },
             instructions: { paths: ["/q"], status: { kind: "write" } },
+            hook: { path: "/r", status: { kind: "write" }, runtimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } },
             overallStatus: "complete",
           },
         },
@@ -334,6 +337,7 @@ test("planMemoryInstall reports partial for an assistant whose instructions are 
               paths: [],
               status: { kind: "unsupported", reason: "Cursor has no officially supported, stable, file-based mechanism to auto-load global instructions." },
             },
+            hook: { path: "", status: { kind: "unsupported", reason: "Cursor has no officially supported, stable session-start hook mechanism this installer configures" }, runtimeStatus: { kind: "unsupported" } },
             overallStatus: "partial",
           },
         },
@@ -363,6 +367,7 @@ test("planMemoryInstall surfaces a blocked component's conflict details", async 
               status: { kind: "blocked", reason: "mcp-conflict", details: 'An existing "forge614-engram" MCP entry with different content is already present at /Users/tester/.claude.json' },
             },
             instructions: { paths: ["/Users/tester/.claude/CLAUDE.md"], status: { kind: "noop" } },
+            hook: { path: "/Users/tester/.claude/settings.json", status: { kind: "noop" }, runtimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } },
             overallStatus: "partial",
           },
         },
@@ -391,6 +396,199 @@ test("planMemoryInstall rejects a malformed plan instead of guessing its shape",
   })).rejects.toThrow("forge614-engines returned an invalid plan.");
 });
 
+test("planMemoryInstall parses the hook component and its runtime status", async () => {
+  const plan = await planMemoryInstall({
+    agentId: "codex", home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        plan: {
+          planId: "plan-1", agentId: "codex", action: "memory-install", noop: false,
+          writes: [{ path: "/Users/tester/.codex/config.toml", beforeHash: "x", afterContent: "SECRET" }],
+          metadata: {
+            mcp: { path: "/Users/tester/.codex/config.toml", status: { kind: "noop" } },
+            instructions: { paths: ["/Users/tester/.codex/AGENTS.md"], status: { kind: "noop" } },
+            hook: { path: "/Users/tester/.codex/config.toml", status: { kind: "write" }, runtimeStatus: { kind: "needs-user-trust" } },
+            overallStatus: "partial",
+          },
+        },
+      }),
+      stderr: "",
+    }),
+  });
+  expect(plan.hook).toEqual({
+    path: "/Users/tester/.codex/config.toml",
+    status: { kind: "write" },
+    runtimeStatus: { kind: "needs-user-trust" },
+  });
+});
+
+test("planMemoryInstall parses a pending-runtime-verification reason", async () => {
+  const plan = await planMemoryInstall({
+    agentId: "claude-code", home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        plan: {
+          planId: "plan-1", agentId: "claude-code", action: "memory-install", noop: false, writes: [],
+          metadata: {
+            mcp: { path: "/Users/tester/.claude.json", status: { kind: "noop" } },
+            instructions: { paths: ["/Users/tester/.claude/CLAUDE.md"], status: { kind: "noop" } },
+            hook: { path: "/Users/tester/.claude/settings.json", status: { kind: "write" }, runtimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } },
+            overallStatus: "partial",
+          },
+        },
+      }),
+      stderr: "",
+    }),
+  });
+  expect(plan.hook.runtimeStatus).toEqual({ kind: "pending-runtime-verification", reason: "no-evidence" });
+});
+
+test("planMemoryInstall parses the evidence-expired reason distinctly from no-evidence", async () => {
+  const plan = await planMemoryInstall({
+    agentId: "claude-code", home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        plan: {
+          planId: "plan-1", agentId: "claude-code", action: "memory-install", noop: true, writes: [],
+          metadata: {
+            mcp: { path: "/Users/tester/.claude.json", status: { kind: "noop" } },
+            instructions: { paths: ["/Users/tester/.claude/CLAUDE.md"], status: { kind: "noop" } },
+            hook: { path: "/Users/tester/.claude/settings.json", status: { kind: "noop" }, runtimeStatus: { kind: "pending-runtime-verification", reason: "evidence-expired" } },
+            overallStatus: "partial",
+          },
+        },
+      }),
+      stderr: "",
+    }),
+  });
+  expect(plan.hook.runtimeStatus).toEqual({ kind: "pending-runtime-verification", reason: "evidence-expired" });
+});
+
+test("planMemoryInstall rejects a pending-runtime-verification status with an unrecognized reason", async () => {
+  await expect(planMemoryInstall({
+    agentId: "claude-code", home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        plan: {
+          planId: "plan-1", agentId: "claude-code", action: "memory-install", noop: false, writes: [],
+          metadata: {
+            mcp: { path: "/x", status: { kind: "noop" } },
+            instructions: { paths: [], status: { kind: "noop" } },
+            hook: { path: "/y", status: { kind: "write" }, runtimeStatus: { kind: "pending-runtime-verification", reason: "made-up-reason" } },
+            overallStatus: "partial",
+          },
+        },
+      }),
+      stderr: "",
+    }),
+  })).rejects.toThrow("forge614-engines returned an invalid plan.");
+});
+
+test("planMemoryInstall never hardcodes an Engines version check — it detects the contract purely by the hook field's presence", async () => {
+  const source = await (await import("node:fs/promises")).readFile(new URL("./forge614-engines.ts", import.meta.url), "utf8");
+  expect(source).not.toMatch(/1\.9\.0|1\.10\.0/);
+});
+
+test("planMemoryInstall tells the user to update Engines when the hook component is entirely missing (Engines predates the memory-hook contract)", async () => {
+  await expect(planMemoryInstall({
+    agentId: "claude-code", home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        plan: {
+          planId: "plan-1", agentId: "claude-code", action: "memory-install", noop: false, writes: [],
+          metadata: {
+            mcp: { path: "/Users/tester/.claude.json", status: { kind: "noop" } },
+            instructions: { paths: ["/Users/tester/.claude/CLAUDE.md"], status: { kind: "noop" } },
+            overallStatus: "complete",
+          },
+        },
+      }),
+      stderr: "",
+    }),
+  })).rejects.toThrow('Forge614 Engines needs to be updated. Run "forge614-shell update", then try again.');
+});
+
+test("verifyMemoryIntegration parses the hook component including dryRunOk and runtime-observed", async () => {
+  const verification = await verifyMemoryIntegration({
+    agentId: "claude-code", home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        verification: {
+          agentId: "claude-code",
+          mcp: { path: "/Users/tester/.claude.json", present: true },
+          instructions: { supported: true, paths: ["/Users/tester/.claude/CLAUDE.md"], present: true },
+          hook: { supported: true, path: "/Users/tester/.claude/settings.json", present: true, dryRunOk: true, runtimeStatus: { kind: "runtime-observed" } },
+          overallStatus: "complete",
+        },
+      }),
+      stderr: "",
+    }),
+  });
+  expect(verification.hook).toEqual({
+    supported: true, path: "/Users/tester/.claude/settings.json", present: true, dryRunOk: true,
+    runtimeStatus: { kind: "runtime-observed" },
+  });
+});
+
+test("verifyMemoryIntegration parses evidence-expired the same way it parses no-evidence (both are pending-runtime-verification with different reasons)", async () => {
+  const verification = await verifyMemoryIntegration({
+    agentId: "claude-code", home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        verification: {
+          agentId: "claude-code",
+          mcp: { path: "/Users/tester/.claude.json", present: true },
+          instructions: { supported: true, paths: ["/Users/tester/.claude/CLAUDE.md"], present: true },
+          hook: { supported: true, path: "/Users/tester/.claude/settings.json", present: true, dryRunOk: true, runtimeStatus: { kind: "pending-runtime-verification", reason: "evidence-expired" } },
+          overallStatus: "partial",
+        },
+      }),
+      stderr: "",
+    }),
+  });
+  expect(verification.hook.runtimeStatus).toEqual({ kind: "pending-runtime-verification", reason: "evidence-expired" });
+});
+
+test("verifyMemoryIntegration tells the user to update Engines when the hook component is entirely missing", async () => {
+  await expect(verifyMemoryIntegration({
+    agentId: "claude-code", home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        verification: {
+          agentId: "claude-code",
+          mcp: { path: "/Users/tester/.claude.json", present: true },
+          instructions: { supported: true, paths: ["/Users/tester/.claude/CLAUDE.md"], present: true },
+          overallStatus: "complete",
+        },
+      }),
+      stderr: "",
+    }),
+  })).rejects.toThrow('Forge614 Engines needs to be updated. Run "forge614-shell update", then try again.');
+});
+
+test("verifyMemoryIntegration still rejects a genuinely malformed result as invalid, not as an outdated-Engines hint", async () => {
+  await expect(verifyMemoryIntegration({
+    agentId: "claude-code", home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, verification: { agentId: "claude-code" } }), stderr: "" }),
+  })).rejects.toThrow("forge614-engines returned an invalid verification result.");
+});
+
 test("verifyMemoryIntegration sends only --agent and reads the verification", async () => {
   const calls: string[][] = [];
   const verification = await verifyMemoryIntegration({
@@ -405,6 +603,7 @@ test("verifyMemoryIntegration sends only --agent and reads the verification", as
             agentId: "claude-code",
             mcp: { path: "/Users/tester/.claude.json", present: true },
             instructions: { supported: true, paths: ["/Users/tester/.claude/CLAUDE.md"], present: true },
+            hook: { supported: true, path: "/Users/tester/.claude/settings.json", present: true, dryRunOk: true, runtimeStatus: { kind: "runtime-observed" } },
             overallStatus: "complete",
           },
         }),
@@ -419,6 +618,7 @@ test("verifyMemoryIntegration sends only --agent and reads the verification", as
     agentId: "claude-code",
     mcp: { path: "/Users/tester/.claude.json", present: true },
     instructions: { supported: true, paths: ["/Users/tester/.claude/CLAUDE.md"], present: true },
+    hook: { supported: true, path: "/Users/tester/.claude/settings.json", present: true, dryRunOk: true, runtimeStatus: { kind: "runtime-observed" } },
     overallStatus: "complete",
   });
 });
@@ -434,6 +634,7 @@ test("verifyMemoryIntegration reports complete for Cursor once its MCP is presen
           agentId: "cursor",
           mcp: { path: "/Users/tester/.cursor/mcp.json", present: true },
           instructions: { supported: false, paths: [], present: false },
+          hook: { supported: false, path: "", present: false, dryRunOk: false, runtimeStatus: { kind: "unsupported" } },
           overallStatus: "complete",
         },
       }),
@@ -457,6 +658,7 @@ test("verifyMemoryIntegration reports absent when nothing was ever installed", a
           agentId: "claude-code",
           mcp: { path: "/Users/tester/.claude.json", present: false },
           instructions: { supported: true, paths: ["/Users/tester/.claude/CLAUDE.md"], present: false },
+          hook: { supported: true, path: "/Users/tester/.claude/settings.json", present: false, dryRunOk: false, runtimeStatus: { kind: "absent" } },
           overallStatus: "absent",
         },
       }),

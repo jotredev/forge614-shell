@@ -270,12 +270,24 @@ export type MemoryComponentStatus =
 
 export type MemoryOverallStatus = "complete" | "partial" | "unsupported";
 
+export type HookRuntimeReason =
+  | "no-evidence" | "evidence-expired" | "evidence-corrupt"
+  | "evidence-wrong-agent" | "evidence-fingerprint-mismatch" | "evidence-context-not-received";
+
+export type HookRuntimeStatus =
+  | { readonly kind: "pending-runtime-verification"; readonly reason: HookRuntimeReason }
+  | { readonly kind: "needs-user-trust" }
+  | { readonly kind: "runtime-observed" }
+  | { readonly kind: "unsupported" }
+  | { readonly kind: "absent" };
+
 export interface MemoryInstallPlan {
   readonly planId: string;
   readonly agentId: string;
   readonly noop: boolean;
   readonly mcp: { readonly path: string; readonly status: MemoryComponentStatus };
   readonly instructions: { readonly paths: string[]; readonly status: MemoryComponentStatus };
+  readonly hook: { readonly path: string; readonly status: MemoryComponentStatus; readonly runtimeStatus: HookRuntimeStatus };
   readonly overallStatus: MemoryOverallStatus;
 }
 
@@ -283,6 +295,7 @@ export interface MemoryVerification {
   readonly agentId: string;
   readonly mcp: { readonly path: string; readonly present: boolean };
   readonly instructions: { readonly supported: boolean; readonly paths: string[]; readonly present: boolean };
+  readonly hook: { readonly supported: boolean; readonly path: string; readonly present: boolean; readonly dryRunOk: boolean; readonly runtimeStatus: HookRuntimeStatus };
   readonly overallStatus: "complete" | "partial" | "absent";
 }
 
@@ -294,6 +307,7 @@ interface MemoryPlanPayload {
     metadata?: {
       mcp?: { path?: unknown; status?: unknown };
       instructions?: { paths?: unknown; status?: unknown };
+      hook?: { path?: unknown; status?: unknown; runtimeStatus?: unknown };
       overallStatus?: unknown;
     };
   };
@@ -304,6 +318,7 @@ interface MemoryVerifyPayload {
     agentId?: unknown;
     mcp?: { path?: unknown; present?: unknown };
     instructions?: { supported?: unknown; paths?: unknown; present?: unknown };
+    hook?: { supported?: unknown; path?: unknown; present?: unknown; dryRunOk?: unknown; runtimeStatus?: unknown };
     overallStatus?: unknown;
   };
 }
@@ -311,6 +326,29 @@ interface MemoryVerifyPayload {
 const MEMORY_COMPONENT_KINDS = new Set(["unsupported", "noop", "write", "blocked"]);
 const MEMORY_OVERALL_STATUSES = new Set(["complete", "partial", "unsupported"]);
 const VERIFY_OVERALL_STATUSES = new Set(["complete", "partial", "absent"]);
+
+const HOOK_RUNTIME_KINDS = new Set(["pending-runtime-verification", "needs-user-trust", "runtime-observed", "unsupported", "absent"]);
+const PENDING_RUNTIME_REASONS = new Set([
+  "no-evidence", "evidence-expired", "evidence-corrupt", "evidence-wrong-agent", "evidence-fingerprint-mismatch", "evidence-context-not-received",
+]);
+
+// Compatibility with Engines is detected structurally (does a `hook` field exist at all?), never by
+// comparing a version string — Engines' own release number is not this file's business.
+const OUTDATED_ENGINES_MESSAGE = 'Forge614 Engines needs to be updated. Run "forge614-shell update", then try again.';
+
+function toHookRuntimeStatus(value: unknown): HookRuntimeStatus {
+  if (!value || typeof value !== "object" || typeof (value as { kind?: unknown }).kind !== "string" || !HOOK_RUNTIME_KINDS.has((value as { kind: string }).kind)) {
+    throw new Error("forge614-engines returned an invalid plan.");
+  }
+  const status = value as { kind: string; reason?: unknown };
+  if (status.kind === "pending-runtime-verification") {
+    if (typeof status.reason !== "string" || !PENDING_RUNTIME_REASONS.has(status.reason)) {
+      throw new Error("forge614-engines returned an invalid plan.");
+    }
+    return { kind: "pending-runtime-verification", reason: status.reason as HookRuntimeReason };
+  }
+  return { kind: status.kind as "needs-user-trust" | "runtime-observed" | "unsupported" | "absent" };
+}
 
 function toMemoryComponentStatus(value: unknown): MemoryComponentStatus {
   if (!value || typeof value !== "object" || typeof (value as { kind?: unknown }).kind !== "string" || !MEMORY_COMPONENT_KINDS.has((value as { kind: string }).kind)) {
@@ -333,12 +371,18 @@ function toMemoryInstallPlan(payload: unknown): MemoryInstallPlan {
   if (!plan || typeof plan.planId !== "string" || !plan.planId || typeof plan.agentId !== "string" || typeof plan.noop !== "boolean" || !plan.metadata) {
     throw new Error("forge614-engines returned an invalid plan.");
   }
-  const { mcp, instructions, overallStatus } = plan.metadata;
+  const { mcp, instructions, hook, overallStatus } = plan.metadata;
   if (
     !mcp || typeof mcp.path !== "string" ||
     !instructions || !Array.isArray(instructions.paths) || !instructions.paths.every((p): p is string => typeof p === "string") ||
     typeof overallStatus !== "string" || !MEMORY_OVERALL_STATUSES.has(overallStatus)
   ) {
+    throw new Error("forge614-engines returned an invalid plan.");
+  }
+  if (hook === undefined) {
+    throw new Error(OUTDATED_ENGINES_MESSAGE);
+  }
+  if (typeof hook.path !== "string") {
     throw new Error("forge614-engines returned an invalid plan.");
   }
   return {
@@ -347,6 +391,7 @@ function toMemoryInstallPlan(payload: unknown): MemoryInstallPlan {
     noop: plan.noop,
     mcp: { path: mcp.path, status: toMemoryComponentStatus(mcp.status) },
     instructions: { paths: instructions.paths, status: toMemoryComponentStatus(instructions.status) },
+    hook: { path: hook.path, status: toMemoryComponentStatus(hook.status), runtimeStatus: toHookRuntimeStatus(hook.runtimeStatus) },
     overallStatus: overallStatus as MemoryOverallStatus,
   };
 }
@@ -378,10 +423,21 @@ function toMemoryVerification(payload: unknown): MemoryVerification {
   ) {
     throw new Error("forge614-engines returned an invalid verification result.");
   }
+  if (verification.hook === undefined) {
+    throw new Error(OUTDATED_ENGINES_MESSAGE);
+  }
+  const hook = verification.hook;
+  if (
+    typeof hook.supported !== "boolean" || typeof hook.path !== "string" ||
+    typeof hook.present !== "boolean" || typeof hook.dryRunOk !== "boolean"
+  ) {
+    throw new Error("forge614-engines returned an invalid verification result.");
+  }
   return {
     agentId: verification.agentId,
     mcp: { path: verification.mcp.path, present: verification.mcp.present },
     instructions: { supported: verification.instructions.supported, paths: verification.instructions.paths, present: verification.instructions.present },
+    hook: { supported: hook.supported, path: hook.path, present: hook.present, dryRunOk: hook.dryRunOk, runtimeStatus: toHookRuntimeStatus(hook.runtimeStatus) },
     overallStatus: verification.overallStatus as MemoryVerification["overallStatus"],
   };
 }
