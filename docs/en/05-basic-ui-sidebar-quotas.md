@@ -72,3 +72,7 @@ Like keeping consumption instruments beside the fuel gauge, the sidebar groups u
 The latest-response tokens (`Last turn`, input and output) and estimated amount sit under `PLAN USAGE`, before `RESOURCES`; they are no longer mixed with Shell or engine RAM. The amount is labeled `Est. API cost` and always includes `Reference only, not billed`: it is a reference estimate, not a charge billed by Shell.
 
 Compact counts use `1M`, not `1000k`, and retain one decimal only when it adds information: `1.5k`, `43k`, `1M`, and `1.5M`. The context ring and filled portions of usage bars share an alert scale: normal below 85%, amber from 85%, and red from 100%. Color therefore conveys proximity to the limit, rather than merely a visual preference.
+
+## Background activity
+
+When the active engine reports background work (Claude Code subagents, backgrounded processes), the sidebar shows one row per activity with its state (running, done, failed) and elapsed time; clicking it expands to show the result if the engine delivered it. The status bar adds a counter with an animated dot while activity is running. If the engine does not report this distinctly, the sidebar says so explicitly instead of silently showing an empty list — see `docs/superpowers/specs/2026-09-22-background-activity-indicator-design.md`.

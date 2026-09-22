@@ -72,3 +72,7 @@ Como agrupar los instrumentos de consumo junto al medidor de combustible, el sid
 Los tokens de la última respuesta (`Last turn`, entrada y salida) y el importe estimado quedan debajo de `PLAN USAGE`, antes de `RESOURCES`; ya no se mezclan con la RAM de Shell o del motor. El importe se rotula `Est. API cost` y siempre añade `Reference only, not billed`: es una referencia estimada, no un cargo facturado por Shell.
 
 Los conteos compactos usan `1M`, no `1000k`, y conservan una decimal solo cuando aporta información: `1.5k`, `43k`, `1M` y `1.5M`. El anillo de contexto y las porciones llenas de las barras de uso comparten una escala de alerta: color normal por debajo de 85 %, ámbar desde 85 % y rojo desde 100 %. Así el color expresa cercanía al límite, no solo una preferencia estética.
+
+## Actividad en segundo plano
+
+Cuando el motor activo reporta trabajo en segundo plano (subagentes de Claude Code, procesos backgroundeados), el panel lateral muestra una fila por actividad con su estado (corriendo, hecho, fallido) y el tiempo transcurrido; un clic la expande para ver el resultado si el motor lo entregó. La barra de estado añade un contador con el punto animado mientras haya actividad corriendo. Si el motor no reporta esto de forma distinguible, el panel lo dice explícitamente en vez de mostrar una lista vacía silenciosa — ver `docs/superpowers/specs/2026-09-22-background-activity-indicator-design.md`.
