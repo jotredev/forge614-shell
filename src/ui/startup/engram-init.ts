@@ -1,8 +1,7 @@
-import { ProcessTerminal, SelectList, Text, matchesKey } from "@earendil-works/pi-tui";
-import type { Terminal } from "@earendil-works/pi-tui";
+import { SelectList, Text, matchesKey } from "@earendil-works/pi-tui";
 import type { EngramInitDecisions } from "../../contracts/engram-init.ts";
 import { MaskedInput } from "./masked-input.ts";
-import { startupFrame } from "./frame.ts";
+import type { EngramFlowScreen } from "./frame.ts";
 import { accent } from "../basic/theme.ts";
 
 export type EngramInitFlowResult =
@@ -12,7 +11,7 @@ export type EngramInitFlowResult =
 const plain = (text: string) => text;
 const listTheme = { selectedPrefix: accent, selectedText: accent, description: plain, scrollInfo: plain, noMatch: plain };
 
-async function showIntro(terminal: Terminal): Promise<boolean> {
+async function showIntro(screen: EngramFlowScreen): Promise<boolean> {
   const body = new Text([
     "Forge614 Engram stores persistent memory locally on this device.",
     "",
@@ -21,96 +20,95 @@ async function showIntro(terminal: Terminal): Promise<boolean> {
     "This flow does not detect or configure AI clients.",
   ].join("\n"));
   const list = new SelectList([{ value: "continue", label: "Continue" }], 1, listTheme);
-  const tui = startupFrame(terminal, "Forge614 Engram — memory initialization", list, undefined, body);
+  screen.setScreen("Forge614 Engram — memory initialization", list, { body });
   let finish!: (value: boolean) => void;
   const selection = new Promise<boolean>(resolve => { finish = resolve; });
   list.onSelect = () => finish(true);
   list.onCancel = () => finish(false);
-  tui.addInputListener(data => {
+  const unsubscribe = screen.tui.addInputListener(data => {
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { finish(false); return { consume: true }; }
     return undefined;
   });
   const terminate = () => finish(false);
   process.once("SIGTERM", terminate);
-  try { tui.start(); return await selection; }
-  finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
+  try { return await selection; }
+  finally { process.removeListener("SIGTERM", terminate); unsubscribe(); }
 }
 
 const CONNECTION_PROMPT = "Enter the PostgreSQL connection string. It is never shown or logged.";
 
-async function askPostgresConnectionString(terminal: Terminal): Promise<string | undefined> {
+async function askPostgresConnectionString(screen: EngramFlowScreen): Promise<string | undefined> {
   const input = new MaskedInput({ placeholder: "postgres://user:password@host:5432/database" });
   const body = new Text(CONNECTION_PROMPT);
-  const tui = startupFrame(terminal, "PostgreSQL connection string", input, undefined, body);
+  screen.setScreen("PostgreSQL connection string", input, { body });
   let finish!: (value: string | undefined) => void;
   const submission = new Promise<string | undefined>(resolve => { finish = resolve; });
   input.onSubmit = value => {
     // An empty submission re-asks on the same screen; only Esc/Ctrl+C cancels the flow.
     if (!value.trim()) {
       body.setText(`${CONNECTION_PROMPT}\n\nA connection string is required. Press Esc to cancel instead.`);
-      tui.requestRender();
+      screen.tui.requestRender();
       return;
     }
     finish(value.trim());
   };
   input.onEscape = () => finish(undefined);
-  tui.addInputListener(data => {
+  const unsubscribe = screen.tui.addInputListener(data => {
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { finish(undefined); return { consume: true }; }
     return undefined;
   });
   const terminate = () => finish(undefined);
   process.once("SIGTERM", terminate);
-  try { tui.start(); return await submission; }
-  finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
+  try { return await submission; }
+  finally { process.removeListener("SIGTERM", terminate); unsubscribe(); }
 }
 
-async function askPostgres(terminal: Terminal): Promise<{ enabled: boolean; connectionString: string | null } | undefined> {
+async function askPostgres(screen: EngramFlowScreen): Promise<{ enabled: boolean; connectionString: string | null } | undefined> {
   const list = new SelectList([
     { value: "no", label: "No" },
     { value: "yes", label: "Yes, configure PostgreSQL synchronization" },
   ], 2, listTheme);
-  const tui = startupFrame(terminal, "PostgreSQL synchronization", list);
+  screen.setScreen("PostgreSQL synchronization", list);
   let finish!: (value: "no" | "yes" | undefined) => void;
   const selection = new Promise<"no" | "yes" | undefined>(resolve => { finish = resolve; });
   list.onSelect = item => finish(item.value as "no" | "yes");
   list.onCancel = () => finish(undefined);
-  tui.addInputListener(data => {
+  const unsubscribe = screen.tui.addInputListener(data => {
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { finish(undefined); return { consume: true }; }
     return undefined;
   });
   const terminate = () => finish(undefined);
   process.once("SIGTERM", terminate);
   let choice: "no" | "yes" | undefined;
-  try { tui.start(); choice = await selection; }
-  finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
+  try { choice = await selection; }
+  finally { process.removeListener("SIGTERM", terminate); unsubscribe(); }
   if (!choice) return undefined;
   if (choice === "no") return { enabled: false, connectionString: null };
-  const connectionString = await askPostgresConnectionString(terminal);
+  const connectionString = await askPostgresConnectionString(screen);
   return connectionString === undefined ? undefined : { enabled: true, connectionString };
 }
 
-async function askReinforcement(terminal: Terminal): Promise<boolean | undefined> {
+async function askReinforcement(screen: EngramFlowScreen): Promise<boolean | undefined> {
   const list = new SelectList([
     { value: "yes", label: "Yes" },
     { value: "no", label: "No" },
   ], 2, listTheme);
   const body = new Text("Reinforcement makes repeated memories rank higher in search results. It does not verify whether a memory is true.");
-  const tui = startupFrame(terminal, "Memory reinforcement", list, undefined, body);
+  screen.setScreen("Memory reinforcement", list, { body });
   let finish!: (value: "yes" | "no" | undefined) => void;
   const selection = new Promise<"yes" | "no" | undefined>(resolve => { finish = resolve; });
   list.onSelect = item => finish(item.value as "yes" | "no");
   list.onCancel = () => finish(undefined);
-  tui.addInputListener(data => {
+  const unsubscribe = screen.tui.addInputListener(data => {
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { finish(undefined); return { consume: true }; }
     return undefined;
   });
   const terminate = () => finish(undefined);
   process.once("SIGTERM", terminate);
   try {
-    tui.start();
     const choice = await selection;
     return choice === undefined ? undefined : choice === "yes";
-  } finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
+  } finally { process.removeListener("SIGTERM", terminate); unsubscribe(); }
 }
 
 function summaryText(decisions: EngramInitDecisions): string {
@@ -132,34 +130,34 @@ function summaryText(decisions: EngramInitDecisions): string {
   ].join("\n");
 }
 
-async function showSummary(terminal: Terminal, decisions: EngramInitDecisions): Promise<boolean> {
+async function showSummary(screen: EngramFlowScreen, decisions: EngramInitDecisions): Promise<boolean> {
   const body = new Text(summaryText(decisions));
   const list = new SelectList([
     { value: "confirm", label: "Confirm" },
     { value: "cancel", label: "Cancel" },
   ], 2, listTheme);
-  const tui = startupFrame(terminal, "Summary", list, undefined, body);
+  screen.setScreen("Summary", list, { body });
   let finish!: (value: boolean) => void;
   const selection = new Promise<boolean>(resolve => { finish = resolve; });
   list.onSelect = item => finish(item.value === "confirm");
   list.onCancel = () => finish(false);
-  tui.addInputListener(data => {
+  const unsubscribe = screen.tui.addInputListener(data => {
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { finish(false); return { consume: true }; }
     return undefined;
   });
   const terminate = () => finish(false);
   process.once("SIGTERM", terminate);
-  try { tui.start(); return await selection; }
-  finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
+  try { return await selection; }
+  finally { process.removeListener("SIGTERM", terminate); unsubscribe(); }
 }
 
-/** Drives the Engram memory-initialization screens end to end. Makes no Engram command calls. */
-export async function runEngramInitFlow(terminal: Terminal = new ProcessTerminal()): Promise<EngramInitFlowResult> {
-  if (!await showIntro(terminal)) return { confirmed: false };
-  const postgres = await askPostgres(terminal);
+/** Drives the Engram memory-initialization screens end to end, on the shared continuous alt-screen. Makes no Engram command calls. */
+export async function runEngramInitFlow(screen: EngramFlowScreen): Promise<EngramInitFlowResult> {
+  if (!await showIntro(screen)) return { confirmed: false };
+  const postgres = await askPostgres(screen);
   if (!postgres) return { confirmed: false };
-  const reinforcement = await askReinforcement(terminal);
+  const reinforcement = await askReinforcement(screen);
   if (reinforcement === undefined) return { confirmed: false };
   const decisions: EngramInitDecisions = { postgresUrl: postgres.enabled ? postgres.connectionString : null, reinforcement };
-  return (await showSummary(terminal, decisions)) ? { confirmed: true, decisions } : { confirmed: false };
+  return (await showSummary(screen, decisions)) ? { confirmed: true, decisions } : { confirmed: false };
 }

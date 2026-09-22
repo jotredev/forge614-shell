@@ -1,5 +1,74 @@
-import { expect, spyOn, test } from "bun:test";
-import { requireEngramProduct } from "./init-engram.ts";
+import { expect, test } from "bun:test";
+import { requireEngramProduct, classifyMemoryOutcome } from "./init-engram.ts";
+import type { MemoryInstallPlan, MemoryVerification } from "../infrastructure/forge614-engines.ts";
+
+const baseVerification = (overrides: Partial<MemoryVerification> = {}): MemoryVerification => ({
+  agentId: "claude-code",
+  mcp: { path: "/mcp.json", present: true },
+  instructions: { supported: true, paths: ["/CLAUDE.md"], present: true },
+  hook: { supported: true, path: "/hook.json", present: true, dryRunOk: true, runtimeStatus: { kind: "runtime-observed" } },
+  overallStatus: "complete",
+  ...overrides,
+});
+
+test("classifyMemoryOutcome: fully verified and runtime-observed is configured", () => {
+  const outcome = classifyMemoryOutcome("Claude Code", undefined, baseVerification());
+  expect(outcome.status).toBe("configured");
+});
+
+test("classifyMemoryOutcome: structurally complete but hook evidence still pending is prepared, with no rerun language", () => {
+  const outcome = classifyMemoryOutcome("Codex", undefined, baseVerification({ hook: { supported: true, path: "/h", present: true, dryRunOk: true, runtimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } } }));
+  expect(outcome.status).toBe("prepared");
+  expect(outcome.detail).not.toMatch(/run this command again/i);
+});
+
+test("classifyMemoryOutcome: needs-user-trust is prepared, phrased as a future possibility, never as a fact about what happened", () => {
+  const outcome = classifyMemoryOutcome("Codex", undefined, baseVerification({ hook: { supported: true, path: "/h", present: true, dryRunOk: true, runtimeStatus: { kind: "needs-user-trust" } } }));
+  expect(outcome.status).toBe("prepared");
+  expect(outcome.detail).not.toMatch(/has not trusted/i);
+  expect(outcome.detail).toMatch(/may ask you/i);
+});
+
+test("classifyMemoryOutcome: an assistant with no instructions mechanism is unsupported, not partial", () => {
+  const outcome = classifyMemoryOutcome("Cursor", undefined, baseVerification({ instructions: { supported: false, paths: [], present: false }, overallStatus: "complete" }));
+  expect(outcome.status).toBe("unsupported");
+});
+
+test("classifyMemoryOutcome: a real plan-time conflict on a component still absent after apply is blocked, with Engines' own detail", () => {
+  const plan = {
+    planId: "p1", agentId: "claude-code", noop: false,
+    mcp: { path: "/mcp.json", status: { kind: "blocked", reason: "CONFLICT", details: "an unrelated MCP server already uses this name" } },
+    instructions: { paths: ["/CLAUDE.md"], status: { kind: "write" } },
+    hook: { path: "/h", status: { kind: "write" }, runtimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } },
+    overallStatus: "partial",
+  } as unknown as MemoryInstallPlan;
+  const outcome = classifyMemoryOutcome("Claude Code", plan, baseVerification({ mcp: { path: "/mcp.json", present: false }, overallStatus: "partial" }));
+  expect(outcome.status).toBe("blocked");
+  expect(outcome.detail).toContain("an unrelated MCP server already uses this name");
+});
+
+test("classifyMemoryOutcome: a blocked hook is reported blocked even when MCP and instructions are already present", () => {
+  const plan = {
+    planId: "p1", agentId: "claude-code", noop: true,
+    mcp: { path: "/mcp.json", status: { kind: "noop" } },
+    instructions: { paths: ["/CLAUDE.md"], status: { kind: "noop" } },
+    hook: { path: "/h", status: { kind: "blocked", reason: "hook-conflict", details: "an existing SessionStart hook with different content is already present" }, runtimeStatus: { kind: "absent" } },
+    overallStatus: "partial",
+  } as unknown as MemoryInstallPlan;
+  const outcome = classifyMemoryOutcome("Claude Code", plan, baseVerification({
+    mcp: { path: "/mcp.json", present: true },
+    instructions: { supported: true, paths: ["/CLAUDE.md"], present: true },
+    hook: { supported: true, path: "/h", present: false, dryRunOk: false, runtimeStatus: { kind: "absent" } },
+    overallStatus: "partial",
+  }));
+  expect(outcome.status).toBe("blocked");
+  expect(outcome.detail).toContain("an existing SessionStart hook with different content is already present");
+});
+
+test("classifyMemoryOutcome: verification absent with no plan-time explanation is failed, not blocked", () => {
+  const outcome = classifyMemoryOutcome("Claude Code", undefined, baseVerification({ mcp: { path: "/mcp.json", present: false }, instructions: { supported: true, paths: [], present: false }, overallStatus: "absent" }));
+  expect(outcome.status).toBe("failed");
+});
 
 test("requires --product with a value", () => {
   expect(() => requireEngramProduct([])).toThrow("--product <name>");
@@ -29,7 +98,9 @@ import { readFile } from "node:fs/promises";
 import { runInitCommand } from "./init-engram.ts";
 
 class TestTerminal implements Terminal {
-  columns = 100; rows = 30; kittyProtocolActive = false;
+  // Wide enough that none of the flow's long result sentences word-wrap: these tests assert on
+  // exact outcome text, not on the Text component's line-wrapping behavior (covered elsewhere).
+  columns = 400; rows = 30; kittyProtocolActive = false;
   input: (data: string) => void = () => {}; output = "";
   start(input: (data: string) => void) { this.input = input; }
   stop() {}
@@ -166,16 +237,45 @@ test("a failure that echoes the connection string never leaks it to the error or
   expect(terminal.output).not.toContain("sup3rsecret");
 });
 
+test("runInitCommand resolves both Engram and Engines binaries under a custom FORGE614_HOME (the real CLI entrypoint now forwards process.env), and never leaks it to the result screen", async () => {
+  const terminal = new TestTerminal();
+  const engramCalls: string[][] = [];
+  const enginesCalls: string[][] = [];
+  const run = runInitCommand(["--product", "engram"], {
+    terminal,
+    env: { FORGE614_HOME: "/private/custom-forge-home" } as NodeJS.ProcessEnv,
+    run: async (command, args) => { engramCalls.push([command, ...args]); return { status: 0, stdout: "{}", stderr: "" }; },
+    enginesRun: async (command, args) => {
+      enginesCalls.push([command, ...args]);
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([])), stderr: "" };
+      return { status: 0, stdout: "{}", stderr: "" };
+    },
+  });
+  await driveEngramScreens(terminal);
+  await run;
+  expect(engramCalls[0]?.[0]).toBe("/private/custom-forge-home/engram/bin/forge614-engram");
+  expect(enginesCalls[0]?.[0]).toBe("/private/custom-forge-home/engines/bin/forge614-engines");
+  expect(terminal.output).not.toContain("/private/custom-forge-home");
+  expect(terminal.output).not.toContain("FORGE614_HOME");
+});
+
+test("runInitCommand falls back to the standard ~/.forge614 path when no FORGE614_HOME is set", async () => {
+  const terminal = new TestTerminal();
+  const engramCalls: string[][] = [];
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async (command, args) => { engramCalls.push([command, ...args]); return { status: 0, stdout: "{}", stderr: "" }; },
+    enginesRun: async () => ({ status: 0, stdout: JSON.stringify(detectPayload([])), stderr: "" }),
+  });
+  await driveEngramScreens(terminal);
+  await run;
+  expect(engramCalls[0]?.[0]).toBe("/Users/tester/.forge614/engram/bin/forge614-engram");
+});
+
 test("the init command never imports Shell's normal chat startup modules", async () => {
   const source = await readFile(new URL("./init-engram.ts", import.meta.url), "utf8");
   expect(source).not.toMatch(/native-chat|visual-picker|engine-picker/);
 });
-
-function captureLogs(): { logs: string[]; restore: () => void } {
-  const logs: string[] = [];
-  const spy = spyOn(console, "log").mockImplementation((...args: unknown[]) => { logs.push(args.map(String).join(" ")); });
-  return { logs, restore: () => spy.mockRestore() };
-}
 
 function detectPayload(agents: { id: string; label: string; executable: string }[]) {
   return { schemaVersion: 1, agents: agents.map(a => ({ ...a, installed: true })) };
@@ -262,7 +362,6 @@ async function driveEngramScreens(terminal: TestTerminal): Promise<void> {
 test("selecting no assistants initializes Engram without configuring any memory integration", async () => {
   const terminal = new TestTerminal();
   const enginesCalls: string[][] = [];
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -274,17 +373,16 @@ test("selecting no assistants initializes Engram without configuring any memory 
   });
   await driveEngramScreens(terminal);
   terminal.input("\r"); // memory picker: submit with nothing checked
-  try { await run; } finally { restore(); }
+  await run;
   expect(enginesCalls).toEqual([
     ["/Users/tester/.forge614/engines/bin/forge614-engines", "detect"],
     ["/Users/tester/.forge614/engines/bin/forge614-engines", "capabilities", "--agent", "claude-code"],
   ]);
-  expect(logs).toContain("No assistant was selected. No memory integration was configured.");
+  expect(terminal.output).toContain("No assistant was selected. No memory integration was configured.");
 });
 
 test("Claude Code and Codex both plan, apply, and verify to a complete memory integration", async () => {
   const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
   const enginesCalls: string[][] = [];
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
@@ -311,17 +409,16 @@ test("Claude Code and Codex both plan, apply, and verify to a complete memory in
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\x1b[B"); terminal.input(" "); terminal.input("\r"); await tick(); // check both, submit
   terminal.input("\r"); // preview: Confirm
-  try { await run; } finally { restore(); }
+  await run;
   expect(enginesCalls.filter(c => c[2] === "memory-install").map(c => agentIdFrom(c)).sort()).toEqual(["claude-code", "codex"]);
   expect(enginesCalls.filter(c => c[2] === "memory-integration").map(c => agentIdFrom(c)).sort()).toEqual(["claude-code", "codex"]);
-  expect(logs).toContain("Claude Code: configured — MCP and memory instructions available");
-  expect(logs).toContain("Codex: configured — MCP and memory instructions available");
-  expect(logs).toContain("Close and reopen each configured assistant's session so it loads the new MCP server and memory instructions.");
+  expect(terminal.output).toContain("Claude Code: configured — MCP server and memory instructions are installed and active");
+  expect(terminal.output).toContain("Codex: configured — MCP server and memory instructions are installed and active");
+  expect(terminal.output).toContain("Close and reopen each configured assistant's session so it loads the new MCP server and memory instructions.");
 });
 
 test("Cursor's memory integration is reported partial, never as fully complete", async () => {
   const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -348,15 +445,14 @@ test("Cursor's memory integration is reported partial, never as fully complete",
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\r"); await tick(); // check Cursor, submit
   terminal.input("\r"); // preview: Confirm
-  try { await run; } finally { restore(); }
-  expect(logs).toContain("Cursor: partially configured — this assistant has no official mechanism to auto-load global instructions");
-  expect(logs.some(line => line.startsWith("Cursor: configured"))).toBe(false);
+  await run;
+  expect(terminal.output).toContain("Cursor: partially configured — Cursor has no built-in way to automatically load memory instructions yet; the MCP server and memory search still work.");
+  expect(terminal.output).not.toContain("Cursor: configured");
 });
 
 test("a conflict on every component makes no apply call and reports the conflict", async () => {
   const terminal = new TestTerminal();
   const enginesCalls: string[][] = [];
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -389,15 +485,14 @@ test("a conflict on every component makes no apply call and reports the conflict
   // last screen: no preview/confirm screen appears (there is nothing pending to apply), so no
   // further terminal input is sent here.
   terminal.input(" "); terminal.input("\r"); // check Claude Code, submit
-  try { await run; } finally { restore(); }
+  await run;
   expect(enginesCalls.some(c => c[0] === "apply" || c.includes("apply"))).toBe(false);
-  expect(logs).toContain("Claude Code: not configured — Forge614 Engines could not confirm any memory integration for this assistant.");
+  expect(terminal.output).toContain(`Claude Code: blocked — An existing "forge614-engram" MCP entry with different content is already present.`);
 });
 
 test("cancelling the memory preview makes zero writes", async () => {
   const terminal = new TestTerminal();
   const enginesCalls: string[][] = [];
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -411,15 +506,14 @@ test("cancelling the memory preview makes zero writes", async () => {
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
   terminal.input("\x1b[B"); terminal.input("\r"); // preview: move to Cancel, submit
-  try { await run; } finally { restore(); }
+  await run;
   expect(enginesCalls.some(c => c.includes("apply"))).toBe(false);
-  expect(logs).toContain("Claude Code: skipped");
+  expect(terminal.output).toContain("Claude Code: skipped");
 });
 
 test("a plan-level Engines failure for one assistant is reported without failing the already-successful Engram init", async () => {
   const terminal = new TestTerminal();
   const enginesCalls: string[][] = [];
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -432,17 +526,16 @@ test("a plan-level Engines failure for one assistant is reported without failing
   });
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\r"); // check Claude Code, submit (no preview: nothing was planned)
-  try { await run; } finally { restore(); }
+  await run;
   expect(enginesCalls.some(c => c.includes("apply"))).toBe(false);
-  expect(logs).toContain("Forge614 Engram memory initialization is complete.");
-  expect(logs).toContain("Claude Code: not configured — Could not reach forge614-engram to read its memory protocol.");
+  expect(terminal.output).toContain("Forge614 Engram memory initialization is complete.");
+  expect(terminal.output).toContain("Claude Code: could not be configured — Could not reach forge614-engram to read its memory protocol.");
   expect(process.exitCode as number | undefined).not.toBe(1);
 });
 
 test("an apply that reports applied: false is shown as not configured, without calling verify", async () => {
   const terminal = new TestTerminal();
   const enginesCalls: string[][] = [];
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -457,14 +550,13 @@ test("an apply that reports applied: false is shown as not configured, without c
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
   terminal.input("\r"); // preview: Confirm
-  try { await run; } finally { restore(); }
+  await run;
   expect(enginesCalls.some(c => c.includes("memory-integration"))).toBe(false);
-  expect(logs).toContain("Claude Code: not configured — Forge614 Engines reported the change was not applied.");
+  expect(terminal.output).toContain("Claude Code: could not be configured — Forge614 Engines reported the change was not applied.");
 });
 
 test("verify reporting absent after a successful apply is communicated, never as success", async () => {
   const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -479,13 +571,12 @@ test("verify reporting absent after a successful apply is communicated, never as
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
   terminal.input("\r"); // preview: Confirm
-  try { await run; } finally { restore(); }
-  expect(logs).toContain("Claude Code: not configured — Forge614 Engines could not confirm any memory integration for this assistant.");
+  await run;
+  expect(terminal.output).toContain("Claude Code: could not be configured — Forge614 Engines could not confirm any memory integration for Claude Code.");
 });
 
 test("verify reporting partial after a successful apply explains exactly what is missing", async () => {
   const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -500,13 +591,12 @@ test("verify reporting partial after a successful apply explains exactly what is
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
   terminal.input("\r"); // preview: Confirm
-  try { await run; } finally { restore(); }
-  expect(logs).toContain("Claude Code: partially configured — the memory instructions are not installed");
+  await run;
+  expect(terminal.output).toContain("Claude Code: could not be configured — Forge614 Engines could not confirm full memory integration for Claude Code.");
 });
 
 test("two selected assistants report independently when one apply fails", async () => {
   const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -534,31 +624,14 @@ test("two selected assistants report independently when one apply fails", async 
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\x1b[B"); terminal.input(" "); terminal.input("\r"); await tick(); // check both, submit
   terminal.input("\r"); // preview: Confirm
-  try { await run; } finally { restore(); }
-  expect(logs).toContain("Claude Code: configured — MCP and memory instructions available");
-  expect(logs).toContain("Codex: not configured — File changed since the plan was computed: /Users/tester/.codex/config.toml");
+  await run;
+  expect(terminal.output).toContain("Claude Code: configured — MCP server and memory instructions are installed and active");
+  expect(terminal.output).toContain("Codex: could not be configured — File changed since the plan was computed: /Users/tester/.codex/config.toml");
 });
-
-// pi-tui defers a screen's first paint to a `setTimeout`/`process.nextTick` callback outside any
-// promise chain, so throwing from `write()` on matching text can never be caught by a `try/catch`
-// around `runMemorySetupStep` (confirmed: it surfaces as an unrelated, uncatchable async exception).
-// `start()` is called synchronously inside `chooseMemoryAgents`'s own `tui.start()` call instead, so
-// throwing there on the picker's turn reproduces a memory-setup UI failure that the fix can catch.
-// The Engram flow renders exactly four screens (intro, PostgreSQL, reinforcement, summary) before
-// the memory picker starts its own TUI, so the fifth `start()` call is the picker's.
-class ThrowingMemoryScreenTerminal extends TestTerminal {
-  private starts = 0;
-  start(input: (data: string) => void) {
-    this.starts += 1;
-    if (this.starts === 5) throw new Error("terminal write failed");
-    super.start(input);
-  }
-}
 
 test("an assistant whose plan is already complete and needs no writes is reported configured, with no restart hint", async () => {
   const terminal = new TestTerminal();
   const enginesCalls: string[][] = [];
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -584,17 +657,16 @@ test("an assistant whose plan is already complete and needs no writes is reporte
   await driveEngramScreens(terminal);
   // Nothing is pending, so the picker's submit is the last screen: no preview/confirm appears.
   terminal.input(" "); terminal.input("\r"); // check Claude Code, submit
-  try { await run; } finally { restore(); }
+  await run;
   expect(enginesCalls.some(c => c.includes("apply"))).toBe(false);
   expect(enginesCalls.some(c => c.includes("memory-integration"))).toBe(true);
-  expect(logs).toContain("Claude Code: configured — MCP and memory instructions available");
+  expect(terminal.output).toContain("Claude Code: configured — MCP server and memory instructions are installed and active");
   // Nothing was written this run, so there is nothing for the assistant to reload.
-  expect(logs.some(line => line.startsWith("Close and reopen"))).toBe(false);
+  expect(terminal.output).not.toContain("Close and reopen");
 });
 
 test("a plan that claims complete while the instructions are unsupported is still never reported as fully configured", async () => {
   const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -627,15 +699,14 @@ test("a plan that claims complete while the instructions are unsupported is stil
   });
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\r"); // check Cursor, submit
-  try { await run; } finally { restore(); }
-  expect(logs).toContain("Cursor: partially configured — this assistant has no official mechanism to auto-load global instructions");
-  expect(logs.some(line => line.startsWith("Cursor: configured"))).toBe(false);
+  await run;
+  expect(terminal.output).toContain("Cursor: partially configured — Cursor has no built-in way to automatically load memory instructions yet; the MCP server and memory search still work.");
+  expect(terminal.output).not.toContain("Cursor: configured");
 });
 
 test("a PostgreSQL connection string never reaches the screen or the log through the whole memory-integration flow", async () => {
   const terminal = new TestTerminal();
   const postgresUrl = "postgres://user:sup3rsecret@host:5432/db";
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -656,18 +727,24 @@ test("a PostgreSQL connection string never reaches the screen or the log through
   terminal.input("\r"); await tick(); // Engram summary: Confirm
   terminal.input(" "); terminal.input("\r"); await tick(); // memory picker: check Claude Code, submit
   terminal.input("\r"); // preview: Confirm
-  try { await run; } finally { restore(); }
+  await run;
   // The whole run really reached the end of the memory flow, not just the Engram summary.
-  expect(logs).toContain("Claude Code: configured — MCP and memory instructions available");
+  expect(terminal.output).toContain("Claude Code: configured — MCP server and memory instructions are installed and active");
   expect(terminal.output).not.toContain(postgresUrl);
   expect(terminal.output).not.toContain("sup3rsecret");
-  expect(logs.join("\n")).not.toContain(postgresUrl);
-  expect(logs.join("\n")).not.toContain("sup3rsecret");
+  expect(terminal.output).not.toContain(postgresUrl);
+  expect(terminal.output).not.toContain("sup3rsecret");
 });
 
-test("an exception during the memory picker screen never fails an already-successful Engram init", async () => {
-  const terminal = new ThrowingMemoryScreenTerminal();
-  const { logs, restore } = captureLogs();
+// The old fault-injection technique here (a `TestTerminal` subclass throwing on its 5th `start()`
+// call) was keyed to the pre-refactor design where every screen opened its own `TuiAltScreen`; a
+// `bun:test` `mock.module()` replacement was also tried and rejected because it leaked into every
+// later test in this file (`mock.restore()` does not undo it for already-imported modules). The
+// injectable `chooseMemoryAgents` option on `RunInitOptions` (see init-engram.ts) is the local,
+// non-leaking seam used instead: it lets exactly one test's `runInitCommand` call use a throwing
+// picker without touching the module registry or any other test.
+test("a genuine picker-layer exception never fails an already-successful Engram init, and is reported honestly", async () => {
+  const terminal = new TestTerminal();
   process.exitCode = 0;
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
@@ -676,42 +753,18 @@ test("an exception during the memory picker screen never fails an already-succes
       if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
       return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
     },
+    chooseMemoryAgents: async () => { throw new Error("simulated picker UI failure"); },
   });
   await driveEngramScreens(terminal);
-  try { await run; } finally { restore(); }
+  await run;
   expect(process.exitCode as number | undefined).not.toBe(1);
-  expect(logs.some(line => line.includes("Memory setup could not be completed"))).toBe(true);
+  expect(terminal.output).toContain("Forge614 Engram memory initialization is complete.");
+  expect(terminal.output).toContain("Memory setup could not be completed: simulated picker UI failure");
   process.exitCode = 0; // reset so this test's exit code doesn't leak into the overall `bun test` process exit status
 });
 
-test("a freshly-configured Claude Code starts pending-runtime-verification and is never shown as complete before evidence exists", async () => {
+test("a freshly-configured Claude Code with no runtime hook evidence yet is reported ready, never blocked or failed, with exactly one verify call and no relaunch", async () => {
   const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
-  const run = runInitCommand(["--product", "engram"], {
-    terminal, home: "/Users/tester",
-    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
-    enginesRun: async (_command, args) => {
-      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
-      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
-      if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("claude-code", { hookStatus: { kind: "write" }, hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } })), stderr: "" };
-      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-claude-code")), stderr: "" };
-      // verify is called twice: once right after apply, once after the hand-off. Both times nothing
-      // was ever really observed on this fake machine, so both report the same pending state.
-      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } })), stderr: "" };
-    },
-    launch: async () => {}, // fake hand-off: the client "opened and closed" instantly
-  });
-  await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
-  terminal.input("\r"); // preview: Confirm
-  try { await run; } finally { restore(); }
-  expect(logs).toContain("Claude Code: configured; pending verification — the MCP server and memory instructions are already configured and untouched — only the runtime check needs to run again; open this assistant once more so Forge614 Engines can confirm it");
-  expect(logs.some(line => line.startsWith("Claude Code: configured —"))).toBe(false);
-});
-
-test("Claude Code is reported fully configured once the hand-off's re-verify observes the runtime evidence", async () => {
-  const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
   let verifyCalls = 0;
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
@@ -722,24 +775,44 @@ test("Claude Code is reported fully configured once the hand-off's re-verify obs
       if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("claude-code", { hookStatus: { kind: "write" }, hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } })), stderr: "" };
       if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-claude-code")), stderr: "" };
       verifyCalls += 1;
-      // First verify (right after apply): still pending. Second verify (after the hand-off): observed.
-      const runtimeStatus = verifyCalls === 1 ? { kind: "pending-runtime-verification", reason: "no-evidence" } : { kind: "runtime-observed" };
-      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: runtimeStatus })), stderr: "" };
+      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } })), stderr: "" };
     },
-    launch: async () => {},
   });
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
   terminal.input("\r"); // preview: Confirm
-  try { await run; } finally { restore(); }
-  expect(verifyCalls).toBe(2);
-  expect(logs).toContain("Claude Code: configured — MCP and memory instructions available");
+  await run;
+  expect(verifyCalls).toBe(1);
+  expect(terminal.output).toContain("Claude Code: ready — Claude Code memory integration is ready. It finishes confirming itself the next time you use Claude Code normally.");
+  expect(terminal.output).not.toContain("Claude Code: configured —");
+  expect(terminal.output).not.toMatch(/Claude Code:\s*(blocked|could not be configured)/i);
 });
 
-test("Codex reporting needs-user-trust is launched automatically, with no extra confirmation prompt, and Shell never attempts to approve the hook itself", async () => {
+test("Claude Code is reported fully configured when verify already observes the runtime evidence, with no second verify call", async () => {
   const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
-  const launches: { executable: string }[] = [];
+  let verifyCalls = 0;
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("claude-code", { hookStatus: { kind: "write" }, hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } })), stderr: "" };
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-claude-code")), stderr: "" };
+      verifyCalls += 1;
+      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: { kind: "runtime-observed" } })), stderr: "" };
+    },
+  });
+  await driveEngramScreens(terminal);
+  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
+  terminal.input("\r"); // preview: Confirm
+  await run;
+  expect(verifyCalls).toBe(1);
+  expect(terminal.output).toContain("Claude Code: configured — MCP server and memory instructions are installed and active");
+});
+
+test("Codex reporting needs-user-trust is never launched, is verified exactly once, and is reported ready with an honest note about a possible approval prompt", async () => {
+  const terminal = new TestTerminal();
   let verifyCalls = 0;
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
@@ -750,47 +823,20 @@ test("Codex reporting needs-user-trust is launched automatically, with no extra 
       if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("codex", { hookStatus: { kind: "write" }, hookRuntimeStatus: { kind: "needs-user-trust" } })), stderr: "" };
       if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-codex")), stderr: "" };
       verifyCalls += 1;
-      const runtimeStatus = verifyCalls === 1 ? { kind: "needs-user-trust" } : { kind: "runtime-observed" };
-      return { status: 0, stdout: JSON.stringify(verifyPayload("codex", { hookRuntimeStatus: runtimeStatus })), stderr: "" };
+      return { status: 0, stdout: JSON.stringify(verifyPayload("codex", { hookRuntimeStatus: { kind: "needs-user-trust" } })), stderr: "" };
     },
-    launch: async executable => { launches.push({ executable }); },
   });
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\r"); await tick(); // check Codex, submit
   terminal.input("\r"); // preview: Confirm — this is the ONLY confirmation in the whole run
-  try { await run; } finally { restore(); }
-  expect(launches).toEqual([{ executable: "/usr/local/bin/codex" }]);
-  expect(logs.some(line => line.includes("trust its new memory hook"))).toBe(true);
-  expect(logs).toContain("Codex: configured — MCP and memory instructions available");
+  await run;
+  expect(verifyCalls).toBe(1);
+  expect(terminal.output).toContain("Codex: ready — Codex memory integration is ready. When you next start Codex normally, Codex may ask you once to approve the Forge614 memory hook.");
+  expect(terminal.output.includes("has not trusted")).toBe(false);
 });
 
-test("Codex still needing trust after the hand-off is reported as pending, never as success or a hard error", async () => {
+test("evidence-expired for an already-fully-configured Claude Code is reported ready, never as lost memory or a failure, with exactly one verify call", async () => {
   const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
-  const run = runInitCommand(["--product", "engram"], {
-    terminal, home: "/Users/tester",
-    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
-    enginesRun: async (_command, args) => {
-      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "codex", label: "Codex", executable: "/usr/local/bin/codex" }])), stderr: "" };
-      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("codex")), stderr: "" };
-      if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("codex", { hookStatus: { kind: "write" }, hookRuntimeStatus: { kind: "needs-user-trust" } })), stderr: "" };
-      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-codex")), stderr: "" };
-      // The user closed Codex without running /hooks: it is still untrusted both times.
-      return { status: 0, stdout: JSON.stringify(verifyPayload("codex", { hookRuntimeStatus: { kind: "needs-user-trust" } })), stderr: "" };
-    },
-    launch: async () => {},
-  });
-  await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); await tick(); // check Codex, submit
-  terminal.input("\r"); // preview: Confirm
-  try { await run; } finally { restore(); }
-  expect(logs).toContain("Codex: configured; pending verification — Codex has not trusted the memory hook yet — approve it inside Codex, then run this command again");
-});
-
-test("evidence-expired for an already-fully-configured Claude Code is reported as a stale check, never as lost memory or a failed install, and triggers exactly one renewal hand-off", async () => {
-  const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
-  const launches: { executable: string }[] = [];
   let verifyCalls = 0;
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
@@ -814,63 +860,21 @@ test("evidence-expired for an already-fully-configured Claude Code is reported a
         };
       }
       verifyCalls += 1;
-      // First verify (before any hand-off): still expired. Second verify (after the renewal
-      // hand-off): a fresh session ran, so Engines now reports runtime-observed.
-      const runtimeStatus = verifyCalls === 1
-        ? { kind: "pending-runtime-verification", reason: "evidence-expired" }
-        : { kind: "runtime-observed" };
-      const overallStatus = verifyCalls === 1 ? "partial" : "complete";
-      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: runtimeStatus, overallStatus })), stderr: "" };
-    },
-    launch: async executable => { launches.push({ executable }); },
-  });
-  await driveEngramScreens(terminal);
-  // Nothing is pending (plan.noop is true), so no preview/confirm screen appears — the picker's
-  // submit is the last screen before the unified verify(+relaunch) path runs on its own.
-  terminal.input(" "); terminal.input("\r");
-  try { await run; } finally { restore(); }
-  expect(verifyCalls).toBe(2);
-  expect(launches).toEqual([{ executable: "/usr/local/bin/claude" }]);
-  const allText = logs.join("\n");
-  expect(allText).not.toMatch(/lost|failed|not configured/i);
-  expect(logs).toContain("Claude Code: configured — MCP and memory instructions available");
-});
-
-test("evidence-expired that produces no fresh evidence after the hand-off stays honestly pending, with a clear cause, never a false success", async () => {
-  const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
-  const run = runInitCommand(["--product", "engram"], {
-    terminal, home: "/Users/tester",
-    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
-    enginesRun: async (_command, args) => {
-      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
-      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
-      if (args[0] === "plan") {
-        return {
-          status: 0,
-          stdout: JSON.stringify(planPayload("claude-code", {
-            noop: true,
-            mcpStatus: { kind: "noop" }, instructionsStatus: { kind: "noop" },
-            hookStatus: { kind: "noop" }, hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "evidence-expired" },
-            overallStatus: "partial",
-          })),
-          stderr: "",
-        };
-      }
-      // The user closed the client immediately; the check stays expired both times.
       return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "evidence-expired" }, overallStatus: "partial" })), stderr: "" };
     },
-    launch: async () => {},
   });
   await driveEngramScreens(terminal);
+  // Nothing is pending (plan.noop is true), so no preview/confirm screen appears.
   terminal.input(" "); terminal.input("\r");
-  try { await run; } finally { restore(); }
-  expect(logs).toContain("Claude Code: configured; pending verification — the MCP server and memory instructions are already configured and untouched — only the runtime check needs to run again; open this assistant once more so Forge614 Engines can confirm it");
+  await run;
+  expect(verifyCalls).toBe(1);
+  const allText = terminal.output;
+  expect(allText).not.toMatch(/lost|failed|could not be configured/i);
+  expect(terminal.output).toContain("Claude Code: ready — Claude Code memory integration is ready. It finishes confirming itself the next time you use Claude Code normally.");
 });
 
-test("Codex's expired evidence is never reported or worded as a lack of trust — needs-user-trust stays its own distinct case", async () => {
+test("Codex's expired evidence is never reported or worded as a lack of trust — needs-user-trust stays its own distinct phrasing", async () => {
   const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -891,19 +895,18 @@ test("Codex's expired evidence is never reported or worded as a lack of trust �
       }
       return { status: 0, stdout: JSON.stringify(verifyPayload("codex", { hookRuntimeStatus: { kind: "pending-runtime-verification", reason: "evidence-expired" }, overallStatus: "partial" })), stderr: "" };
     },
-    launch: async () => {},
   });
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\r");
-  try { await run; } finally { restore(); }
-  expect(logs.some(line => line.includes("has not trusted the memory hook"))).toBe(false);
-  expect(logs).toContain("Codex: configured; pending verification — the MCP server and memory instructions are already configured and untouched — only the runtime check needs to run again; open this assistant once more so Forge614 Engines can confirm it");
+  await run;
+  expect(terminal.output.includes("has not trusted the memory hook")).toBe(false);
+  expect(terminal.output.includes("may ask you once to approve")).toBe(false);
+  expect(terminal.output).toContain("Codex: ready — Codex memory integration is ready. It finishes confirming itself the next time you use Codex normally.");
 });
 
-test("a genuine MCP/hook conflict is never written and is reported with Engines' own concrete cause", async () => {
+test("a genuine hook conflict is reported blocked even when MCP and instructions are already present, and apply is never called", async () => {
   const terminal = new TestTerminal();
   const enginesCalls: string[][] = [];
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -911,13 +914,29 @@ test("a genuine MCP/hook conflict is never written and is reported with Engines'
       enginesCalls.push([command, ...args]);
       if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
       if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      if (args[0] === "plan") {
+        return {
+          status: 0,
+          stdout: JSON.stringify(planPayload("claude-code", {
+            noop: true,
+            mcpStatus: { kind: "noop" }, instructionsStatus: { kind: "noop" },
+            hookStatus: { kind: "blocked", reason: "hook-conflict", details: "An existing SessionStart hook with different content is already present in /Users/tester/.claude/settings.json" },
+            hookRuntimeStatus: { kind: "absent" },
+            overallStatus: "partial",
+          })),
+          stderr: "",
+        };
+      }
+      // Real `verify memory-integration` shape: MCP and instructions are genuinely already
+      // configured and present — only the hook is missing, because Engines refused to write it
+      // due to the conflict above. The old, buggy classification let this MCP/instructions
+      // presence silently mask the blocked hook and fall through to "configured"/"ready"; it must
+      // report `blocked` instead, with Engines' own concrete detail.
       return {
         status: 0,
-        stdout: JSON.stringify(planPayload("claude-code", {
-          noop: true,
-          mcpStatus: { kind: "noop" }, instructionsStatus: { kind: "noop" },
-          hookStatus: { kind: "blocked", reason: "hook-conflict", details: "An existing SessionStart hook with different content is already present in /Users/tester/.claude/settings.json" },
-          hookRuntimeStatus: { kind: "absent" },
+        stdout: JSON.stringify(verifyPayload("claude-code", {
+          mcpPresent: true, instructionsPresent: true,
+          hookPresent: false, hookRuntimeStatus: { kind: "absent" },
           overallStatus: "partial",
         })),
         stderr: "",
@@ -925,18 +944,17 @@ test("a genuine MCP/hook conflict is never written and is reported with Engines'
     },
   });
   await driveEngramScreens(terminal);
-  // The plan is noop:true (nothing Engines can write), so no preview/confirm screen appears, and no
-  // apply call is made, but Task 4's unified path still calls verify to report the real state.
-  terminal.input(" "); terminal.input("\r"); await tick();
-  await tick();
-  try { await run; } finally { restore(); }
+  // The plan is noop:true (nothing Engines can write), so no preview/confirm screen appears — the
+  // picker's submit goes straight through the `resolved` branch, which calls verify but never apply.
+  terminal.input(" "); terminal.input("\r");
+  await run;
   expect(enginesCalls.some(c => c.includes("apply"))).toBe(false);
-  expect(logs.some(line => line.startsWith("Claude Code: configured —"))).toBe(false);
+  expect(terminal.output).toContain(`Claude Code: blocked — An existing SessionStart hook with different content is already present in /Users/tester/.claude/settings.json`);
+  expect(terminal.output).not.toMatch(/Claude Code:\s*(configured|ready)/);
 });
 
 test("Cursor never appears as a complete automatic memory integration, even with the hook component present", async () => {
   const terminal = new TestTerminal();
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -966,21 +984,19 @@ test("Cursor never appears as a complete automatic memory integration, even with
         stderr: "",
       };
     },
-    launch: async () => { throw new Error("Cursor must never be launched by this flow."); },
   });
   await driveEngramScreens(terminal);
   terminal.input(" "); terminal.input("\r"); await tick(); // check Cursor, submit
   terminal.input("\r"); // preview: Confirm
-  try { await run; } finally { restore(); }
-  expect(logs.some(line => line.startsWith("Cursor: configured"))).toBe(false);
-  expect(logs).toContain("Cursor: partially configured — this assistant has no official mechanism to auto-load global instructions");
+  await run;
+  expect(terminal.output).not.toContain("Cursor: configured");
+  expect(terminal.output).toContain("Cursor: partially configured — Cursor has no built-in way to automatically load memory instructions yet; the MCP server and memory search still work.");
 });
 
 test("no run of this flow ever prints a PostgreSQL connection string, a token, or an afterContent/beforeHash value, across every log line and every terminal frame", async () => {
   const terminal = new TestTerminal();
   const postgresUrl = "postgres://user:sup3rsecret@host:5432/db";
   const fakeSecret = "github_pat_FAKE_VALUE_FOR_TEST_ONLY";
-  const { logs, restore } = captureLogs();
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
@@ -1009,7 +1025,6 @@ test("no run of this flow ever prints a PostgreSQL connection string, a token, o
       if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-claude-code")), stderr: "" };
       return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: { kind: "runtime-observed" } })), stderr: "" };
     },
-    launch: async () => {},
   });
   await tick();
   terminal.input("\r"); await tick(); // Continue
@@ -1020,10 +1035,10 @@ test("no run of this flow ever prints a PostgreSQL connection string, a token, o
   terminal.input("\r"); await tick(); // Engram summary: Confirm
   terminal.input(" "); terminal.input("\r"); await tick(); // memory picker: check Claude Code, submit
   terminal.input("\r"); // preview: Confirm
-  try { await run; } finally { restore(); }
+  await run;
   for (const forbidden of [postgresUrl, "sup3rsecret", fakeSecret, "afterContent", "beforeHash", "abc123"]) {
     expect(terminal.output).not.toContain(forbidden);
-    expect(logs.join("\n")).not.toContain(forbidden);
+    expect(terminal.output).not.toContain(forbidden);
   }
 });
 

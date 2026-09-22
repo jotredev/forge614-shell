@@ -31,7 +31,7 @@ if (args.length === 1 && args[0] === "update") {
 } else if (args[0] === "init") {
   try {
     const { runInitCommand } = await import("./app/init-engram.ts");
-    await runInitCommand(args.slice(1));
+    await runInitCommand(args.slice(1), { version: metadata.version, env: process.env });
   } catch (error) {
     console.error(`Forge614-Shell init failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;

@@ -1,9 +1,8 @@
-import { ProcessTerminal, SelectList, Text, matchesKey } from "@earendil-works/pi-tui";
-import type { Terminal } from "@earendil-works/pi-tui";
+import { SelectList, Text, matchesKey } from "@earendil-works/pi-tui";
 import type { McpCapableAgent } from "../../contracts/mcp-agent.ts";
 import type { MemoryComponentStatus, MemoryOverallStatus } from "../../infrastructure/forge614-engines.ts";
 import { MultiSelectList } from "./multi-select.ts";
-import { startupFrame } from "./frame.ts";
+import type { EngramFlowScreen } from "./frame.ts";
 import { accent, success } from "../basic/theme.ts";
 
 const plain = (text: string) => text;
@@ -12,24 +11,24 @@ const multiSelectTheme = { cursor: accent, checked: success, plain };
 
 /** Lets the person choose zero or more assistants to configure with Engram's memory integration (MCP + instructions). Makes no Engines call itself. */
 export async function chooseMemoryAgents(
-  agents: readonly McpCapableAgent[], terminal: Terminal = new ProcessTerminal(),
+  agents: readonly McpCapableAgent[], screen: EngramFlowScreen,
 ): Promise<string[] | undefined> {
   const list = new MultiSelectList(agents.map(agent => ({ value: agent.id, label: agent.label })), multiSelectTheme);
   const hint = new Text("Space to toggle · Enter to confirm your selection (zero or more) · Esc to skip memory setup");
   const body = new Text("Choose which detected AI assistants should get Forge614 Engram's memory integration: the forge614-engram MCP server and its universal memory instructions.");
-  const tui = startupFrame(terminal, "Configure Engram memory integration", list, hint, body);
+  screen.setScreen("Configure Engram memory integration", list, { hint, body });
   let finish!: (values: string[] | undefined) => void;
   const selection = new Promise<string[] | undefined>(resolve => { finish = resolve; });
   list.onSubmit = values => finish(values);
   list.onCancel = () => finish(undefined);
-  tui.addInputListener(data => {
+  const unsubscribe = screen.tui.addInputListener(data => {
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { finish(undefined); return { consume: true }; }
     return undefined;
   });
   const terminate = () => finish(undefined);
   process.once("SIGTERM", terminate);
-  try { tui.start(); return await selection; }
-  finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
+  try { return await selection; }
+  finally { process.removeListener("SIGTERM", terminate); unsubscribe(); }
 }
 
 export type MemoryPreviewItem =
@@ -133,24 +132,24 @@ function previewText(items: readonly MemoryPreviewItem[]): string {
  * explicit confirmation, which applies only the pending (non-noop) plans.
  */
 export async function showMemoryPreviewConfirm(
-  items: readonly MemoryPreviewItem[], terminal: Terminal = new ProcessTerminal(),
+  items: readonly MemoryPreviewItem[], screen: EngramFlowScreen,
 ): Promise<boolean> {
   const body = new Text(previewText(items));
   const list = new SelectList([
     { value: "confirm", label: "Confirm" },
     { value: "cancel", label: "Cancel" },
   ], 2, listTheme);
-  const tui = startupFrame(terminal, "Confirm memory integration", list, undefined, body);
+  screen.setScreen("Confirm memory integration", list, { body });
   let finish!: (value: boolean) => void;
   const selection = new Promise<boolean>(resolve => { finish = resolve; });
   list.onSelect = item => finish(item.value === "confirm");
   list.onCancel = () => finish(false);
-  tui.addInputListener(data => {
+  const unsubscribe = screen.tui.addInputListener(data => {
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { finish(false); return { consume: true }; }
     return undefined;
   });
   const terminate = () => finish(false);
   process.once("SIGTERM", terminate);
-  try { tui.start(); return await selection; }
-  finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
+  try { return await selection; }
+  finally { process.removeListener("SIGTERM", terminate); unsubscribe(); }
 }

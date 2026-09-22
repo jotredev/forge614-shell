@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { runEngramInitFlow } from "./engram-init.ts";
+import { EngramFlowScreen } from "./frame.ts";
 
 class TestTerminal implements Terminal {
   columns = 100; rows = 30; kittyProtocolActive = false;
@@ -16,7 +17,9 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 25));
 
 test("Enter on every screen accepts the defaults: PostgreSQL No, reinforcement Yes", async () => {
   const terminal = new TestTerminal();
-  const result = runEngramInitFlow(terminal);
+  const screen = new EngramFlowScreen(terminal);
+  screen.start();
+  const result = runEngramInitFlow(screen);
   await tick();
   expect(terminal.output).toContain("Forge614 Engram stores persistent memory locally on this device.");
   terminal.input("\r"); await tick(); // Continue
@@ -34,7 +37,9 @@ test("Enter on every screen accepts the defaults: PostgreSQL No, reinforcement Y
 
 test("choosing No for reinforcement is honored", async () => {
   const terminal = new TestTerminal();
-  const result = runEngramInitFlow(terminal);
+  const screen = new EngramFlowScreen(terminal);
+  screen.start();
+  const result = runEngramInitFlow(screen);
   await tick();
   terminal.input("\r"); await tick(); // Continue
   terminal.input("\r"); await tick(); // PostgreSQL: No
@@ -45,7 +50,9 @@ test("choosing No for reinforcement is honored", async () => {
 
 test("choosing Yes for PostgreSQL asks for a connection string, masks it everywhere, and reports it enabled", async () => {
   const terminal = new TestTerminal();
-  const result = runEngramInitFlow(terminal);
+  const screen = new EngramFlowScreen(terminal);
+  screen.start();
+  const result = runEngramInitFlow(screen);
   await tick();
   terminal.input("\r"); await tick(); // Continue
   terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
@@ -62,7 +69,9 @@ test("choosing Yes for PostgreSQL asks for a connection string, masks it everywh
 
 test("submitting an empty connection string re-asks instead of cancelling the flow", async () => {
   const terminal = new TestTerminal();
-  const result = runEngramInitFlow(terminal);
+  const screen = new EngramFlowScreen(terminal);
+  screen.start();
+  const result = runEngramInitFlow(screen);
   await tick();
   terminal.input("\r"); await tick(); // Continue
   terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
@@ -79,7 +88,9 @@ test("submitting an empty connection string re-asks instead of cancelling the fl
 
 test("a bracketed paste on the connection-string screen reaches Engram intact and is never shown", async () => {
   const terminal = new TestTerminal();
-  const result = runEngramInitFlow(terminal);
+  const screen = new EngramFlowScreen(terminal);
+  screen.start();
+  const result = runEngramInitFlow(screen);
   await tick();
   terminal.input("\r"); await tick(); // Continue
   terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
@@ -93,7 +104,9 @@ test("a bracketed paste on the connection-string screen reaches Engram intact an
 
 test("a pasted connection string with a trailing newline is trimmed before being submitted", async () => {
   const terminal = new TestTerminal();
-  const result = runEngramInitFlow(terminal);
+  const screen = new EngramFlowScreen(terminal);
+  screen.start();
+  const result = runEngramInitFlow(screen);
   await tick();
   terminal.input("\r"); await tick(); // Continue
   terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
@@ -106,7 +119,9 @@ test("a pasted connection string with a trailing newline is trimmed before being
 
 test("Escape at the intro screen cancels before any other screen is shown", async () => {
   const terminal = new TestTerminal();
-  const result = runEngramInitFlow(terminal);
+  const screen = new EngramFlowScreen(terminal);
+  screen.start();
+  const result = runEngramInitFlow(screen);
   await tick();
   terminal.input("\x1b");
   expect(await result).toEqual({ confirmed: false });
@@ -115,7 +130,9 @@ test("Escape at the intro screen cancels before any other screen is shown", asyn
 
 test("Ctrl+C while entering the PostgreSQL connection string cancels the whole flow", async () => {
   const terminal = new TestTerminal();
-  const result = runEngramInitFlow(terminal);
+  const screen = new EngramFlowScreen(terminal);
+  screen.start();
+  const result = runEngramInitFlow(screen);
   await tick();
   terminal.input("\r"); await tick(); // Continue
   terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
@@ -126,7 +143,9 @@ test("Ctrl+C while entering the PostgreSQL connection string cancels the whole f
 
 test("Cancel on the summary screen reports no confirmation", async () => {
   const terminal = new TestTerminal();
-  const result = runEngramInitFlow(terminal);
+  const screen = new EngramFlowScreen(terminal);
+  screen.start();
+  const result = runEngramInitFlow(screen);
   await tick();
   terminal.input("\r"); await tick(); // Continue
   terminal.input("\r"); await tick(); // PostgreSQL: No

@@ -19,7 +19,7 @@ Claude Code usa su flujo oficial de suscripción y Codex usa `app-server` con in
 
 ## Mecanismos de inicio
 
-Shell tiene dos adaptadores de chat para la conversación interactiva: Claude Code (que usa el SDK oficial de Anthropic) y Codex (que usa JSON-RPC sobre `app-server`). Para la verificación del hook de memoria y otros escenarios donde el comportamiento de inicio de un cliente nativo debe ejecutarse sin modificaciones, Shell también usa un tercer mecanismo, mínimo: `native-handoff.ts`. Esto no es un adaptador de chat — no tiene protocolo en absoluto. Simplemente entrega toda la terminal al ejecutable real `claude` o `codex` vía `stdio: "inherit"` y espera a que salga. Esto existe únicamente para que el comportamiento de inicio del cliente nativo (hooks, mensajes de confianza) se ejecute exactamente como si la persona hubiera escrito el comando ella misma. Shell no lee ninguna salida de la entrega y no proporciona interfaz de chat durante ella.
+Shell tiene dos adaptadores de chat para la conversación interactiva: Claude Code (que usa el SDK oficial de Anthropic) y Codex (que usa JSON-RPC sobre `app-server`). Shell nunca lanza el binario real de un cliente nativo entregándole la terminal — ni durante `init --product engram`, ni para la verificación del hook de memoria, ni en ningún otro lugar. Si la evidencia de tiempo de ejecución de un hook de memoria realmente se observó es información de estado que reporta Engines, nunca algo que Shell fuerce lanzando un proceso nativo; ver el [documento 07](07-inicializacion-engram-y-mcp.md).
 
 ## Pi, Cursor y motores retirados
 

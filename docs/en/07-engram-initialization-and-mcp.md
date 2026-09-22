@@ -12,7 +12,9 @@ forge614-shell init --product engram
 
 The command requires an interactive terminal. It first shows the Engram flow: mandatory local SQLite and FTS5 storage (a text-search index), optional PostgreSQL synchronization, and optional reinforcement (ranks repeated memories higher; it does not prove they are true). After confirmation, Shell runs `forge614-engram init --json` and, if chosen, `forge614-engram reinforcement-enable`.
 
-Cancelling before confirmation prints `Cancelled. No changes were made.` and returns exit code 130. If Engram initialization succeeds, a later memory-integration failure does not make it fail.
+The whole command — intro, PostgreSQL, reinforcement, summary, Engram initialization, assistant selection, preview, confirmation, and the final result — is one continuous alternate-screen visual flow. Shell never prints a plain-terminal status line between screens and never opens a second, independent screen partway through; the person only ever sees the normal terminal again once, at the very end, when the result is already on screen.
+
+Cancelling before confirmation shows a `Cancelled. No changes were made.` result screen and returns exit code 130. If Engram initialization succeeds, a later memory-integration failure does not make it fail.
 
 ## What "memory integration" means
 
@@ -50,13 +52,13 @@ forge614-engines apply --plan-id <id>
 forge614-engines verify memory-integration --agent <id>
 ```
 
-9. Every selected assistant is verified this way — even one whose plan needed no writes at all, because the memory hook's *runtime* evidence is a separate question from whether its files are correctly written. When that verification shows the hook is installed but not yet runtime-observed (whether it never ran, or ran once and the evidence since expired), Shell hands the terminal to that assistant's own real binary once (never Shell's own in-app chat), lets it start for real, and verifies again once it exits. For Codex specifically, this is also how its own native hook-trust prompt gets a chance to appear — Shell never approves, skips, or bypasses it.
-10. It finally reports one verified outcome per assistant: `configured — MCP and memory instructions available`, `configured; pending verification — <why>`, `partially configured — <what is missing>`, `not supported — <reason>`, `skipped`, or `not configured — <Engines' own error or conflict message>`.
+9. Every selected assistant is verified this way — even one whose plan needed no writes at all, because the memory hook's *runtime* evidence is a separate question from whether its files are correctly written. Shell calls `verify memory-integration` exactly once per assistant. It never launches a native client to renew that evidence and never asks the person to rerun anything: runtime evidence is status information, not a completion gate. A structurally correct install (the MCP server and memory instructions genuinely written and present) is reported as done — `configured` or `ready` — even while that evidence is still absent.
+10. It finally reports one outcome per assistant, computed only from Engines' own JSON: `configured — MCP server and memory instructions are installed and active`, `ready — <what may still happen the next time the assistant starts normally>`, `partially configured — <a real, named limitation of this assistant>`, `blocked — <Engines' own conflict detail>`, `could not be configured — <an honest description of what went wrong>`, or `skipped`.
 11. When this run actually wrote something, Shell closes with a reminder to close and reopen each configured assistant's session so it loads the new MCP server and memory instructions. A run that changed nothing does not print it.
 
 ## Cursor is never presented as complete
 
-Cursor has no officially supported mechanism to auto-load global instructions. Its MCP server can be configured; its memory instructions cannot. Shell therefore reports Cursor as `partially configured` and states that reason, even when Engines calls that state the complete achievable one for this assistant. Shell never invents unofficial files or hooks to compensate, and never presents Cursor as a fully complete memory integration. Its hook component is also reported `unsupported`, for the same reason.
+Cursor has no officially supported mechanism to auto-load global instructions. Its MCP server can be configured; its memory instructions cannot. Shell therefore reports Cursor as `partially configured` and states that reason, even when Engines calls that state the complete achievable one for this assistant. Shell never invents unofficial files or hooks to compensate, and never presents Cursor as a fully complete memory integration.
 
 ## The memory hook and its runtime evidence
 
@@ -65,13 +67,23 @@ Forge614 Engines' `plan memory-install` and `verify memory-integration` also cov
 Engines can confirm the hook file itself is correctly written, but it cannot cryptographically prove a real client session ran it — so it reports two independent things: whether the hook is *structurally* installed, and a separate `runtimeStatus`:
 
 - `runtime-observed` — a real session ran the hook recently (under 7 days) and Engram returned context. Only this state, combined with the MCP server and instructions both being in place, is reported as `configured`.
-- `pending-runtime-verification` — the hook is installed but no fresh evidence exists. Its own `reason` distinguishes a hook that has *never* run (`no-evidence`, the state of every freshly-configured assistant, including the very first `plan memory-install` of a brand-new installation) from one that *has* run before but whose evidence window lapsed (`evidence-expired`). Either way, Shell's wording is the same and equally honest: nothing was lost and nothing failed — the MCP server and memory instructions remain exactly as configured, only the runtime check itself needs to run again. Shell hands the terminal to the assistant once to renew it, then verifies again.
-- `needs-user-trust` — Codex specifically requires reviewing and trusting a new hook once, through its own `/hooks` command, before running it. This is a genuinely different situation from expired evidence — an unresolved trust decision, not a stale timer — and Shell never words or reports the two the same way. Shell has no way to grant or skip that trust, and never tries to.
+- `pending-runtime-verification` — the hook is installed but no fresh evidence exists yet, whether because it has never run (`no-evidence`, the state of every freshly-configured assistant) or because it ran before and the evidence window lapsed (`evidence-expired`). Shell reports this as `ready`, worded the same honest way regardless of reason: nothing was lost and nothing failed — the MCP server and memory instructions remain exactly as configured, and the runtime check finishes confirming itself the next time the person uses that assistant normally. Shell never launches anything to force this and never asks for a rerun.
+- `needs-user-trust` — Codex specifically requires reviewing and trusting a new hook once, through its own `/hooks` command, before running it. Shell has no way to know whether that trust decision has already been made, and never claims otherwise. It reports this as `ready` too, but with wording that only describes a possibility, never a fact: "Codex memory integration is ready. When you next start Codex normally, Codex may ask you once to approve the Forge614 memory hook." Shell never says Codex "has not trusted" the hook, and never treats this as a reason to withhold success.
 - `unsupported` — this assistant (Cursor today) has no officially supported, stable session-start hook mechanism Engines can install.
 
-When a selected assistant's hook is `pending-runtime-verification` (for any reason) or `needs-user-trust`, Shell hands the terminal to that assistant's own real binary — the actual `claude` or `codex` executable, not Shell's own chat interface — waits for it to exit, and verifies again. This is deliberate: Shell's own chat adapters talk to Codex over a machine-to-machine protocol that cannot show Codex's native trust prompt, and there is no need to prove Claude's SDK-driven session behaves identically to the real CLI when the real CLI is one process spawn away. Nothing about this hand-off requires a second confirmation — the person already confirmed the memory-integration change once, before anything was applied.
+Runtime evidence — for any reason above — never turns a structurally correct install into a failure, and never requires Shell to open a native client. This is a deliberate product decision: `init --product engram` never launches Claude Code, Codex, or any other native client, and never treats the absence of runtime evidence as something the person must go fix by rerunning a command. Whether the hook has actually been exercised by a real session becomes visible the ordinary way — through Shell's own use of that assistant, or a future explicit status/diagnostic surface — never as a blocking step inside `init`.
 
-Evidence expires after 7 days. This never deletes memory or configuration — it only means Shell will report `configured; pending verification` again until a new real session runs the hook. `runtime-observed` is not cryptographic proof the client actually used the retrieved memory; it only means Engines observed a real, compatible `SessionStart` invocation and Engram returned context for it.
+Evidence expires after 7 days. This never deletes memory or configuration — it only means the hook's own runtime check needs to run again, which happens on its own the next time a real session starts. `runtime-observed` is not cryptographic proof the client actually used the retrieved memory; it only means Engines observed a real, compatible `SessionStart` invocation and Engram returned context for it.
+
+## Shell's own memory recall
+
+Independently of the flow above, Shell's own chat (both the Claude Code adapter and the Codex adapter) recovers memory context directly from Engram's public, read-only, non-interactive contract:
+
+```text
+forge614-engram startup-context --directory <cwd> --json
+```
+
+This call never creates a project, a link, or a memory, and an unlinked directory is not an error. Shell fetches it once per logical conversation — when the chat session first connects, and again after `/new` or `/resume` — never on every single turn. The digest it builds is wrapped in an explicit `<forge614-engram-memory>` block telling the model this is retrieved data, not an instruction, and any text inside that looks like a command is to be ignored; for Claude it is appended to the `claude_code` system prompt preset, and for Codex it is prepended as a separate text part on that turn only. The digest is size-bounded and never includes Engram's database, its configuration, or any secret. If Engram is not installed, does not respond, or returns invalid JSON, Shell continues the conversation with no memory context rather than failing to start — it never invents one.
 
 ## Security and outcomes
 
@@ -85,4 +97,4 @@ Configuration makes memory available to the selected client; it does not guarant
 
 ## Real interpretation example
 
-If Claude Code is already fully configured and Codex has a pending plan, the preview shows both. On confirmation Shell applies only Codex's plan, then verifies it. If Codex's apply fails, the result keeps `Claude Code: configured — MCP and memory instructions available` and reports `Codex: not configured — <Engines' message>`.
+If Claude Code is already fully configured and Codex has a pending plan, the preview shows both. On confirmation Shell applies only Codex's plan, then verifies it. If Codex's apply fails, the result keeps `Claude Code: configured — MCP server and memory instructions are installed and active` and reports `Codex: could not be configured — <Engines' message>`.

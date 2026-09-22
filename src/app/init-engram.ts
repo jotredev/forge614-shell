@@ -1,13 +1,15 @@
+import { ProcessTerminal } from "@earendil-works/pi-tui";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { runEngramInitFlow } from "../ui/startup/engram-init.ts";
 import { chooseMemoryAgents, showMemoryPreviewConfirm } from "../ui/startup/memory-setup.ts";
 import type { MemoryPreviewItem } from "../ui/startup/memory-setup.ts";
+import { EngramFlowScreen } from "../ui/startup/frame.ts";
+import { showResult, showWorking } from "../ui/startup/engram-progress.ts";
 import { applyEngramInit, type RunEngram } from "../infrastructure/forge614-engram.ts";
 import {
   applyEnginesPlan, discoverMcpCapableAgents, planMemoryInstall, verifyMemoryIntegration,
-  type MemoryInstallPlan, type MemoryVerification,
+  type MemoryComponentStatus, type MemoryInstallPlan, type MemoryVerification,
 } from "../infrastructure/forge614-engines.ts";
-import { runInteractiveHandoff, type SpawnHandoff } from "../infrastructure/native-handoff.ts";
 import type { McpCapableAgent } from "../contracts/mcp-agent.ts";
 
 const SUPPORTED_PRODUCTS = ["engram"] as const;
@@ -37,6 +39,9 @@ export function requireEngramProduct(args: string[]): void {
   }
 }
 
+/** Matches the real `chooseMemoryAgents`'s signature exactly, so a test double is interchangeable. */
+type ChooseMemoryAgents = typeof chooseMemoryAgents;
+
 export interface RunInitOptions {
   readonly terminal?: Terminal;
   /** Overrides the real TTY check; the sole source of truth for the interactivity gate when given. */
@@ -45,11 +50,16 @@ export interface RunInitOptions {
   readonly enginesRun?: RunEngram;
   readonly home?: string;
   readonly env?: NodeJS.ProcessEnv;
-  /** Injects the terminal hand-off for tests; defaults to the real `runInteractiveHandoff`. */
-  readonly launch?: SpawnHandoff;
+  readonly version?: string;
+  /**
+   * Injects the interactive assistant picker for tests, so a genuine picker-layer exception can be
+   * exercised without a global module mock; defaults to the real `chooseMemoryAgents`. Never set in
+   * production.
+   */
+  readonly chooseMemoryAgents?: ChooseMemoryAgents;
 }
 
-type MemoryOutcomeStatus = "configured" | "pending-verification" | "partial" | "unsupported" | "not-configured" | "skipped";
+export type MemoryOutcomeStatus = "configured" | "prepared" | "blocked" | "unsupported" | "failed" | "skipped";
 
 interface MemoryOutcome {
   readonly label: string;
@@ -59,96 +69,70 @@ interface MemoryOutcome {
 
 interface MemorySetupResult {
   readonly outcomes: MemoryOutcome[];
-  /** True only when this run's own `apply` wrote something that then verified as configured or partial. */
+  /** True only when this run's own `apply` wrote something that then verified as configured, prepared, or unsupported. */
   readonly applied: boolean;
+  /** A short human notice for when the step ended before producing any per-agent outcome (no assistants found, setup skipped, or a detection failure). Folded into the final result screen instead of printed immediately. */
+  readonly notice?: string;
 }
 
 function outcomeLine(outcome: MemoryOutcome): string {
-  if (outcome.status === "configured") return `${outcome.label}: configured — MCP and memory instructions available`;
-  if (outcome.status === "pending-verification") return `${outcome.label}: configured; pending verification — ${outcome.detail}`;
-  if (outcome.status === "partial") return `${outcome.label}: partially configured — ${outcome.detail}`;
-  if (outcome.status === "unsupported") return `${outcome.label}: not supported — ${outcome.detail}`;
+  if (outcome.status === "configured") return `${outcome.label}: configured — MCP server and memory instructions are installed and active`;
+  if (outcome.status === "prepared") return `${outcome.label}: ready — ${outcome.detail}`;
+  if (outcome.status === "unsupported") return `${outcome.label}: partially configured — ${outcome.detail}`;
+  if (outcome.status === "blocked") return `${outcome.label}: blocked — ${outcome.detail}`;
   if (outcome.status === "skipped") return `${outcome.label}: skipped`;
-  return `${outcome.label}: not configured — ${outcome.detail}`;
+  return `${outcome.label}: could not be configured — ${outcome.detail}`;
 }
 
 /**
- * A lapsed evidence window (`evidence-expired`) and a never-yet-observed hook (`no-evidence`, and
- * the other evidence-* reasons) are both reported through this one honest message: nothing is
- * broken, nothing was lost, only the runtime check itself needs to run again. `needs-user-trust`
- * is a genuinely different situation (an unresolved trust decision only the person can make inside
- * Codex) and must never share this wording — see Global Constraints.
+ * Human phrasing for a structurally correct install whose hook runtime evidence has not been
+ * observed yet. Never claims what already happened (Shell cannot know whether Codex has or has not
+ * trusted the hook) and never asks the person to rerun anything — it only describes what may
+ * happen the next time the assistant is used normally.
  */
-function hookRuntimeDetail(status: MemoryVerification["hook"]["runtimeStatus"]): string | undefined {
-  if (status.kind === "pending-runtime-verification") {
-    return "the MCP server and memory instructions are already configured and untouched — only the runtime check needs to run again; open this assistant once more so Forge614 Engines can confirm it";
+function preparedDetail(label: string, runtimeStatus: MemoryVerification["hook"]["runtimeStatus"]): string {
+  if (runtimeStatus.kind === "needs-user-trust") {
+    return `${label} memory integration is ready. When you next start ${label} normally, ${label} may ask you once to approve the Forge614 memory hook.`;
   }
-  if (status.kind === "needs-user-trust") {
-    return "Codex has not trusted the memory hook yet — approve it inside Codex, then run this command again";
-  }
-  return undefined;
-}
-
-function verificationDetail(verification: MemoryVerification): string {
-  const parts: string[] = [];
-  if (!verification.mcp.present) parts.push("the MCP server is not configured");
-  if (!verification.instructions.supported) parts.push("this assistant has no official mechanism to auto-load global instructions");
-  else if (!verification.instructions.present) parts.push("the memory instructions are not installed");
-  const hookDetail = hookRuntimeDetail(verification.hook.runtimeStatus);
-  if (hookDetail) parts.push(hookDetail);
-  return parts.join("; ") || "Forge614 Engines could not confirm full memory integration.";
+  return `${label} memory integration is ready. It finishes confirming itself the next time you use ${label} normally.`;
 }
 
 /**
- * Turns a post-apply (or post-hand-off) verification into the outcome Shell reports. Never trusts a
- * bare "complete" from Engines when this assistant structurally cannot auto-load instructions (e.g.
- * Cursor) — Shell always calls that partial and explains why. Separately, when the MCP server and
- * instructions are both genuinely in place and the *only* open question is the hook's own runtime
- * evidence — whether it never ran yet, or ran once and the evidence since expired — this is reported
- * as its own "pending-verification" state — never lumped in with a structural "partial" (which means
- * something is actually broken or unsupported), and never worded as data loss.
+ * Turns one agent's plan (if any — a fully pre-existing, noop install has none) and verification
+ * into the outcome Shell reports. Never calls anything, never waits for a native session, never
+ * asks the person to rerun a command. Runtime hook evidence is informational: its absence never
+ * turns a structurally correct install into a failure — see Global Constraints.
  */
-function verificationOutcome(label: string, verification: MemoryVerification): MemoryOutcome {
+export function classifyMemoryOutcome(
+  label: string,
+  plan: MemoryInstallPlan | undefined,
+  verification: MemoryVerification,
+): MemoryOutcome {
+  // A real conflict on ANY component — MCP, instructions, or the hook — always wins. Never let an
+  // already-present MCP server or instructions set mask a genuinely blocked hook (or vice versa):
+  // Shell must never report "configured" or "ready" while Engines' own plan says something was
+  // refused due to a conflict it could not resolve.
+  const blockedComponent = plan
+    ? ([plan.mcp.status, plan.instructions.status, plan.hook.status].find(status => status.kind === "blocked") as
+        Extract<MemoryComponentStatus, { kind: "blocked" }> | undefined)
+    : undefined;
+  if (blockedComponent) {
+    return { label, status: "blocked", detail: blockedComponent.details };
+  }
   if (verification.overallStatus === "absent") {
-    return { label, status: "not-configured", detail: "Forge614 Engines could not confirm any memory integration for this assistant." };
+    return { label, status: "failed", detail: `Forge614 Engines could not confirm any memory integration for ${label}.` };
   }
-  const structurallyComplete = verification.mcp.present && (!verification.instructions.supported || verification.instructions.present);
+  if (!verification.instructions.supported) {
+    return { label, status: "unsupported", detail: `${label} has no built-in way to automatically load memory instructions yet; the MCP server and memory search still work.` };
+  }
+  if (!verification.mcp.present || !verification.instructions.present) {
+    return { label, status: "failed", detail: `Forge614 Engines could not confirm full memory integration for ${label}.` };
+  }
   const hookPending = verification.hook.runtimeStatus.kind === "pending-runtime-verification" || verification.hook.runtimeStatus.kind === "needs-user-trust";
-  if (structurallyComplete && hookPending) {
-    return { label, status: "pending-verification", detail: hookRuntimeDetail(verification.hook.runtimeStatus)! };
+  if (hookPending) {
+    return { label, status: "prepared", detail: preparedDetail(label, verification.hook.runtimeStatus) };
   }
-  if (verification.overallStatus === "complete" && verification.instructions.supported) {
-    return { label, status: "configured" };
-  }
-  return { label, status: "partial", detail: verificationDetail(verification) };
-}
-
-/**
- * Verifies one agent's real state, and — only when everything structural is in place but the hook's
- * runtime evidence is still pending (never observed, or observed once and since expired) or Codex
- * still needs to trust it — hands the terminal to that agent's own native binary once, then verifies
- * again. Never retries beyond that one hand-off: a user who closes the client without letting it
- * finish (or without trusting the hook) sees an honest "pending verification" outcome, never a false
- * success and never a hard error.
- */
-async function verifyAndMaybeRelaunch(
-  agent: McpCapableAgent,
-  options: { home?: string; env?: NodeJS.ProcessEnv; enginesRun?: RunEngram; launch?: SpawnHandoff },
-): Promise<MemoryOutcome> {
-  const verification = await verifyMemoryIntegration({ agentId: agent.id, home: options.home, env: options.env, run: options.enginesRun });
-  const outcome = verificationOutcome(agent.label, verification);
-  if (outcome.status !== "pending-verification") return outcome;
-  console.log(`Opening ${agent.label} to complete memory verification…`);
-  if (verification.hook.runtimeStatus.kind === "needs-user-trust") {
-    console.log(`${agent.label} may ask you to trust its new memory hook once — approve it there. Forge614 Shell never approves or skips this step for you.`);
-  }
-  try {
-    await (options.launch ?? runInteractiveHandoff)(agent.executable, process.cwd(), options.env ?? process.env);
-  } catch (error) {
-    return { label: agent.label, status: "pending-verification", detail: error instanceof Error ? error.message : String(error) };
-  }
-  const reverified = await verifyMemoryIntegration({ agentId: agent.id, home: options.home, env: options.env, run: options.enginesRun });
-  return verificationOutcome(agent.label, reverified);
+  return { label, status: "configured" };
 }
 
 /**
@@ -161,28 +145,26 @@ async function verifyAndMaybeRelaunch(
  * turns an already-successful Engram init into a command failure.
  */
 async function runMemorySetupStep(
-  terminal: Terminal | undefined,
-  options: { home?: string; env?: NodeJS.ProcessEnv; enginesRun?: RunEngram; launch?: SpawnHandoff },
+  screen: EngramFlowScreen,
+  options: { home?: string; env?: NodeJS.ProcessEnv; enginesRun?: RunEngram; chooseMemoryAgents?: ChooseMemoryAgents },
 ): Promise<MemorySetupResult> {
   let agents: McpCapableAgent[];
   try {
-    agents = await discoverMcpCapableAgents({ home: options.home, env: options.env, run: options.enginesRun });
+    agents = await showWorking(screen, "Forge614 Engram", "Detecting compatible AI assistants…", () =>
+      discoverMcpCapableAgents({ home: options.home, env: options.env, run: options.enginesRun }));
   } catch (error) {
-    console.log(`Memory setup could not be offered: ${error instanceof Error ? error.message : String(error)}`);
-    return { outcomes: [], applied: false };
+    return { outcomes: [], applied: false, notice: `Memory setup could not be offered: ${error instanceof Error ? error.message : String(error)}` };
   }
   if (agents.length === 0) {
-    console.log("No compatible AI assistants were found to configure with memory integration.");
-    return { outcomes: [], applied: false };
+    return { outcomes: [], applied: false, notice: "No compatible AI assistants were found to configure with memory integration." };
   }
-  const selectedIds = await chooseMemoryAgents(agents, terminal);
+  const pickAgents = options.chooseMemoryAgents ?? chooseMemoryAgents;
+  const selectedIds = await pickAgents(agents, screen);
   if (selectedIds === undefined) {
-    console.log("Memory setup was skipped.");
-    return { outcomes: agents.map(agent => ({ label: agent.label, status: "skipped" as const })), applied: false };
+    return { outcomes: agents.map(agent => ({ label: agent.label, status: "skipped" as const })), applied: false, notice: "Memory setup was skipped." };
   }
   if (selectedIds.length === 0) {
-    console.log("No assistant was selected. No memory integration was configured.");
-    return { outcomes: agents.map(agent => ({ label: agent.label, status: "skipped" as const })), applied: false };
+    return { outcomes: agents.map(agent => ({ label: agent.label, status: "skipped" as const })), applied: false, notice: "No assistant was selected. No memory integration was configured." };
   }
   let applied = false;
   const selectedSet = new Set(selectedIds);
@@ -191,20 +173,26 @@ async function runMemorySetupStep(
   for (const agent of agents) {
     if (!selectedSet.has(agent.id)) { outcomeMap.set(agent.id, { label: agent.label, status: "skipped" }); continue; }
     try {
-      const plan = await planMemoryInstall({ agentId: agent.id, home: options.home, env: options.env, run: options.enginesRun });
+      const plan = await showWorking(screen, "Forge614 Engram", `Planning memory integration for ${agent.label}…`, () =>
+        planMemoryInstall({ agentId: agent.id, home: options.home, env: options.env, run: options.enginesRun }));
       planned.push({ agent, plan });
     } catch (error) {
-      outcomeMap.set(agent.id, { label: agent.label, status: "not-configured", detail: error instanceof Error ? error.message : String(error) });
+      outcomeMap.set(agent.id, { label: agent.label, status: "failed", detail: error instanceof Error ? error.message : String(error) });
     }
   }
   const pending = planned.filter(p => !p.plan.noop);
   const resolved = planned.filter(p => p.plan.noop);
   for (const r of resolved) {
-    try { outcomeMap.set(r.agent.id, await verifyAndMaybeRelaunch(r.agent, options)); }
-    catch (error) { outcomeMap.set(r.agent.id, { label: r.agent.label, status: "not-configured", detail: error instanceof Error ? error.message : String(error) }); }
+    try {
+      const verification = await showWorking(screen, "Forge614 Engram", `Verifying ${r.agent.label}…`, () =>
+        verifyMemoryIntegration({ agentId: r.agent.id, home: options.home, env: options.env, run: options.enginesRun }));
+      outcomeMap.set(r.agent.id, classifyMemoryOutcome(r.agent.label, r.plan, verification));
+    } catch (error) {
+      outcomeMap.set(r.agent.id, { label: r.agent.label, status: "failed", detail: error instanceof Error ? error.message : String(error) });
+    }
   }
   if (pending.length > 0) {
-    const blockedAgents = agents.filter(agent => selectedSet.has(agent.id) && outcomeMap.get(agent.id)?.status === "not-configured");
+    const blockedAgents = agents.filter(agent => selectedSet.has(agent.id) && outcomeMap.get(agent.id)?.status === "failed");
     const previewItems: MemoryPreviewItem[] = [
       ...pending.map(p => ({
         agentLabel: p.agent.label, kind: "pending" as const,
@@ -217,23 +205,26 @@ async function runMemorySetupStep(
       })),
       ...blockedAgents.map(agent => ({ agentLabel: agent.label, kind: "blocked" as const, detail: outcomeMap.get(agent.id)!.detail! })),
     ];
-    const confirmed = await showMemoryPreviewConfirm(previewItems, terminal);
+    const confirmed = await showMemoryPreviewConfirm(previewItems, screen);
     if (!confirmed) {
       for (const p of pending) outcomeMap.set(p.agent.id, { label: p.agent.label, status: "skipped" });
     } else {
       for (const p of pending) {
         try {
-          const applyResult = await applyEnginesPlan({ planId: p.plan.planId, home: options.home, env: options.env, run: options.enginesRun });
+          const applyResult = await showWorking(screen, "Forge614 Engram", `Applying memory integration for ${p.agent.label}…`, () =>
+            applyEnginesPlan({ planId: p.plan.planId, home: options.home, env: options.env, run: options.enginesRun }));
           if (!applyResult.applied) {
-            outcomeMap.set(p.agent.id, { label: p.agent.label, status: "not-configured", detail: "Forge614 Engines reported the change was not applied." });
+            outcomeMap.set(p.agent.id, { label: p.agent.label, status: "failed", detail: "Forge614 Engines reported the change was not applied." });
             continue;
           }
-          const outcome = await verifyAndMaybeRelaunch(p.agent, options);
+          const verification = await showWorking(screen, "Forge614 Engram", `Verifying ${p.agent.label}…`, () =>
+            verifyMemoryIntegration({ agentId: p.agent.id, home: options.home, env: options.env, run: options.enginesRun }));
+          const outcome = classifyMemoryOutcome(p.agent.label, p.plan, verification);
           // Only a plan this run actually wrote justifies the "restart your assistant" hint.
-          if (outcome.status === "configured" || outcome.status === "partial" || outcome.status === "pending-verification") applied = true;
+          if (outcome.status === "configured" || outcome.status === "prepared" || outcome.status === "unsupported") applied = true;
           outcomeMap.set(p.agent.id, outcome);
         } catch (error) {
-          outcomeMap.set(p.agent.id, { label: p.agent.label, status: "not-configured", detail: error instanceof Error ? error.message : String(error) });
+          outcomeMap.set(p.agent.id, { label: p.agent.label, status: "failed", detail: error instanceof Error ? error.message : String(error) });
         }
       }
     }
@@ -241,7 +232,11 @@ async function runMemorySetupStep(
   return { outcomes: agents.map(agent => outcomeMap.get(agent.id)!), applied };
 }
 
-/** Entry point for `forge614-shell init --product engram`. Makes no Engram call before confirmation. */
+/**
+ * Entry point for `forge614-shell init --product engram`. Makes no Engram call before confirmation.
+ * Owns one continuous alternate-screen session from the intro screen to the final result — no
+ * step here ever prints to the plain terminal or opens a second alt-screen.
+ */
 export async function runInitCommand(args: string[], options: RunInitOptions = {}): Promise<void> {
   requireEngramProduct(args);
   // Explicit `interactive` wins; an injected terminal implies interactive; otherwise the real TTYs decide.
@@ -249,23 +244,32 @@ export async function runInitCommand(args: string[], options: RunInitOptions = {
   if (!interactive) {
     throw new Error("forge614-shell init requires an interactive terminal.");
   }
-  const flow = await runEngramInitFlow(options.terminal);
-  if (!flow.confirmed) {
-    process.exitCode = 130;
-    console.log("Cancelled. No changes were made.");
-    return;
-  }
-  await applyEngramInit(flow.decisions, { run: options.run, home: options.home, env: options.env });
-  console.log("Forge614 Engram memory initialization is complete.");
+  const screen = new EngramFlowScreen(options.terminal ?? new ProcessTerminal(), options.version);
+  screen.start();
   try {
-    const { outcomes, applied } = await runMemorySetupStep(options.terminal, { home: options.home, env: options.env, enginesRun: options.enginesRun, launch: options.launch });
-    for (const outcome of outcomes) console.log(outcomeLine(outcome));
-    // Nothing was written this run (everything was already configured, or the preview was
-    // cancelled) means there is nothing new for an assistant to reload.
-    if (applied) {
-      console.log("Close and reopen each configured assistant's session so it loads the new MCP server and memory instructions.");
+    const flow = await runEngramInitFlow(screen);
+    if (!flow.confirmed) {
+      process.exitCode = 130;
+      showResult(screen, "Cancelled", ["Cancelled. No changes were made."]);
+      return;
     }
-  } catch (error) {
-    console.log(`Memory setup could not be completed: ${error instanceof Error ? error.message : String(error)}`);
+    await showWorking(screen, "Forge614 Engram", "Initializing local memory…", () =>
+      applyEngramInit(flow.decisions, { run: options.run, home: options.home, env: options.env }));
+    const resultLines = ["Forge614 Engram memory initialization is complete."];
+    try {
+      const { outcomes, applied, notice } = await runMemorySetupStep(screen, { home: options.home, env: options.env, enginesRun: options.enginesRun, chooseMemoryAgents: options.chooseMemoryAgents });
+      if (notice) resultLines.push("", notice);
+      for (const outcome of outcomes) resultLines.push(outcomeLine(outcome));
+      // Nothing was written this run (everything was already configured, or the preview was
+      // cancelled) means there is nothing new for an assistant to reload.
+      if (applied) {
+        resultLines.push("", "Close and reopen each configured assistant's session so it loads the new MCP server and memory instructions.");
+      }
+    } catch (error) {
+      resultLines.push("", `Memory setup could not be completed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    showResult(screen, "Result", resultLines);
+  } finally {
+    screen.stop({ preserveScreen: true });
   }
 }
