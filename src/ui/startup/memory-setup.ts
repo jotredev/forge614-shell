@@ -111,7 +111,8 @@ function previewLine(item: MemoryPreviewItem): string {
   const lines = [
     `${item.agentLabel} — overall: ${item.overallStatus}`,
     `  paths to change: ${paths.length ? paths.join(", ") : "(none)"}`,
-    `  MCP forge614-engram: ${mcpStatusLabel(item.mcp)} · memory instructions: ${instructionsStatusLabel(item.instructions)} · memory hook: ${hookStatusLabel(item.hook)}`,
+    `  MCP forge614-engram: ${mcpStatusLabel(item.mcp)} · memory instructions: ${instructionsStatusLabel(item.instructions)}`,
+    `  memory hook: ${hookStatusLabel(item.hook)}`,
   ];
   const mcpDetail = statusDetail(item.mcp);
   if (mcpDetail) lines.push(`    ${mcpDetail}`);

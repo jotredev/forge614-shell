@@ -164,13 +164,13 @@ test("the preview shows the memory-hook status on its own segment of the summary
       agentLabel: "Claude Code", kind: "pending",
       mcpPath: "/Users/tester/.claude.json", instructionsPaths: ["/Users/tester/.claude/CLAUDE.md"],
       hookPath: "/Users/tester/.claude/settings.json",
-      mcp: { kind: "write" }, instructions: { kind: "noop" },
-      hook: { kind: "noop" },
+      mcp: { kind: "noop" }, instructions: { kind: "noop" },
+      hook: { kind: "write" },
       overallStatus: "partial",
     },
   ], terminal);
   await tick();
-  expect(terminal.output).toContain("hook:");
+  expect(terminal.output).toContain("memory hook: will add");
   terminal.input("\r");
   await run;
 });

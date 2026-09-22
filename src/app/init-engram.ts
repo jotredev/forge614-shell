@@ -165,12 +165,12 @@ async function runMemorySetupStep(
     const previewItems: MemoryPreviewItem[] = [
       ...pending.map(p => ({
         agentLabel: p.agent.label, kind: "pending" as const,
-        mcpPath: p.plan.mcp.path, instructionsPaths: p.plan.instructions.paths,
-        mcp: p.plan.mcp.status, instructions: p.plan.instructions.status, overallStatus: p.plan.overallStatus,
+        mcpPath: p.plan.mcp.path, instructionsPaths: p.plan.instructions.paths, hookPath: p.plan.hook.path,
+        mcp: p.plan.mcp.status, instructions: p.plan.instructions.status, hook: p.plan.hook.status, overallStatus: p.plan.overallStatus,
       })),
       ...resolved.map(r => ({
         agentLabel: r.agent.label, kind: "resolved" as const,
-        mcp: r.plan.mcp.status, instructions: r.plan.instructions.status, overallStatus: r.plan.overallStatus,
+        mcp: r.plan.mcp.status, instructions: r.plan.instructions.status, hook: r.plan.hook.status, overallStatus: r.plan.overallStatus,
       })),
       ...blockedAgents.map(agent => ({ agentLabel: agent.label, kind: "blocked" as const, detail: outcomeMap.get(agent.id)!.detail! })),
     ];
