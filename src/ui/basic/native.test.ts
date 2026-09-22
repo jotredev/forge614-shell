@@ -8,6 +8,7 @@ import type { Approve } from "../../engines/types.ts";
 import { runNativeUI } from "./native.ts";
 import { CodexSession } from "../../engines/codex/session.ts";
 import { FixtureRpc } from "../../../tests/support/rpc-fixture.ts";
+import { getCatalog } from "../../i18n/index.ts";
 
 // Shell persists /model and /effort picks to $FORGE614_HOME/shell/preferences.json (see
 // shell-preferences.ts). Without isolating this, a test run would read and write the real
@@ -92,6 +93,46 @@ test("local logout waits for consent and never calls native account logout", asy
     expect(rpc.calls.filter(c => c.method === "account/logout")).toHaveLength(0);
     expect(terminal.output).toContain("Disconnected locally");
   } finally { enter("/quit!"); await ui; }
+});
+
+test("native UI reports backgroundActivitySupported as true and shows idle text when the session implements backgroundActivity()", async () => {
+  const terminal = new TestTerminal();
+  const session = {
+    busy: false, models: [],
+    async initialize() {}, async login() {}, async cancel() {}, reset() {}, async resume(_id: string) {},
+    async listSessions() { return []; }, async setModel(_id: string) {}, async setEffort(_effort: string) {},
+    status() { return ["native status"]; },
+    async send(_text: string) {},
+    close() {},
+    backgroundActivity() { return []; },
+  };
+  const ui = runNativeUI("codex", "/project", (_emit, _approve) => session, terminal);
+  try {
+    await tick();
+    // Feature-detected purely from the presence of `backgroundActivity()` on the session object —
+    // never from the engine id ("codex" here is incidental to this fake, not what drives the check).
+    // The sidebar rail is narrower than the full idle sentence, so it truncates mid-word with "…" —
+    // assert a safe leading fragment (still sourced from the real catalog string) instead.
+    expect(terminal.output).toContain(getCatalog("en").backgroundActivity.idle.slice(0, 16));
+  } finally { terminal.input("/quit!"); terminal.input("\r"); await ui; }
+});
+
+test("native UI reports backgroundActivitySupported as false when the session has no backgroundActivity()", async () => {
+  const terminal = new TestTerminal();
+  const session = {
+    busy: false, models: [],
+    async initialize() {}, async login() {}, async cancel() {}, reset() {}, async resume(_id: string) {},
+    async listSessions() { return []; }, async setModel(_id: string) {}, async setEffort(_effort: string) {},
+    status() { return ["native status"]; },
+    async send(_text: string) {},
+    close() {},
+  };
+  const ui = runNativeUI("codex", "/project", (_emit, _approve) => session, terminal);
+  try {
+    await tick();
+    // Same truncation caveat as the idle-text test above — assert a safe leading fragment.
+    expect(terminal.output).toContain(getCatalog("en").backgroundActivity.notReportedByEngine.slice(0, 20));
+  } finally { terminal.input("/quit!"); terminal.input("\r"); await ui; }
 });
 
 test("native chat waits for input and warns instead of quitting an active turn", async () => {

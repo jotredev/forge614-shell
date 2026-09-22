@@ -177,6 +177,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         ...(session.context ? { context: session.context } : telemetry.contextTokens !== undefined && telemetry.contextWindow !== undefined ? { context: { used: telemetry.contextTokens, window: telemetry.contextWindow } } : {}),
         usage: usage.length ? usage : session.usage,
         resources: readRuntimeResources(),
+        backgroundActivity: session.backgroundActivity,
+        backgroundActivitySupported: true,
       });
     }
     sidebar.invalidate();

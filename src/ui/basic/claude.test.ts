@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { startClaudeUI } from "./claude.ts";
+import { getCatalog } from "../../i18n/index.ts";
 
 class TestTerminal implements Terminal {
   columns = 120; rows = 50; kittyProtocolActive = false;
@@ -44,6 +45,13 @@ if(process.argv[2]==='auth') {
     expect(terminal.output).toContain("SESSION");
     for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
     expect(terminal.output).toContain("test@example.com");
+    // Claude always supports background-activity reporting (Task 8): once connected, the sidebar's
+    // "Background activity" section should render — with nothing running yet, that means the idle
+    // message, not the "doesn't report" fallback CodexSession-less engines get. The sidebar rail is
+    // narrower than the full idle sentence, so it truncates mid-word with "…" — assert a safe leading
+    // fragment (still sourced from the real catalog string, not a hand-typed literal) rather than the
+    // whole sentence.
+    expect(terminal.output).toContain(getCatalog("en").backgroundActivity.idle.slice(0, 16));
     enter("/model"); await tick();
     expect(terminal.output).toContain("Select model");
     expect(terminal.output).toContain("Native default");

@@ -82,11 +82,17 @@ export async function runNativeUI(
         user: visual.user, sessionId: session.sessionId,
         model: session.models.find(model => model.id === visual.model)?.name ?? visual.model,
         reasoning: effortLabel(visual.reasoning, locale), context: visual.context, usage: visual.usage, resources: readRuntimeResources(),
+        backgroundActivity: session.backgroundActivity?.() ?? [],
+        backgroundActivitySupported: typeof session.backgroundActivity === "function",
       });
     } else {
       const status = session.status().join(" ");
       if (/disconnected|login required|sign-in required|not logged in|not checked|could not be verified/i.test(status)) shellState.disconnect();
-      else shellState.connect({ resources: readRuntimeResources() });
+      else shellState.connect({
+        resources: readRuntimeResources(),
+        backgroundActivity: session.backgroundActivity?.() ?? [],
+        backgroundActivitySupported: typeof session.backgroundActivity === "function",
+      });
     }
     sidebar.invalidate();
     const elapsed = turnStartedAt ? ` · ${Math.max(0, Math.floor((Date.now() - turnStartedAt) / 1000))}s` : "";
