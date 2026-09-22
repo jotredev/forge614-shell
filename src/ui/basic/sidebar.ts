@@ -113,7 +113,7 @@ export class ShellSidebar implements Component {
       } else {
         for (const activity of snapshot.backgroundActivity) {
           const elapsedMs = (activity.endedAt ?? Date.now()) - activity.startedAt;
-          const elapsed = elapsedMs < 60_000 ? ba.elapsedSeconds({ seconds: Math.max(0, Math.floor(elapsedMs / 1000)) }) : ba.elapsedMinutes({ minutes: Math.floor(elapsedMs / 60_000) });
+          const elapsed = elapsedMs < 60_000 ? ba.elapsedSeconds({ seconds: Math.max(0, Math.floor(elapsedMs / 1000)) }) : ba.elapsedMinutes({ minutes: Math.max(0, Math.floor(elapsedMs / 60_000)) });
           const stateLabel = activity.state === "running" ? ba.running : activity.state === "done" ? ba.done : ba.failed;
           const expanded = this.expandedActivityIds.has(activity.id);
           const card = new ActivityCard(activity.label, `${stateLabel} · ${elapsed}`, activity.detail ?? "", expanded);
