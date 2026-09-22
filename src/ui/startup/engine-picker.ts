@@ -3,21 +3,25 @@ import type { Terminal } from "@earendil-works/pi-tui";
 import type { AvailableEngine } from "../../contracts/available-engine.ts";
 import { startupFrame } from "./frame.ts";
 import { accent } from "../basic/theme.ts";
+import { getCatalog } from "../../i18n/index.ts";
+import type { Locale } from "../../i18n/index.ts";
 
 export async function chooseEngine(
   engines: AvailableEngine[],
   terminal: Terminal = new ProcessTerminal(),
   version?: string,
+  locale: Locale = "en",
 ): Promise<AvailableEngine | undefined> {
+  const t = getCatalog(locale).enginePicker;
   if (!engines.length) {
-    throw new Error("Forge614 Engines found no Shell-compatible AI engines. Install Claude Code or Codex, then restart Forge614-Shell.");
+    throw new Error(t.noEnginesFound);
   }
   const plain = (text: string) => text;
   const list = new SelectList(engines.map(engine => ({ value: engine.id, label: engine.label })), 8, {
     selectedPrefix: accent, selectedText: accent,
     description: plain, scrollInfo: plain, noMatch: plain,
   });
-  const tui = startupFrame(terminal, "Choose your AI engine", list, undefined, undefined, version);
+  const tui = startupFrame(terminal, t.title, list, undefined, undefined, version);
   let finish!: (engine?: AvailableEngine) => void;
   const selection = new Promise<AvailableEngine | undefined>(resolve => { finish = resolve; });
   list.onSelect = item => finish(engines.find(engine => engine.id === item.value));

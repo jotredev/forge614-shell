@@ -95,6 +95,9 @@ test("accepts the --product=engram form too", () => {
 
 import type { Terminal } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runInitCommand } from "./init-engram.ts";
 
 class TestTerminal implements Terminal {
@@ -111,6 +114,20 @@ class TestTerminal implements Terminal {
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 25));
 
+class FakeStdin {
+  private listeners = new Map<string, Set<() => void>>();
+  on(event: "end" | "close", listener: () => void) {
+    if (!this.listeners.has(event)) this.listeners.set(event, new Set());
+    this.listeners.get(event)!.add(listener);
+  }
+  off(event: "end" | "close", listener: () => void) {
+    this.listeners.get(event)?.delete(listener);
+  }
+  emit(event: "end" | "close") {
+    for (const listener of this.listeners.get(event) ?? []) listener();
+  }
+}
+
 test("rejects a missing product before ever starting the terminal UI", async () => {
   const terminal = new TestTerminal();
   await expect(runInitCommand([], { terminal })).rejects.toThrow("--product <name>");
@@ -120,6 +137,235 @@ test("rejects a missing product before ever starting the terminal UI", async () 
 test("rejects a non-interactive terminal", async () => {
   // `interactive: false` is the sole gate here, so this never depends on the test runner's own TTY state.
   await expect(runInitCommand(["--product", "engram"], { interactive: false })).rejects.toThrow("interactive terminal");
+});
+
+test("a terminal that fails to start (e.g. raw mode unsupported) never leaves the alt screen open, and reports a clear, non-zero-exit error", async () => {
+  // Mirrors the exact production bug: `beforeTerminalStart()` already wrote the alt-screen escape
+  // sequence before the terminal's own `start()` (raw-mode setup) throws. A silent, un-reported
+  // failure here is exactly what a person sees as "returns immediately to the prompt".
+  class FailingStartTerminal extends TestTerminal {
+    start() {
+      throw new Error("ENOTTY: raw mode is not supported on this stdin");
+    }
+  }
+  const terminal = new FailingStartTerminal();
+  process.exitCode = 0;
+  await expect(runInitCommand(["--product", "engram"], { terminal })).rejects.toThrow(/raw mode/i);
+  expect(process.exitCode as number | undefined).toBe(1);
+  // The alt screen must have been forced shut even though start() itself is what failed.
+  expect(terminal.output).toContain("\x1b[?1049l");
+  process.exitCode = 0;
+});
+
+function tempForgeHome(): string {
+  return mkdtempSync(join(tmpdir(), "forge614-shell-init-debug-"));
+}
+
+test("FORGE614_SHELL_DEBUG_INIT=1 never writes raw debug event lines to stderr while the TUI is running — the bug confirmed in Orca (stale → markers when navigating) was exactly these stderr writes landing in the same screen buffer as the alt-screen render", async () => {
+  const home = tempForgeHome();
+  const stderrWrites: string[] = [];
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: unknown) => { stderrWrites.push(String(chunk)); return true; }) as typeof process.stderr.write;
+  try {
+    const terminal = new TestTerminal();
+    process.exitCode = 0;
+    const run = runInitCommand(["--product", "engram"], {
+      terminal, home, env: { FORGE614_SHELL_DEBUG_INIT: "1" },
+    });
+    await tick();
+    terminal.input("\r"); await tick(); // Continue
+    // Repeatedly navigate up/down on the PostgreSQL screen — this is exactly the sequence that
+    // left stale `→` markers in Orca when the debug logger wrote to stderr mid-render.
+    for (let i = 0; i < 4; i++) {
+      terminal.input("\x1b[B"); await tick();
+      terminal.input("\x1b[A"); await tick();
+    }
+    terminal.input("\x1b"); // Esc cancels
+    await run;
+    // Not one raw `[forge614-shell:init-debug]` event line may reach stderr at any point — the
+    // one allowed stderr write is the final, single "init debug log: <path>" announcement, made
+    // only after the alt-screen has already exited (proven separately below).
+    for (const chunk of stderrWrites) expect(chunk).not.toContain("[forge614-shell:init-debug]");
+    expect(terminal.output).not.toContain("[forge614-shell:init-debug]");
+    process.exitCode = 0;
+  } finally {
+    process.stderr.write = originalStderrWrite;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("the debug log file is written under $FORGE614_HOME/shell/logs/, and a PostgreSQL connection string entered during the flow never reaches it", async () => {
+  const home = tempForgeHome();
+  const postgresUrl = "postgres://user:sup3rsecret@host:5432/db";
+  try {
+    const terminal = new TestTerminal();
+    process.exitCode = 0;
+    const run = runInitCommand(["--product", "engram"], {
+      terminal, home, env: { FORGE614_SHELL_DEBUG_INIT: "1" },
+      run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+      enginesRun: async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, agents: [] }), stderr: "" }),
+    });
+    await tick();
+    terminal.input("\r"); await tick(); // Continue
+    terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
+    terminal.input(postgresUrl);
+    terminal.input("\r"); await tick(); // submit connection string
+    terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
+    terminal.input("\x1b"); // cancel on the summary screen instead of confirming
+    await run;
+    const logsDir = join(home, ".forge614", "shell", "logs");
+    expect(existsSync(logsDir)).toBe(true);
+    const [logFile] = require("node:fs").readdirSync(logsDir) as string[];
+    expect(logFile).toBeDefined();
+    const content = readFileSync(join(logsDir, logFile!), "utf8");
+    expect(content).toContain("[forge614-shell:init-debug]");
+    expect(content).not.toContain(postgresUrl);
+    expect(content).not.toContain("sup3rsecret");
+    process.exitCode = 0;
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("once the TUI has exited, the debug log path is announced exactly once on the plain terminal — never inside the TUI, never when debugging is off", async () => {
+  const home = tempForgeHome();
+  const stderrWrites: string[] = [];
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: unknown) => { stderrWrites.push(String(chunk)); return true; }) as typeof process.stderr.write;
+  try {
+    const terminal = new TestTerminal();
+    process.exitCode = 0;
+    const run = runInitCommand(["--product", "engram"], {
+      terminal, home, env: { FORGE614_SHELL_DEBUG_INIT: "1" },
+    });
+    await tick();
+    terminal.input("\x1b"); // Esc cancels on the intro screen
+    await run;
+    const announceLines = stderrWrites.filter(line => line.includes("init debug log:"));
+    expect(announceLines).toHaveLength(1);
+    expect(announceLines[0]).toMatch(/init debug log: .*shell[/\\]logs[/\\]init-/);
+    process.exitCode = 0;
+  } finally {
+    process.stderr.write = originalStderrWrite;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("without FORGE614_SHELL_DEBUG_INIT, nothing is written to stderr and no log directory is created", async () => {
+  const home = tempForgeHome();
+  const stderrWrites: string[] = [];
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: unknown) => { stderrWrites.push(String(chunk)); return true; }) as typeof process.stderr.write;
+  try {
+    const terminal = new TestTerminal();
+    process.exitCode = 0;
+    const run = runInitCommand(["--product", "engram"], { terminal, home });
+    await tick();
+    terminal.input("\x1b");
+    await run;
+    expect(stderrWrites).toEqual([]);
+    expect(existsSync(join(home, ".forge614", "shell", "logs"))).toBe(false);
+    process.exitCode = 0;
+  } finally {
+    process.stderr.write = originalStderrWrite;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("stdin closing for real (not a Ctrl-D keypress) is never a silent cancel: it exits non-zero with a clear, visible explanation", async () => {
+  const terminal = new TestTerminal();
+  const stdin = new FakeStdin();
+  process.exitCode = 0;
+  const run = runInitCommand(["--product", "engram"], { terminal, stdin });
+  await tick(); // intro screen is up, waiting on input
+  stdin.emit("end"); // the real stdin stream closed, not a Ctrl-D keypress
+  await run;
+  expect(process.exitCode as number | undefined).toBe(1);
+  const afterAltScreenExit = terminal.output.slice(terminal.output.lastIndexOf("\x1b[?1049l"));
+  expect(afterAltScreenExit).toContain("stdin");
+  process.exitCode = 0;
+});
+
+test("stdin closing before any confirmation makes zero Engram or Engines calls, ever", async () => {
+  const terminal = new TestTerminal();
+  const stdin = new FakeStdin();
+  const engramCalls: string[][] = [];
+  const enginesCalls: string[][] = [];
+  process.exitCode = 0;
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, stdin, home: "/Users/tester",
+    run: async (command, args) => { engramCalls.push([command, ...args]); return { status: 0, stdout: "{}", stderr: "" }; },
+    enginesRun: async (command, args) => { enginesCalls.push([command, ...args]); return { status: 0, stdout: "{}", stderr: "" }; },
+  });
+  await tick(); // intro screen is up, waiting on input — nothing has been confirmed yet
+  stdin.emit("end");
+  await run;
+  expect(engramCalls).toEqual([]);
+  expect(enginesCalls).toEqual([]);
+  process.exitCode = 0;
+});
+
+test("stdin closing mid-flow stops the flow: no memory-setup Engines calls happen after the abort, and the run still settles without hanging", async () => {
+  const terminal = new TestTerminal();
+  const stdin = new FakeStdin();
+  const enginesCalls: string[][] = [];
+  let sawCapabilities = false;
+  let resolveCapabilities!: () => void;
+  const capabilitiesReached = new Promise<void>(resolve => { resolveCapabilities = resolve; });
+  process.exitCode = 0;
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, stdin, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      enginesCalls.push([_command, ...args]);
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") {
+        if (!sawCapabilities) { sawCapabilities = true; resolveCapabilities(); }
+        return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      }
+      // Any call reaching plan/apply/verify after the abort would land here — the test fails
+      // below by asserting the exact call list never grows past detect+capabilities.
+      return { status: 0, stdout: JSON.stringify(planPayload("claude-code")), stderr: "" };
+    },
+  });
+  await driveEngramScreens(terminal); // through intro, postgres, reinforcement, and the summary confirm
+  await capabilitiesReached; // memory setup has detected the assistant and is about to show the picker
+  await tick();
+  const callsBeforeAbort = enginesCalls.length;
+  stdin.emit("end"); // real stdin close while the assistant picker is up, waiting on input
+  await run; // must resolve — a hang here means the abort never propagated
+  expect(process.exitCode as number | undefined).toBe(1);
+  expect(enginesCalls.length).toBe(callsBeforeAbort); // no plan/apply/verify calls after the abort
+  expect(enginesCalls.some(call => call[0] === "plan" || call[0] === "apply")).toBe(false);
+  process.exitCode = 0;
+});
+
+test("locale: \"es\" translates the whole Engram flow end to end, including the final result reprinted after the alt screen exits", async () => {
+  const terminal = new TestTerminal();
+  process.exitCode = 0;
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester", locale: "es",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("claude-code")), stderr: "" };
+      if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload("claude-code")), stderr: "" };
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-claude-code")), stderr: "" };
+      return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code")), stderr: "" };
+    },
+  });
+  await tick();
+  expect(terminal.output).toContain("Forge614 Engram — inicialización de memoria");
+  terminal.input("\r"); await tick(); // Continuar
+  terminal.input("\r"); await tick(); // PostgreSQL: No
+  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Refuerzo: No
+  terminal.input("\r"); await tick(); // Resumen: Confirmar
+  terminal.input(" "); terminal.input("\r"); await tick(); // elegir Claude Code, enviar
+  terminal.input("\r"); // vista previa: Confirmar
+  await run;
+  expect(terminal.output).toContain("La inicialización de memoria de Forge614 Engram se completó.");
+  expect(terminal.output).toContain("Claude Code: configurado — el servidor MCP y las instrucciones de memoria están instalados y activos");
+  const afterAltScreenExit = terminal.output.slice(terminal.output.lastIndexOf("\x1b[?1049l"));
+  expect(afterAltScreenExit).toContain("Claude Code: configurado");
+  process.exitCode = 0;
 });
 
 test("an injected terminal alone is enough to run, even with no TTY on the real process", async () => {
@@ -155,6 +401,11 @@ test("cancelling makes zero Engram calls and sets exit code 130", async () => {
   await run;
   expect(calls).toEqual([]);
   expect(process.exitCode as number | undefined).toBe(130);
+  // Regression: `screen.stop({ preserveScreen: true })` only switches the terminal back to the
+  // main buffer — it never reprints the rendered result, so a real terminal shows nothing after
+  // exiting alt-screen mode. The visible content must come AFTER the alt-screen exit sequence.
+  const afterAltScreenExit = terminal.output.slice(terminal.output.lastIndexOf("\x1b[?1049l"));
+  expect(afterAltScreenExit).toContain("Cancelled. No changes were made.");
   process.exitCode = 0; // reset so this test's exit code doesn't leak into the overall `bun test` process exit status
 });
 
@@ -663,6 +914,10 @@ test("an assistant whose plan is already complete and needs no writes is reporte
   expect(terminal.output).toContain("Claude Code: configured — MCP server and memory instructions are installed and active");
   // Nothing was written this run, so there is nothing for the assistant to reload.
   expect(terminal.output).not.toContain("Close and reopen");
+  // Regression: the final result must actually be reprinted after the alt screen exits, not just
+  // rendered at some point while the alt screen was still active (see the preserveScreen fix).
+  const afterAltScreenExit = terminal.output.slice(terminal.output.lastIndexOf("\x1b[?1049l"));
+  expect(afterAltScreenExit).toContain("Claude Code: configured");
 });
 
 test("a plan that claims complete while the instructions are unsupported is still never reported as fully configured", async () => {

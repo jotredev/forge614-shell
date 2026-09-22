@@ -2,6 +2,8 @@ import { TuiAltScreen } from "@earendil-works/pi-tui";
 import type { Component, Terminal, TuiStopOptions } from "@earendil-works/pi-tui";
 import { workspaceTerminal } from "../basic/workspace.ts";
 import { accent, bold, border, fit, muted } from "../basic/theme.ts";
+import { getCatalog } from "../../i18n/index.ts";
+import type { Locale } from "../../i18n/index.ts";
 
 /** Shared startup surface; the terminal shell stays outside the alternate screen. */
 export function startupFrame(terminal: Terminal, title: string, list: Component, hint?: Component, body?: Component, version?: string): TuiAltScreen {
@@ -41,13 +43,13 @@ export class EngramFlowScreen {
   private hint?: Component;
   private body?: Component;
 
-  constructor(terminal: Terminal, private readonly version?: string) {
+  constructor(terminal: Terminal, private readonly version?: string, private readonly locale: Locale = "en") {
     this.tui = new TuiAltScreen(workspaceTerminal(terminal));
     this.tui.addChild({
       invalidate: () => { this.list.invalidate(); this.hint?.invalidate(); this.body?.invalidate(); },
       render: (width: number) => {
         const inner = Math.max(1, width - 8);
-        const navHint = "↑/↓ navigate · Enter select · Esc cancel";
+        const navHint = getCatalog(this.locale).engramInit.navHint;
         const versionText = this.version ? `v${this.version}` : "";
         const navLine = versionText && inner >= navHint.length + versionText.length + 2
           ? `${muted(navHint)}${" ".repeat(inner - navHint.length - versionText.length)}${muted(versionText)}`

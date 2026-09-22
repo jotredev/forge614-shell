@@ -4,19 +4,27 @@ import type { MemoryComponentStatus, MemoryOverallStatus } from "../../infrastru
 import { MultiSelectList } from "./multi-select.ts";
 import type { EngramFlowScreen } from "./frame.ts";
 import { accent, success } from "../basic/theme.ts";
+import { getCatalog } from "../../i18n/index.ts";
+import type { Catalog, Locale } from "../../i18n/index.ts";
+import { bindAbort } from "./engram-init.ts";
 
 const plain = (text: string) => text;
 const listTheme = { selectedPrefix: accent, selectedText: accent, description: plain, scrollInfo: plain, noMatch: plain };
 const multiSelectTheme = { cursor: accent, checked: success, plain };
 
-/** Lets the person choose zero or more assistants to configure with Engram's memory integration (MCP + instructions). Makes no Engines call itself. */
+/**
+ * Lets the person choose zero or more assistants to configure with Engram's memory integration
+ * (MCP + instructions). Makes no Engines call itself. When `signal` aborts, resolves immediately
+ * like Esc/Ctrl-D (no selection) instead of leaving the picker waiting forever.
+ */
 export async function chooseMemoryAgents(
-  agents: readonly McpCapableAgent[], screen: EngramFlowScreen,
+  agents: readonly McpCapableAgent[], screen: EngramFlowScreen, locale: Locale = "en", signal?: AbortSignal,
 ): Promise<string[] | undefined> {
+  const t = getCatalog(locale).memoryPicker;
   const list = new MultiSelectList(agents.map(agent => ({ value: agent.id, label: agent.label })), multiSelectTheme);
-  const hint = new Text("Space to toggle · Enter to confirm your selection (zero or more) · Esc to skip memory setup");
-  const body = new Text("Choose which detected AI assistants should get Forge614 Engram's memory integration: the forge614-engram MCP server and its universal memory instructions.");
-  screen.setScreen("Configure Engram memory integration", list, { hint, body });
+  const hint = new Text(t.hint);
+  const body = new Text(t.body);
+  screen.setScreen(t.title, list, { hint, body });
   let finish!: (values: string[] | undefined) => void;
   const selection = new Promise<string[] | undefined>(resolve => { finish = resolve; });
   list.onSubmit = values => finish(values);
@@ -27,8 +35,9 @@ export async function chooseMemoryAgents(
   });
   const terminate = () => finish(undefined);
   process.once("SIGTERM", terminate);
+  const unbindAbort = bindAbort(signal, terminate);
   try { return await selection; }
-  finally { process.removeListener("SIGTERM", terminate); unsubscribe(); }
+  finally { process.removeListener("SIGTERM", terminate); unsubscribe(); unbindAbort(); }
 }
 
 export type MemoryPreviewItem =
@@ -59,30 +68,30 @@ export type MemoryPreviewItem =
 //
 // MCP is never reported "unsupported": Engines only reaches the planning stage for agents whose
 // capabilities already confirmed MCP support, so that branch is purely defensive.
-function mcpStatusLabel(status: MemoryComponentStatus): string {
+function mcpStatusLabel(status: MemoryComponentStatus, t: Catalog["memoryPreview"]): string {
   switch (status.kind) {
-    case "write": return "will add";
-    case "noop": return "already configured";
-    case "blocked": return "blocked";
-    case "unsupported": return "blocked — unexpectedly unsupported";
+    case "write": return t.statusWillAdd;
+    case "noop": return t.statusAlreadyConfigured;
+    case "blocked": return t.statusBlocked;
+    case "unsupported": return t.statusUnsupportedMcp;
   }
 }
 
-function instructionsStatusLabel(status: MemoryComponentStatus): string {
+function instructionsStatusLabel(status: MemoryComponentStatus, t: Catalog["memoryPreview"]): string {
   switch (status.kind) {
-    case "write": return "will add";
-    case "noop": return "already present";
-    case "blocked": return "blocked";
-    case "unsupported": return "not supported by this assistant";
+    case "write": return t.statusWillAdd;
+    case "noop": return t.statusAlreadyPresent;
+    case "blocked": return t.statusBlocked;
+    case "unsupported": return t.statusNotSupported;
   }
 }
 
-function hookStatusLabel(status: MemoryComponentStatus): string {
+function hookStatusLabel(status: MemoryComponentStatus, t: Catalog["memoryPreview"]): string {
   switch (status.kind) {
-    case "write": return "will add";
-    case "noop": return "already installed";
-    case "blocked": return "blocked";
-    case "unsupported": return "not supported by this assistant";
+    case "write": return t.statusWillAdd;
+    case "noop": return t.statusAlreadyInstalled;
+    case "blocked": return t.statusBlocked;
+    case "unsupported": return t.statusNotSupported;
   }
 }
 
@@ -98,8 +107,8 @@ function statusDetail(status: MemoryComponentStatus): string | undefined {
  * several assistants still fits on a standard 80×24 terminal — the alt-screen renderer clips from
  * the top, and nobody should be able to confirm a screen whose header scrolled away unseen.
  */
-function previewLine(item: MemoryPreviewItem): string {
-  if (item.kind === "blocked") return `${item.agentLabel}: blocked — ${item.detail}`;
+function previewLine(item: MemoryPreviewItem, t: Catalog["memoryPreview"]): string {
+  if (item.kind === "blocked") return t.blockedLine({ agent: item.agentLabel, detail: item.detail });
   const paths = item.kind === "pending"
     ? [
         ...(item.mcp.kind === "write" ? [item.mcpPath] : []),
@@ -108,10 +117,10 @@ function previewLine(item: MemoryPreviewItem): string {
       ]
     : [];
   const lines = [
-    `${item.agentLabel} — overall: ${item.overallStatus}`,
-    `  paths to change: ${paths.length ? paths.join(", ") : "(none)"}`,
-    `  MCP forge614-engram: ${mcpStatusLabel(item.mcp)} · memory instructions: ${instructionsStatusLabel(item.instructions)}`,
-    `  memory hook: ${hookStatusLabel(item.hook)}`,
+    t.overallLine({ agent: item.agentLabel, status: item.overallStatus }),
+    `  ${t.pathsToChangeLabel}: ${paths.length ? paths.join(", ") : t.noneLabel}`,
+    `  ${t.mcpAndInstructionsLine({ mcp: mcpStatusLabel(item.mcp, t), instructions: instructionsStatusLabel(item.instructions, t) })}`,
+    `  ${t.hookLine({ hook: hookStatusLabel(item.hook, t) })}`,
   ];
   const mcpDetail = statusDetail(item.mcp);
   if (mcpDetail) lines.push(`    ${mcpDetail}`);
@@ -122,8 +131,8 @@ function previewLine(item: MemoryPreviewItem): string {
   return lines.join("\n");
 }
 
-function previewText(items: readonly MemoryPreviewItem[]): string {
-  return [...items.map(previewLine), "Nothing has been changed yet. Confirming applies only the pending assistants above."].join("\n\n");
+function previewText(items: readonly MemoryPreviewItem[], t: Catalog["memoryPreview"]): string {
+  return [...items.map(item => previewLine(item, t)), t.nothingChangedYet].join("\n\n");
 }
 
 /**
@@ -132,14 +141,15 @@ function previewText(items: readonly MemoryPreviewItem[]): string {
  * explicit confirmation, which applies only the pending (non-noop) plans.
  */
 export async function showMemoryPreviewConfirm(
-  items: readonly MemoryPreviewItem[], screen: EngramFlowScreen,
+  items: readonly MemoryPreviewItem[], screen: EngramFlowScreen, locale: Locale = "en", signal?: AbortSignal,
 ): Promise<boolean> {
-  const body = new Text(previewText(items));
+  const t = getCatalog(locale).memoryPreview;
+  const body = new Text(previewText(items, t));
   const list = new SelectList([
-    { value: "confirm", label: "Confirm" },
-    { value: "cancel", label: "Cancel" },
+    { value: "confirm", label: t.confirmLabel },
+    { value: "cancel", label: t.cancelLabel },
   ], 2, listTheme);
-  screen.setScreen("Confirm memory integration", list, { body });
+  screen.setScreen(t.title, list, { body });
   let finish!: (value: boolean) => void;
   const selection = new Promise<boolean>(resolve => { finish = resolve; });
   list.onSelect = item => finish(item.value === "confirm");
@@ -150,6 +160,7 @@ export async function showMemoryPreviewConfirm(
   });
   const terminate = () => finish(false);
   process.once("SIGTERM", terminate);
+  const unbindAbort = bindAbort(signal, terminate);
   try { return await selection; }
-  finally { process.removeListener("SIGTERM", terminate); unsubscribe(); }
+  finally { process.removeListener("SIGTERM", terminate); unsubscribe(); unbindAbort(); }
 }

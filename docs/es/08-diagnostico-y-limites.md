@@ -13,6 +13,7 @@ Como una lista de averías de automóvil, este documento conecta cada síntoma c
 | Credenciales o URL base en el entorno | El adaptador rechaza desvíos de autenticación. Usa una terminal limpia y el login oficial. |
 | Datos de cuotas/contexto ausentes | El cliente nativo no los reportó; Shell no los calcula ni inventa. |
 | Una herramienta MCP no muestra 🧠 | Solo `forge614-engram` usa ese indicador. Otros MCP muestran `servidor: herramienta`; un asistente nuevo necesita un adaptador y validación de su protocolo. |
+| `init` regresa al prompt sin mostrar nada | Corregido: cualquier falla al entrar o salir de la pantalla alterna ahora fuerza una salida limpia y un mensaje en la terminal normal, con código de salida distinto de cero. Si aún ocurre, ejecuta `FORGE614_SHELL_DEBUG_INIT=1 forge614-shell init --product engram`. El diagnóstico nunca se imprime en pantalla — mezclarlo con el render de la pantalla alterna la corrompe — se escribe en un archivo privado bajo `$FORGE614_HOME/shell/logs/` (o `~/.forge614/shell/logs/`), cuya ruta se imprime una sola vez en la terminal normal al finalizar el comando. El archivo registra estado de TTY, clasificación de teclas (Enter/Esc/Ctrl-D/otra), señales y el motivo exacto de terminación, nunca secretos. |
 
 ## Límites conocidos
 

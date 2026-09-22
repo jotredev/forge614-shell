@@ -13,6 +13,7 @@ Like a car fault list, this document connects each symptom to the component that
 | Credentials or base URL in environment | The adapter rejects authentication rerouting. Use a clean terminal and official login. |
 | Missing quota/context data | The native client did not report it; Shell does not calculate or invent it. |
 | An MCP tool does not show 🧠 | Only `forge614-engram` uses that indicator. Other MCP servers show `server: tool`; a new assistant needs an adapter and protocol validation. |
+| `init` returns to the prompt with no visible output | Fixed: any failure to enter or leave the alternate screen now forces a clean exit and a message on the plain terminal, with a non-zero exit code. If it still happens, rerun with `FORGE614_SHELL_DEBUG_INIT=1 forge614-shell init --product engram`. Diagnostics are never printed to the screen — mixing them with the alternate-screen render corrupts it — they are written to a private file under `$FORGE614_HOME/shell/logs/` (or `~/.forge614/shell/logs/`), whose path is printed once on the plain terminal when the command exits. The file records TTY state, key classifications (Enter/Esc/Ctrl-D/other), signals, and the exact termination reason, never secrets. |
 
 ## Known limits
 
