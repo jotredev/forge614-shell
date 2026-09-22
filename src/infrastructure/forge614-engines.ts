@@ -336,14 +336,14 @@ const PENDING_RUNTIME_REASONS = new Set([
 // comparing a version string — Engines' own release number is not this file's business.
 const OUTDATED_ENGINES_MESSAGE = 'Forge614 Engines needs to be updated. Run "forge614-shell update", then try again.';
 
-function toHookRuntimeStatus(value: unknown): HookRuntimeStatus {
+function toHookRuntimeStatus(value: unknown, invalidMessage: string): HookRuntimeStatus {
   if (!value || typeof value !== "object" || typeof (value as { kind?: unknown }).kind !== "string" || !HOOK_RUNTIME_KINDS.has((value as { kind: string }).kind)) {
-    throw new Error("forge614-engines returned an invalid plan.");
+    throw new Error(invalidMessage);
   }
   const status = value as { kind: string; reason?: unknown };
   if (status.kind === "pending-runtime-verification") {
     if (typeof status.reason !== "string" || !PENDING_RUNTIME_REASONS.has(status.reason)) {
-      throw new Error("forge614-engines returned an invalid plan.");
+      throw new Error(invalidMessage);
     }
     return { kind: "pending-runtime-verification", reason: status.reason as HookRuntimeReason };
   }
@@ -391,7 +391,7 @@ function toMemoryInstallPlan(payload: unknown): MemoryInstallPlan {
     noop: plan.noop,
     mcp: { path: mcp.path, status: toMemoryComponentStatus(mcp.status) },
     instructions: { paths: instructions.paths, status: toMemoryComponentStatus(instructions.status) },
-    hook: { path: hook.path, status: toMemoryComponentStatus(hook.status), runtimeStatus: toHookRuntimeStatus(hook.runtimeStatus) },
+    hook: { path: hook.path, status: toMemoryComponentStatus(hook.status), runtimeStatus: toHookRuntimeStatus(hook.runtimeStatus, "forge614-engines returned an invalid plan.") },
     overallStatus: overallStatus as MemoryOverallStatus,
   };
 }
@@ -437,7 +437,7 @@ function toMemoryVerification(payload: unknown): MemoryVerification {
     agentId: verification.agentId,
     mcp: { path: verification.mcp.path, present: verification.mcp.present },
     instructions: { supported: verification.instructions.supported, paths: verification.instructions.paths, present: verification.instructions.present },
-    hook: { supported: hook.supported, path: hook.path, present: hook.present, dryRunOk: hook.dryRunOk, runtimeStatus: toHookRuntimeStatus(hook.runtimeStatus) },
+    hook: { supported: hook.supported, path: hook.path, present: hook.present, dryRunOk: hook.dryRunOk, runtimeStatus: toHookRuntimeStatus(hook.runtimeStatus, "forge614-engines returned an invalid verification result.") },
     overallStatus: verification.overallStatus as MemoryVerification["overallStatus"],
   };
 }

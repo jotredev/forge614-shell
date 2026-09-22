@@ -675,6 +675,26 @@ test("verifyMemoryIntegration rejects a malformed result instead of guessing its
   })).rejects.toThrow("forge614-engines returned an invalid verification result.");
 });
 
+test("verifyMemoryIntegration rejects a malformed hook.runtimeStatus with the verify-path error message, not the plan-path message", async () => {
+  await expect(verifyMemoryIntegration({
+    agentId: "claude-code", home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        verification: {
+          agentId: "claude-code",
+          mcp: { path: "/Users/tester/.claude.json", present: true },
+          instructions: { supported: true, paths: ["/Users/tester/.claude/CLAUDE.md"], present: true },
+          hook: { supported: true, path: "/Users/tester/.claude/settings.json", present: true, dryRunOk: true, runtimeStatus: { kind: "invalid-kind" } },
+          overallStatus: "complete",
+        },
+      }),
+      stderr: "",
+    }),
+  })).rejects.toThrow("forge614-engines returned an invalid verification result.");
+});
+
 import { updateEngines } from "./forge614-engines.ts";
 
 test("updateEngines sends the bare update command and reads the result", async () => {
