@@ -390,6 +390,17 @@ export interface Catalog {
     changes: (params: { count: number }) => string;
     clean: string;
   };
+  backgroundActivity: {
+    heading: string;
+    running: string;
+    done: string;
+    failed: string;
+    idle: string;
+    notReportedByEngine: string;
+    elapsedSeconds: (params: { seconds: number }) => string;
+    elapsedMinutes: (params: { minutes: number }) => string;
+    statusBarCount: (params: { count: number }) => string;
+  };
   update: {
     updated: (params: { label: string; detail?: string }) => string;
     alreadyUpToDate: (params: { label: string; detail?: string }) => string;

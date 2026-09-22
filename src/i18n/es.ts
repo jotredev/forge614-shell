@@ -404,6 +404,17 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     changes: ({ count }) => `${count} cambios`,
     clean: "Limpio",
   },
+  backgroundActivity: {
+    heading: "Actividad en segundo plano",
+    running: "corriendo",
+    done: "hecho",
+    failed: "fallido",
+    idle: "Nada corriendo en segundo plano por ahora.",
+    notReportedByEngine: "Este motor no informa actividad en segundo plano.",
+    elapsedSeconds: ({ seconds }) => `${seconds}s`,
+    elapsedMinutes: ({ minutes }) => `${minutes}m`,
+    statusBarCount: ({ count }) => `${count} en segundo plano`,
+  },
   update: {
     updated: ({ label, detail }) => `${label}: actualizado${detail ? ` (${detail})` : ""}`,
     alreadyUpToDate: ({ label, detail }) => `${label}: ya está actualizado${detail ? ` (${detail})` : ""}`,

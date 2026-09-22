@@ -404,6 +404,17 @@ The selected engine's project settings and permissions apply. This is not a sand
     changes: ({ count }) => `${count} changes`,
     clean: "Clean",
   },
+  backgroundActivity: {
+    heading: "Background activity",
+    running: "running",
+    done: "done",
+    failed: "failed",
+    idle: "Nothing running in the background right now.",
+    notReportedByEngine: "This engine doesn't report background activity.",
+    elapsedSeconds: ({ seconds }) => `${seconds}s`,
+    elapsedMinutes: ({ minutes }) => `${minutes}m`,
+    statusBarCount: ({ count }) => `${count} background`,
+  },
   update: {
     updated: ({ label, detail }) => `${label}: updated${detail ? ` (${detail})` : ""}`,
     alreadyUpToDate: ({ label, detail }) => `${label}: already up to date${detail ? ` (${detail})` : ""}`,
