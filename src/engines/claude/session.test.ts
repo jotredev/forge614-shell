@@ -293,3 +293,67 @@ test("a task_id missing from a background_tasks_changed snapshot without an expl
     expect.objectContaining({ id: "t1", kind: "process", state: "done" }),
   ]);
 });
+
+test("a task still running when the turn ends is dropped, not frozen at running", async () => {
+  const session = new ClaudeSession({
+    cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
+    run: () => (async function* () {
+      yield { type: "system", subtype: "task_started", task_id: "t1", description: "still going", task_type: "local_agent", is_backgrounded: true, uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
+      // No task_updated/task_notification/background_tasks_changed closure ever arrives before result.
+      yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+    })(),
+  });
+  await session.send("go", () => {}, async () => true);
+  expect(session.backgroundActivity.find(activity => activity.id === "t1")).toBeUndefined();
+  expect(session.backgroundActivity).toEqual([]);
+});
+
+test("a foreground task is not wrongly marked done by a background_tasks_changed snapshot that never lists it", async () => {
+  const session = new ClaudeSession({
+    cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
+    run: () => (async function* () {
+      yield { type: "system", subtype: "task_started", task_id: "t1", description: "foreground work", task_type: "local_agent", is_backgrounded: false, uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
+      yield { type: "system", subtype: "background_tasks_changed", tasks: [], uuid: "123e4567-e89b-12d3-a456-426614174001", session_id: "s" } as SDKMessage;
+      yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+    })(),
+  });
+  let stateRightAfterReconciliation: string | undefined;
+  await session.send("go", event => {
+    if (event.type === "system" && event.subtype === "background_tasks_changed") {
+      stateRightAfterReconciliation = session.backgroundActivity.find(activity => activity.id === "t1")?.state;
+    }
+  }, async () => true);
+  // The foreground task must never have been flipped to "done" by the background_tasks_changed
+  // reconciliation, since is_backgrounded === false means it was never going to appear in that
+  // snapshot in the first place.
+  expect(stateRightAfterReconciliation).toBe("running");
+});
+
+test("task_updated with a running/pending/paused status corrects a previously-closed task back to running and clears endedAt", async () => {
+  const session = new ClaudeSession({
+    cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
+    run: () => (async function* () {
+      yield { type: "system", subtype: "task_started", task_id: "t1", description: "flaky", task_type: "local_agent", is_backgrounded: true, uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
+      yield { type: "system", subtype: "task_updated", task_id: "t1", patch: { status: "failed", error: "boom" }, uuid: "123e4567-e89b-12d3-a456-426614174001", session_id: "s" } as SDKMessage;
+      yield { type: "system", subtype: "task_updated", task_id: "t1", patch: { status: "running" }, uuid: "123e4567-e89b-12d3-a456-426614174002", session_id: "s" } as SDKMessage;
+      yield { type: "system", subtype: "task_notification", task_id: "t1", status: "completed", summary: "eventually fine", output_file: "/tmp/out", uuid: "123e4567-e89b-12d3-a456-426614174003", session_id: "s" } as SDKMessage;
+      yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+    })(),
+  });
+  const snapshotsAfterEachEvent: { state: string; endedAt: number | undefined }[] = [];
+  await session.send("go", event => {
+    if (event.type === "system" && (event.subtype === "task_updated" || event.subtype === "task_notification")) {
+      const task = session.backgroundActivity.find(activity => activity.id === "t1")!;
+      snapshotsAfterEachEvent.push({ state: task.state, endedAt: task.endedAt });
+    }
+  }, async () => true);
+  // After the failed patch: state "failed" with an endedAt set.
+  expect(snapshotsAfterEachEvent[0]).toMatchObject({ state: "failed" });
+  expect(snapshotsAfterEachEvent[0]!.endedAt).toBeDefined();
+  // After the later running patch: corrected back to "running" with endedAt cleared.
+  expect(snapshotsAfterEachEvent[1]).toEqual({ state: "running", endedAt: undefined });
+  // Final terminal state, reached from "running" rather than being stuck on the stale "failed".
+  expect(session.backgroundActivity).toEqual([
+    expect.objectContaining({ id: "t1", state: "done", detail: "eventually fine" }),
+  ]);
+});
