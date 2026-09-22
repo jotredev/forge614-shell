@@ -60,7 +60,7 @@ Cursor has no officially supported mechanism to auto-load global instructions. I
 
 ## The memory hook and its runtime evidence
 
-Forge614 Engines' `plan memory-install` and `verify memory-integration` also cover a third component: a `SessionStart` hook, installed for Claude Code and Codex alongside the MCP server and instructions. Shell detects support for this component structurally — by checking whether a `hook` field is present in Engines' own JSON — never by checking an Engines version number. If the installed Engines predates this feature, Shell shows: "Forge614 Engines needs to be updated. Run `forge614-shell update`, then try again."
+Forge614 Engines' `plan memory-install` and `verify memory-integration` also cover a third component: a `SessionStart` hook, installed for Claude Code and Codex alongside the MCP server and instructions. Shell detects support for this component structurally — by checking whether a `hook` field is present in Engines' own JSON — never by checking an Engines version number. If the installed Engines predates this feature, Shell shows: "Forge614 Engines needs to be updated. Run "forge614-shell update", then try again."
 
 Engines can confirm the hook file itself is correctly written, but it cannot cryptographically prove a real client session ran it — so it reports two independent things: whether the hook is *structurally* installed, and a separate `runtimeStatus`:
 
