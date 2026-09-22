@@ -250,3 +250,46 @@ test("Claude's own errors are typed ShellErrors, translatable at the presentatio
   expect((caught as ShellError).code).toBe("claude-work-mode-unknown");
   expect(describeError(caught, "es")).toBe("Claude Code no reportó ese modo de permisos.");
 });
+
+test("background activity tracks a subagent task from start through its terminal notification", async () => {
+  const session = new ClaudeSession({
+    cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
+    run: () => (async function* () {
+      yield { type: "system", subtype: "task_started", task_id: "t1", description: "Investigar X", task_type: "local_agent", is_backgrounded: true, uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
+      yield { type: "system", subtype: "task_updated", task_id: "t1", patch: { status: "running" }, uuid: "123e4567-e89b-12d3-a456-426614174001", session_id: "s" } as SDKMessage;
+      yield { type: "system", subtype: "task_notification", task_id: "t1", status: "completed", summary: "Listo", output_file: "/tmp/out", uuid: "123e4567-e89b-12d3-a456-426614174002", session_id: "s" } as SDKMessage;
+      yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+    })(),
+  });
+  await session.send("hazlo en segundo plano", () => {}, async () => true);
+  expect(session.backgroundActivity).toEqual([
+    expect.objectContaining({ id: "t1", kind: "agent", label: "Investigar X", state: "done", detail: "Listo" }),
+  ]);
+});
+
+test("background activity excludes ambient/housekeeping tasks, per the SDK's own guidance", async () => {
+  const session = new ClaudeSession({
+    cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
+    run: () => (async function* () {
+      yield { type: "system", subtype: "task_started", task_id: "t1", description: "housekeeping", ambient: true, uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
+      yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+    })(),
+  });
+  await session.send("go", () => {}, async () => true);
+  expect(session.backgroundActivity).toEqual([]);
+});
+
+test("a task_id missing from a background_tasks_changed snapshot without an explicit close is marked done", async () => {
+  const session = new ClaudeSession({
+    cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
+    run: () => (async function* () {
+      yield { type: "system", subtype: "task_started", task_id: "t1", description: "bash job", task_type: "local_bash", uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
+      yield { type: "system", subtype: "background_tasks_changed", tasks: [], uuid: "123e4567-e89b-12d3-a456-426614174001", session_id: "s" } as SDKMessage;
+      yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+    })(),
+  });
+  await session.send("go", () => {}, async () => true);
+  expect(session.backgroundActivity).toEqual([
+    expect.objectContaining({ id: "t1", kind: "process", state: "done" }),
+  ]);
+});

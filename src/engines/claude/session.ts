@@ -4,6 +4,7 @@ import { checkAuthentication, claudeEnvironment } from "./auth.ts";
 import { loadClaudeCatalog, readPlanUsage } from "./catalog.ts";
 import type { getStartupContext } from "../../infrastructure/forge614-engram.ts";
 import { ShellError } from "../../shell-error.ts";
+import type { BackgroundActivity, BackgroundActivityKind } from "../types.ts";
 
 type RunInput = { prompt: string; options: Options };
 type Dependencies = {
@@ -44,6 +45,45 @@ function wrapStartupContext(text: string): string {
   ].join("\n");
 }
 
+function backgroundKind(taskType: string | undefined): BackgroundActivityKind {
+  return taskType === "local_bash" ? "process" : "agent";
+}
+
+function applyTaskEvent(tasks: Map<string, BackgroundActivity>, event: SDKMessage): void {
+  if (event.type !== "system") return;
+  if (event.subtype === "task_started") {
+    if (event.ambient) return;
+    tasks.set(event.task_id, {
+      id: event.task_id, kind: backgroundKind(event.task_type),
+      label: event.description || event.subagent_type || event.task_id,
+      state: "running", startedAt: Date.now(),
+    });
+    return;
+  }
+  if (event.subtype === "task_updated") {
+    const task = tasks.get(event.task_id);
+    if (!task) return;
+    const status = event.patch.status;
+    if (status === "completed") { task.state = "done"; task.endedAt = Date.now(); }
+    else if (status === "failed" || status === "killed") { task.state = "failed"; task.endedAt = Date.now(); task.detail ??= event.patch.error; }
+    return;
+  }
+  if (event.subtype === "task_notification") {
+    const task = tasks.get(event.task_id);
+    if (!task) return;
+    task.state = event.status === "completed" ? "done" : "failed";
+    task.endedAt = Date.now();
+    task.detail = event.summary;
+    return;
+  }
+  if (event.subtype === "background_tasks_changed") {
+    const stillRunning = new Set(event.tasks.filter(entry => !entry.ambient).map(entry => entry.task_id));
+    for (const task of tasks.values()) {
+      if (task.state === "running" && !stillRunning.has(task.id)) { task.state = "done"; task.endedAt = Date.now(); }
+    }
+  }
+}
+
 export class ClaudeSession {
   busy = false;
   sessionId?: string;
@@ -54,6 +94,7 @@ export class ClaudeSession {
   user?: string;
   usage: { label: string; usedPercent: number; reset?: string }[] = [];
   context?: { used: number; window: number };
+  backgroundActivity: BackgroundActivity[] = [];
   private permissionMode: PermissionMode = "default";
   private static readonly permissionModes: { id: PermissionMode; label: string }[] = [
     { id: "default", label: "default" }, { id: "acceptEdits", label: "acceptEdits" },
@@ -151,10 +192,13 @@ export class ClaudeSession {
       };
       const run = this.dependencies.run ?? ((input: RunInput) => this.officialRun(input));
       let resultSeen = false;
+      const tasks = new Map<string, BackgroundActivity>();
       for await (const event of run({ prompt, options })) {
         if (event.type === "system" && event.subtype === "init") this.sessionId = event.session_id;
         if (event.type === "system" && event.subtype === "commands_changed") this.commands = event.commands;
         if (event.type === "result") resultSeen = true;
+        applyTaskEvent(tasks, event);
+        this.backgroundActivity = [...tasks.values()];
         onEvent(event);
       }
       if (!resultSeen && !this.abort.signal.aborted) throw new ShellError("claude-no-result");
