@@ -66,10 +66,14 @@ function isWorkingStatus(status: string): boolean {
   return status.startsWith(getCatalog("en").chat.statusWorking) || status.startsWith(getCatalog("es").chat.statusWorking);
 }
 
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+/** A live-moving dot while active — a static label reads as frozen once the person stares at it. */
+export function spinnerFrame(active: boolean): string {
+  return active ? SPINNER_FRAMES[Math.floor(Date.now() / 120) % SPINNER_FRAMES.length]! : "●";
+}
 /** A live-moving dot while busy — a static label reads as frozen once the person stares at it. */
 function statusDot(status: string): string {
-  return isWorkingStatus(status) ? SPINNER_FRAMES[Math.floor(Date.now() / 120) % SPINNER_FRAMES.length]! : "●";
+  return spinnerFrame(isWorkingStatus(status));
 }
 
 /** A focused editor rendered as Forge614's primary writing surface. */

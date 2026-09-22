@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
-import { createComposer, workModePresentation } from "./composer.ts";
+import { createComposer, workModePresentation, spinnerFrame } from "./composer.ts";
 import { ShellStatusBar } from "./status-bar.ts";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { renderLayoutFrame } from "../../../node_modules/@earendil-works/pi-tui/dist/layout.js";
@@ -325,4 +325,10 @@ test("status bar pins the Shell version to the footer's right edge", () => {
   const line = plain(bar.render(100))[0]!;
   expect(line).toEndWith("v1.0.0");
   expect(line).toContain("Claude Code");
+});
+
+test("spinnerFrame exposes the same animated dot the composer status uses", () => {
+  expect(spinnerFrame(false)).toBe("●");
+  const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  expect(SPINNER_FRAMES).toContain(spinnerFrame(true));
 });
