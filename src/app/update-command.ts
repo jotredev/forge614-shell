@@ -3,6 +3,9 @@ import { homedir } from "node:os";
 import { updateInstalledShell } from "../infrastructure/updater.ts";
 import { updateEngines, type EnginesUpdateResult, type DetectRun } from "../infrastructure/forge614-engines.ts";
 import { updateEngram, locateEngramBinary, type EngramUpdateResult } from "../infrastructure/forge614-engram.ts";
+import { getCatalog, resolveConfiguredLocale } from "../i18n/index.ts";
+import type { Locale } from "../i18n/index.ts";
+import { describeError } from "../shell-error.ts";
 
 export type ShellSpawn = (command: string, args: string[], options?: { stdio?: "inherit" }) => { status: number | null; stderr?: string | Buffer; error?: Error };
 
@@ -17,6 +20,9 @@ export interface RunUpdateOptions {
   readonly engramRun?: DetectRun;
   /** Test seam replacing node:fs's existsSync; production callers omit this. */
   readonly engramBinaryExists?: (path: string) => boolean;
+  /** Never prompts (this command never opens the language selector); resolved by the caller from
+   * FORGE614_SHELL_LOCALE / preferences.json when omitted, defaulting to English. */
+  readonly locale?: Locale;
 }
 
 type UpdateOutcomeStatus = "updated" | "already-up-to-date" | "not-installed" | "failed";
@@ -27,19 +33,20 @@ interface UpdateOutcome {
   readonly detail?: string;
 }
 
-function outcomeLine(outcome: UpdateOutcome): string {
-  if (outcome.status === "updated") return `${outcome.label}: updated${outcome.detail ? ` (${outcome.detail})` : ""}`;
-  if (outcome.status === "already-up-to-date") return `${outcome.label}: already up to date${outcome.detail ? ` (${outcome.detail})` : ""}`;
-  if (outcome.status === "not-installed") return `${outcome.label}: not installed, skipped`;
-  return `${outcome.label}: update failed — ${outcome.detail || "no details were reported."}`;
+function outcomeLine(outcome: UpdateOutcome, locale: Locale): string {
+  const t = getCatalog(locale).update;
+  if (outcome.status === "updated") return t.updated({ label: outcome.label, detail: outcome.detail });
+  if (outcome.status === "already-up-to-date") return t.alreadyUpToDate({ label: outcome.label, detail: outcome.detail });
+  if (outcome.status === "not-installed") return t.notInstalled({ label: outcome.label });
+  return t.failed({ label: outcome.label, detail: outcome.detail || t.noDetailsReported });
 }
 
 /** Prints an outcome the instant it's known, never buffered, so a later step's crash can never
  * discard an earlier step's already-decided result. Failures go to stderr, matching this command's
  * pre-existing convention; every other outcome goes to stdout. */
-function report(outcome: UpdateOutcome): void {
-  if (outcome.status === "failed") console.error(outcomeLine(outcome));
-  else console.log(outcomeLine(outcome));
+function report(outcome: UpdateOutcome, locale: Locale): void {
+  if (outcome.status === "failed") console.error(outcomeLine(outcome, locale));
+  else console.log(outcomeLine(outcome, locale));
 }
 
 function enginesOutcome(result: EnginesUpdateResult): UpdateOutcome {
@@ -62,36 +69,37 @@ function engramOutcome(result: EngramUpdateResult): UpdateOutcome {
  */
 export async function runUpdateCommand(options: RunUpdateOptions = {}): Promise<void> {
   const home = options.home ?? homedir();
+  const locale = options.locale ?? resolveConfiguredLocale({ env: options.env, home: options.home }) ?? "en";
   let anyFailed = false;
 
   try {
-    await updateInstalledShell({ installer: options.installer, spawn: options.spawn });
-    report({ label: "Forge614 Shell", status: "updated" });
+    await updateInstalledShell({ installer: options.installer, spawn: options.spawn, locale, env: options.env });
+    report({ label: "Forge614 Shell", status: "updated" }, locale);
   } catch (error) {
     anyFailed = true;
-    report({ label: "Forge614 Shell", status: "failed", detail: error instanceof Error ? error.message : String(error) });
+    report({ label: "Forge614 Shell", status: "failed", detail: describeError(error, locale) }, locale);
   }
 
   try {
     const result = await updateEngines({ home: options.home, env: options.env, run: options.enginesRun });
-    report(enginesOutcome(result));
+    report(enginesOutcome(result), locale);
   } catch (error) {
     anyFailed = true;
-    report({ label: "Forge614 Engines", status: "failed", detail: error instanceof Error ? error.message : String(error) });
+    report({ label: "Forge614 Engines", status: "failed", detail: describeError(error, locale) }, locale);
   }
 
   try {
     const engramBinary = locateEngramBinary(home, options.env);
     const engramInstalled = (options.engramBinaryExists ?? existsSync)(engramBinary);
     if (!engramInstalled) {
-      report({ label: "Forge614 Engram", status: "not-installed" });
+      report({ label: "Forge614 Engram", status: "not-installed" }, locale);
     } else {
       const result = await updateEngram({ home: options.home, env: options.env, run: options.engramRun });
-      report(engramOutcome(result));
+      report(engramOutcome(result), locale);
     }
   } catch (error) {
     anyFailed = true;
-    report({ label: "Forge614 Engram", status: "failed", detail: error instanceof Error ? error.message : String(error) });
+    report({ label: "Forge614 Engram", status: "failed", detail: describeError(error, locale) }, locale);
   }
 
   if (anyFailed) process.exitCode = 1;

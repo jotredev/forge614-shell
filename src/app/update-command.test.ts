@@ -201,3 +201,25 @@ test("passes FORGE614_HOME through to both dependency lookups when given", async
     expect(checkedPaths).toEqual(["/custom/forge/engram/bin/forge614-engram"]);
   } finally { restore(); process.exitCode = 0; }
 });
+
+test("with locale: \"es\", every outcome (success and failure) reports in Spanish, product names and versions kept literal", async () => {
+  const { logs, errors, restore } = captureLogs();
+  process.exitCode = 0;
+  try {
+    await runUpdateCommand({
+      home: "/Users/tester",
+      locale: "es",
+      installer: "/tmp/release/install.sh",
+      spawn: okShellSpawn(),
+      engramBinaryExists: () => true,
+      enginesRun: async () => ({
+        status: 1, stdout: JSON.stringify({ schemaVersion: 1, error: { code: "UPDATE_ASSET_MISSING", message: "no asset for darwin-arm64" } }), stderr: "",
+      }),
+      engramRun: async () => ({ status: 0, stdout: JSON.stringify({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" }), stderr: "" }),
+    });
+    expect(logs).toContain("Forge614 Shell: actualizado");
+    expect(logs).toContain("Forge614 Engram: actualizado (1.3.0 → 1.4.0)");
+    expect(errors).toContain("Forge614 Engines: falló la actualización — no asset for darwin-arm64");
+    expect(process.exitCode).toBe(1);
+  } finally { restore(); process.exitCode = 0; }
+});
