@@ -3,6 +3,7 @@ import type { EffortLevel, ModelInfo, Options, PermissionMode, SDKMessage, SDKUs
 import { checkAuthentication, claudeEnvironment } from "./auth.ts";
 import { loadClaudeCatalog, readPlanUsage } from "./catalog.ts";
 import type { getStartupContext } from "../../infrastructure/forge614-engram.ts";
+import { ShellError } from "../../shell-error.ts";
 
 type RunInput = { prompt: string; options: Options };
 type Dependencies = {
@@ -74,13 +75,13 @@ export class ClaudeSession {
   constructor(private readonly dependencies: Dependencies) {}
 
   resume(id: string): void {
-    if (this.busy) throw new Error("Stop the current turn before switching sessions.");
+    if (this.busy) throw new ShellError("claude-switch-session-busy");
     this.sessionId = id;
     this.startupContextStale = true;
   }
 
   reset(): void {
-    if (this.busy) throw new Error("Stop the current turn before starting a new chat.");
+    if (this.busy) throw new ShellError("claude-new-chat-busy");
     this.sessionId = undefined;
     this.context = undefined;
     this.startupContextStale = true;
@@ -109,8 +110,8 @@ export class ClaudeSession {
   workModes(): { id: string; label: string }[] { return ClaudeSession.permissionModes; }
   workMode(): string { return this.permissionMode; }
   async setWorkMode(mode: string): Promise<void> {
-    if (!ClaudeSession.permissionModes.some(item => item.id === mode)) throw new Error("Claude Code did not report that permission mode.");
-    if (this.busy) throw new Error("Finish or /stop the current turn first.");
+    if (!ClaudeSession.permissionModes.some(item => item.id === mode)) throw new ShellError("claude-work-mode-unknown");
+    if (this.busy) throw new ShellError("claude-turn-busy");
     this.permissionMode = mode as PermissionMode;
   }
 
@@ -119,7 +120,7 @@ export class ClaudeSession {
     onEvent: (event: SDKMessage) => void,
     approve: (tool: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<boolean>,
   ): Promise<void> {
-    if (this.busy) throw new Error("A turn is already running. Use /stop first.");
+    if (this.busy) throw new ShellError("claude-turn-already-running");
     if (!prompt.trim()) return;
     this.busy = true;
     this.abort = new AbortController();
@@ -156,7 +157,7 @@ export class ClaudeSession {
         if (event.type === "result") resultSeen = true;
         onEvent(event);
       }
-      if (!resultSeen && !this.abort.signal.aborted) throw new Error("Claude Code ended without a result. Check /resume before retrying.");
+      if (!resultSeen && !this.abort.signal.aborted) throw new ShellError("claude-no-result");
     } finally {
       this.abort = undefined;
       this.busy = false;

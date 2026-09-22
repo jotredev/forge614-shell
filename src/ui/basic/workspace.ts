@@ -2,6 +2,8 @@ import { HStack, VStack, ScrollView, Text, visibleWidth } from "@earendil-works/
 import type { Component, OverlayHandle, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { basename } from "node:path";
 import { accent, border, fit, foreground, muted } from "./theme.ts";
+import { getCatalog } from "../../i18n/index.ts";
+import type { Locale } from "../../i18n/index.ts";
 
 // Pi currently forwards residual wheel movement to the primary view even
 // with overscroll=contain. Consume the residual at this independent pane.
@@ -46,14 +48,14 @@ export class IndependentScrollView extends ScrollView {
 
 /** Small pill, styled like the rest of Shell's chrome, offering a click back to the latest message. */
 class JumpToLatestButton implements Component {
-  constructor(private readonly onClick: () => void) {}
+  constructor(private readonly onClick: () => void, private readonly locale: Locale = "en") {}
   invalidate(): void {}
   handleMouse(event: TuiMouseEvent) {
     if (event.type === "click" && event.button === "left") { this.onClick(); return { handled: true as const, render: true }; }
     return undefined;
   }
   render(width: number): string[] {
-    const label = " ↓ New messages · jump to latest ";
+    const label = getCatalog(this.locale).jumpToLatest.label;
     const inner = Math.min(Math.max(0, width - 2), visibleWidth(label));
     return [
       accent(`╭${"─".repeat(inner)}╮`),
@@ -67,8 +69,8 @@ class JumpToLatestButton implements Component {
  * Shows the jump-to-latest pill above the composer whenever the transcript has been scrolled away
  * from the newest message, and hides it again once the person is back at the end.
  */
-export function attachJumpToLatest(tui: TUI, scroll: IndependentScrollView): OverlayHandle {
-  return tui.showOverlay(new JumpToLatestButton(() => scroll.scrollToEnd()), {
+export function attachJumpToLatest(tui: TUI, scroll: IndependentScrollView, locale: Locale = "en"): OverlayHandle {
+  return tui.showOverlay(new JumpToLatestButton(() => scroll.scrollToEnd(), locale), {
     // Near the top, not the bottom: a fixed bottom position sits over whatever text happens to be
     // scrolled to the last visible row, which is usually mid-paragraph. Just under the header is
     // reliably clear of chat content, and matches where a "new messages" banner belongs anyway —

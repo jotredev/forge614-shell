@@ -2,12 +2,15 @@ import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { accent as cyan, added, addedBackground, muted, fit, panelBackground, removed, removedBackground } from "./theme.ts";
 import type { DiffLine } from "./diff.ts";
+import { getCatalog } from "../../i18n/index.ts";
+import type { Locale } from "../../i18n/index.ts";
 
 const MAX_DIFF_LINES_SHOWN = 60;
 
 
-export function chatMessage(role: "user" | "assistant" | "system", content: string): string {
-  const label = role === "user" ? "YOU" : role === "assistant" ? "ASSISTANT" : "SYSTEM";
+export function chatMessage(role: "user" | "assistant" | "system", content: string, locale: Locale = "en"): string {
+  const t = getCatalog(locale).chatRoles;
+  const label = role === "user" ? t.you : role === "assistant" ? t.assistant : t.system;
   return `## ${label} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}\n\n${content}`;
 }
 

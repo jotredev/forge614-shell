@@ -5,6 +5,8 @@ import type { ProjectInfo } from "../../infrastructure/project-info.ts";
 import { homeRelativePath } from "../../infrastructure/runtime-resources.ts";
 
 import { accent as cyan, muted, warning } from "./theme.ts";
+import { getCatalog } from "../../i18n/index.ts";
+import type { Locale } from "../../i18n/index.ts";
 const separator = muted(" · ");
 
 function contextPercent(snapshot: ShellSnapshot): string | undefined {
@@ -20,19 +22,21 @@ export class ShellStatusBar implements Component {
     private readonly getProject?: () => ProjectInfo | undefined,
     private readonly home = process.env.HOME,
     private readonly version?: string,
+    private readonly locale: Locale = "en",
   ) {}
 
   invalidate(): void {}
 
   render(width: number): string[] {
+    const t = getCatalog(this.locale).statusBar;
     const snapshot = this.getSnapshot();
     const details = snapshot.account === "connected"
       ? [snapshot.provider, snapshot.model, snapshot.reasoning, contextPercent(snapshot)].filter((part): part is string => Boolean(part))
-      : snapshot.account === "checking" ? ["Checking account…"] : [snapshot.account === "unknown" ? "Account unverified" : "Disconnected", "/login"];
+      : snapshot.account === "checking" ? [t.checkingAccount] : [snapshot.account === "unknown" ? t.accountUnverified : t.disconnected, "/login"];
     const projectInfo = this.getProject?.();
     const project = this.cwd ? [
       muted(homeRelativePath(this.cwd, this.home)),
-      ...(projectInfo?.git ? [cyan(projectInfo.branch ?? "Detached HEAD"), projectInfo.changedFiles ? warning(`${projectInfo.changedFiles} changes`) : cyan("Clean")] : []),
+      ...(projectInfo?.git ? [cyan(projectInfo.branch ?? t.detachedHead), projectInfo.changedFiles ? warning(t.changes({ count: projectInfo.changedFiles })) : cyan(t.clean)] : []),
     ] : [];
     const left = [cyan("F614"), ...details, ...project].join(separator);
     const release = this.version ? muted(`v${this.version}`) : undefined;

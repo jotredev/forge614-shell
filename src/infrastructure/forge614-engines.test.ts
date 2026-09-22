@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { applyEnginesPlan, defaultRun, discoverMcpCapableAgents, discoverSelectableEngines, planMcpInstall, planMcpRemove, planMemoryInstall, removeEngramMcpFromAgent, verifyMemoryIntegration } from "./forge614-engines.ts";
+import { ShellError, describeError } from "../shell-error.ts";
 
 test("the real runner execs asynchronously — it does not block the event loop, so a caller can show live progress while it runs", async () => {
   let tickedWhileRunning = false;
@@ -767,4 +768,29 @@ test("updateEngines never echoes raw stdout when it can't be parsed as JSON", as
   }).catch((thrown: Error) => thrown);
   expect((error as Error).message).toBe("forge614-engines update failed.");
   expect((error as Error).message).not.toContain("Downloading");
+});
+
+test("Engines' own reported error message is preserved literally, never translated or paraphrased", async () => {
+  const error = await planMcpInstall({
+    agentId: "claude-code", name: "forge614-engram", command: "node", args: ["server.js"], home: "/Users/tester",
+    run: async () => ({ status: 1, stdout: "", stderr: JSON.stringify({ error: { code: "CONFLICT", message: "An unrelated MCP server already uses this name" } }) }),
+  }).catch((thrown: unknown) => thrown);
+  expect(error).not.toBeInstanceOf(ShellError); // external text stays a plain Error, unwrapped
+  expect(describeError(error, "en")).toBe("An unrelated MCP server already uses this name");
+  expect(describeError(error, "es")).toBe("An unrelated MCP server already uses this name");
+});
+
+test("Engines' own Shell-authored errors (no external message available) are typed ShellErrors that translate at the boundary", async () => {
+  const error = await discoverSelectableEngines({ home: "/Users/tester", run: async () => ({ status: 1, stdout: "", stderr: "" }) })
+    .catch((thrown: unknown) => thrown);
+  expect(error).toBeInstanceOf(ShellError);
+  expect((error as ShellError).code).toBe("engines-unavailable");
+  expect(describeError(error, "es")).toBe("Forge614 Engines no está disponible. Reinstala Forge614 Shell para reparar su dependencia requerida.");
+
+  const invalidUpdate = await updateEngines({
+    home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { updated: true } }), stderr: "" }),
+  }).catch((thrown: unknown) => thrown);
+  expect((invalidUpdate as ShellError).code).toBe("engines-invalid-update-result");
+  expect(describeError(invalidUpdate, "es")).toBe("forge614-engines devolvió un resultado de actualización inválido.");
 });

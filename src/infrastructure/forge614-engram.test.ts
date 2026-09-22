@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { applyEngramInit, locateEngramBinary } from "./forge614-engram.ts";
+import { ShellError, describeError } from "../shell-error.ts";
 
 test("runs init --json only when PostgreSQL and reinforcement are both disabled", async () => {
   const calls: string[][] = [];
@@ -557,4 +558,32 @@ test("getStartupContext filters a dangling opener followed by a later closer, wi
     expect(result.text).not.toContain("<|");
     expect(result.text).not.toContain("real");
   }
+});
+
+test("Engram's own errors are typed ShellErrors that translate at the presentation boundary, with a redacted secret preserved through the type", async () => {
+  const secretUrl = "postgres://user:sup3rsecret@host:5432/db";
+  const error = await applyEngramInit(
+    { postgresUrl: secretUrl, reinforcement: false },
+    { home: "/Users/tester", run: async () => ({ status: null, stdout: "", stderr: "" }) },
+  ).catch((thrown: unknown) => thrown);
+  expect(error).toBeInstanceOf(ShellError);
+  expect((error as ShellError).code).toBe("engram-unavailable-at-path");
+  const en = describeError(error, "en");
+  const es = describeError(error, "es");
+  expect(en).not.toContain("sup3rsecret");
+  expect(es).not.toContain("sup3rsecret");
+  expect(es).toContain("no está disponible en");
+});
+
+test("Engram's own reported error message (from its JSON error payload) is preserved literally inside the typed wrapper, never translated", async () => {
+  const error = await applyEngramInit(
+    { postgresUrl: null, reinforcement: false },
+    { home: "/Users/tester", run: async () => ({ status: 1, stdout: "", stderr: JSON.stringify({ error: "disk full" }) }) },
+  ).catch((thrown: unknown) => thrown);
+  expect(error).toBeInstanceOf(ShellError);
+  expect((error as ShellError).code).toBe("engram-command-failed");
+  expect(describeError(error, "en")).toContain("disk full");
+  expect(describeError(error, "es")).toContain("disk full");
+  // Only the Shell-own prefix ("forge614-engram init failed:") translates around the literal detail.
+  expect(describeError(error, "es")).toContain("falló:");
 });

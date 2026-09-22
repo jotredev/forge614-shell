@@ -13,6 +13,9 @@ import { effortDescription, effortLabel } from "./metrics.ts";
 import { ChatText, danger } from "./theme.ts";
 import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
 import { discoverCodexSkills } from "../../engines/codex/skills.ts";
+import { getCatalog } from "../../i18n/index.ts";
+import type { Locale } from "../../i18n/index.ts";
+import { describeError } from "../../shell-error.ts";
 
 const clean = (text: string) => stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
 
@@ -20,28 +23,31 @@ export async function runNativeUI(
   id: NativeId, cwd: string, createSession: (emit: Emit, approve: Approve) => NativeSession,
   terminal: Terminal = new ProcessTerminal(),
   version?: string,
+  locale: Locale = "en",
 ): Promise<void> {
+  const t = getCatalog(locale).chat;
+  const tc = getCatalog(locale).codexChat;
   const surface = workspaceTerminal(terminal);
   const tui = new TuiAltScreen(surface, true, undefined, { mouse: true });
   const transcript = new Container();
   const transcriptScroll = new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" });
-  const composer = createComposer(tui);
+  const composer = createComposer(tui, locale);
   const { input } = composer;
   const engineLabel = "Codex";
   const shellState = new ShellState(engineLabel);
-  const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd);
-  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version);
+  const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd, process.env.HOME, locale);
+  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version, locale);
   tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface, cwd));
-  attachJumpToLatest(tui, transcriptScroll);
+  attachJumpToLatest(tui, transcriptScroll, locale);
   tui.setFocus(input);
   const providerCommands = [
-    ["/model", "Select model"],
-    ...(id === "codex" ? [] : [["/effort", "Select reasoning"]]),
-    ["/resume", "Chat history"], ["/new", "New conversation"], ["/login", "Connect account"], ["/logout", "Disconnect locally"], ["/status", "Session details"], ["/stop", "Cancel active turn"],
+    ["/model", t.commandSelectModel],
+    ...(id === "codex" ? [] : [["/effort", t.commandSelectReasoning]]),
+    ["/resume", t.commandChatHistory], ["/new", t.commandNewConversation], ["/login", t.commandConnectAccount], ["/logout", t.commandDisconnectLocally], ["/status", t.commandSessionDetails], ["/stop", t.commandCancelActiveTurn],
   ].map(([value, label]) => ({ value: value!, label: label! }));
   input.setCommandGroups([
     { title: engineLabel.toUpperCase(), items: providerCommands },
-    { title: "FORGE614", items: [{ value: "/refresh", label: "Refresh plan usage" }, { value: "/commands", label: "Browse commands" }, { value: "/quit", label: "Exit Shell" }] },
+    { title: "FORGE614", items: [{ value: "/refresh", label: t.commandRefreshPlanUsage }, { value: "/commands", label: t.commandBrowseCommands }, { value: "/quit", label: t.commandExitShell }] },
   ]);
   if (id === "codex") void discoverCodexSkills(cwd).then(skills => input.setSkillChoices(skills));
   let closed = false; let ready = false; let commandBusy = false;
@@ -54,7 +60,7 @@ export async function runNativeUI(
   const write = (text: string) => { const component = new ChatText(clean(text)); transcript.addChild(component); tui.requestRender(); return component; };
   /** Red, so an error reads as an error at a glance instead of blending into a normal reply. */
   const writeError = (text: string) => { const component = new ChatText(clean(text), danger); transcript.addChild(component); tui.requestRender(); return component; };
-  const writeChat = (role: "user" | "assistant" | "system", text: string) => write(chatMessage(role, clean(text)));
+  const writeChat = (role: "user" | "assistant" | "system", text: string) => write(chatMessage(role, clean(text), locale));
   const writeActivity = (title: string, detail: string, expanded = false) => {
     const card = new ActivityCard(title, "", clean(detail), expanded);
     transcript.addChild(card); tui.requestRender();
@@ -64,7 +70,7 @@ export async function runNativeUI(
     if (text.startsWith("You: ")) writeChat("user", text.slice(5));
     else if (text.startsWith("Tool:")) {
       const [title, ...detail] = text.slice(5).trim().split("\n");
-      writeActivity(title || "Tool", detail.join("\n") || "Working");
+      writeActivity(title || tc.toolFallbackTitle, detail.join("\n") || tc.toolFallbackDetail);
     } else writeChat("assistant", text);
   };
   const refresh = () => {
@@ -75,7 +81,7 @@ export async function runNativeUI(
       else shellState.connect({
         user: visual.user, sessionId: session.sessionId,
         model: session.models.find(model => model.id === visual.model)?.name ?? visual.model,
-        reasoning: effortLabel(visual.reasoning), context: visual.context, usage: visual.usage, resources: readRuntimeResources(),
+        reasoning: effortLabel(visual.reasoning, locale), context: visual.context, usage: visual.usage, resources: readRuntimeResources(),
       });
     } else {
       const status = session.status().join(" ");
@@ -84,7 +90,7 @@ export async function runNativeUI(
     }
     sidebar.invalidate();
     const elapsed = turnStartedAt ? ` · ${Math.max(0, Math.floor((Date.now() - turnStartedAt) / 1000))}s` : "";
-    input.setStatus(session.busy || commandBusy ? `Working${elapsed}` : shellState.snapshot().account === "connected" ? "Ready" : "Connect with /login");
+    input.setStatus(session.busy || commandBusy ? `${t.statusWorking}${elapsed}` : shellState.snapshot().account === "connected" ? t.statusReady : t.statusConnectWithLogin);
     input.setWorkModeHint(session.workMode?.());
     statusBar.invalidate();
     tui.requestRender();
@@ -112,7 +118,7 @@ export async function runNativeUI(
       const key = event.id ?? "message";
       let entry = streaming.get(key);
       if (!entry) { entry = { component: writeChat("assistant", ""), text: "" }; streaming.set(key, entry); }
-      entry.text += event.text; entry.component.setText(chatMessage("assistant", clean(entry.text)));
+      entry.text += event.text; entry.component.setText(chatMessage("assistant", clean(entry.text), locale));
     }
     refresh();
   };
@@ -120,9 +126,9 @@ export async function runNativeUI(
     const item = approvals[0];
     if (!item) return;
     write(item.description);
-    input.setStatus("Awaiting permission");
-    void input.choose("Permission · /yes allow once · /no deny · /stop cancel turn", [
-      { value: "/no", label: "Deny" }, { value: "/yes", label: "Allow this call only" },
+    input.setStatus(t.awaitingPermission);
+    void input.choose(t.permissionFooter, [
+      { value: "/no", label: t.denyLabel }, { value: "/yes", label: t.allowOnceLabel },
     ]).then(value => item.answer(value === "/yes"));
   };
   const approve: Approve = (description, signal) => new Promise(resolve => {
@@ -160,86 +166,86 @@ export async function runNativeUI(
     if (value.trim() === "/refresh") { await sidebar.refreshUsage(); return; }
     const [name, ...parts] = value.trim().split(/\s+/); const argument = parts.join(" ");
     if (name === "/quit" || name === "/quit!") {
-      if ((session.busy || commandBusy) && name !== "/quit!") writeError("Work or login is active. Use /quit! to stop it and exit. Nothing was stopped.");
+      if ((session.busy || commandBusy) && name !== "/quit!") writeError(tc.workOrLoginActive);
       else shutdown();
       return;
     }
     if (name === "/yes" || name === "/no") {
-      if (!approvals[0]) throw new Error("No permission request is pending.");
+      if (!approvals[0]) throw new Error(t.noPermissionPending);
       approvals[0].answer(name === "/yes"); return;
     }
-    if (name === "/stop") { await session.cancel(); write("Cancellation requested. Use /quit! if the engine does not respond."); return; }
+    if (name === "/stop") { await session.cancel(); write(tc.cancellationRequested); return; }
     if (name === "/help" || name === "/commands") {
-      if (approvals.length) { write("Answer the pending permission with the selector, /yes or /no first."); return; }
+      if (approvals.length) { write(t.answerPendingPermissionFirst); return; }
       const selected = await input.chooseCommand();
       if (selected) input.onSubmit?.(selected);
       return;
     }
     if (name === "/status") { write(session.status().join("\n")); return; }
-    if (!ready || commandBusy || session.busy) throw new Error("Wait for the engine, or finish /stop the active operation first.");
+    if (!ready || commandBusy || session.busy) throw new Error(tc.waitForEngine);
     commandBusy = true;
     try {
       if (name === "/login") await session.login();
       else if (name === "/logout") {
-        if (!session.logout) throw new Error("Logout is unavailable for this connector.");
+        if (!session.logout) throw new Error(tc.logoutUnavailable);
         await session.logout();
       }
       else if (name === "/model") {
-        if (argument) { await session.setModel(argument); persistPreference(); write(`Selected model: ${argument}`); }
+        if (argument) { await session.setModel(argument); persistPreference(); write(tc.selectedModel({ model: argument })); }
         else if (session.models.length) {
-          const selected = await input.choose("Select model", session.models.map(model => ({ value: model.id, display: model.name, label: "" })), session.visual?.().model);
+          const selected = await input.choose(t.commandSelectModel, session.models.map(model => ({ value: model.id, display: model.name, label: "" })), session.visual?.().model);
           if (selected) {
             await session.setModel(selected);
             persistPreference();
             const model = session.models.find(item => item.id === selected);
             if (id === "codex" && model?.efforts?.length) {
-              const effort = await input.choose("Select reasoning", model.efforts.map(value => ({
-                value, display: effortLabel(value), label: effortDescription(value),
+              const effort = await input.choose(t.commandSelectReasoning, model.efforts.map(value => ({
+                value, display: effortLabel(value, locale), label: effortDescription(value, locale),
               })), model.defaultEffort);
               if (effort) { await session.setEffort(effort); persistPreference(); }
             }
           }
-        } else write("Use /login to load the native model catalog.");
+        } else write(tc.useLoginForCatalog);
       } else if (name === "/effort" || name === "/thinking") {
         if (argument) { await session.setEffort(argument); persistPreference(); }
         else {
           const visual = session.visual?.();
           const levels = session.models.find(model => model.id === visual?.model)?.efforts;
           if (levels?.length) {
-            const selected = await input.choose("Select reasoning", levels.map(value => ({
-              value, display: effortLabel(value), label: effortDescription(value),
+            const selected = await input.choose(t.commandSelectReasoning, levels.map(value => ({
+              value, display: effortLabel(value, locale), label: effortDescription(value, locale),
             })), visual?.reasoning);
             if (selected) { await session.setEffort(selected); persistPreference(); }
-          } else write("This engine has not reported reasoning options for the selected model.");
+          } else write(tc.noReasoningOptionsForModel);
         }
       } else if (name === "/resume") {
         if (!argument) {
           sessions = await session.listSessions();
-          write(sessions.length ? sessions.map((item, i) => `${i + 1}. ${item.title} [${item.id}]`).join("\n") + "\nUse /resume <number>." : "No sessions found for this project.");
+          write(sessions.length ? sessions.map((item, i) => `${i + 1}. ${item.title} [${item.id}]`).join("\n") + "\n" + tc.resumeInstruction : tc.noSessionsFound);
         } else {
           const selected = /^\d+$/.test(argument) ? sessions[Number(argument) - 1]?.id : argument;
-          if (!selected) throw new Error("Choose a listed session number or provide its native ID.");
+          if (!selected) throw new Error(tc.chooseSessionOrId);
           await session.resume(selected);
-          write(session.resumeNotice ?? "History restored. Waiting for your next message; no work was started.");
+          write(session.resumeNotice ?? t.historyRestored);
         }
       } else if (name === "/new") { session.reset(); transcript.clear(); streaming.clear(); }
-      else throw new Error(`Unknown command: ${name}. Use /help.`);
+      else throw new Error(t.unknownCommand({ name: name ?? "" }));
     } finally { commandBusy = false; refresh(); }
   };
   session = createSession(emit, approve);
   sidebar.setRefreshAction(async () => {
-    if (!session.refreshUsage) return "Not available from this engine";
+    if (!session.refreshUsage) return tc.refreshNotAvailable;
     await session.refreshUsage(); refresh();
   }, () => tui.requestRender());
   input.onSubmit = value => {
     if (closed || !value.trim()) return;
     input.setValue("");
-    if (value.startsWith("/")) void command(value).catch(error => writeError(`Error: ${error.message}`));
-    else if (!ready || commandBusy || session.busy) writeError("Wait for the current operation to finish, or use /stop.");
+    if (value.startsWith("/")) void command(value).catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) })));
+    else if (!ready || commandBusy || session.busy) writeError(tc.waitForCurrentOperationToFinish);
     else {
       streaming.clear(); writeChat("user", value);
       beginTurn();
-      void session.send(value).catch(error => { if (!closed) writeError(`Turn stopped: ${error.message}`); }).finally(() => { endTurn(); refresh(); });
+      void session.send(value).catch(error => { if (!closed) writeError(t.turnStopped({ message: describeError(error, locale) })); }).finally(() => { endTurn(); refresh(); });
       refresh();
     }
   };
@@ -253,7 +259,7 @@ export async function runNativeUI(
     refresh();
   };
   tui.addInputListener(data => {
-    if (matchesKey(data, "shift+tab")) { void cycleWorkMode().catch(error => writeError(`Error: ${error.message}`)); return { consume: true }; }
+    if (matchesKey(data, "shift+tab")) { void cycleWorkMode().catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))); return { consume: true }; }
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { void command("/quit"); return { consume: true }; }
     return undefined;
   });
@@ -281,7 +287,7 @@ export async function runNativeUI(
         }
       }
       ready = true; refresh();
-    }).catch(error => writeError(`Connection failed: ${error.message}\nUse /quit, verify the native CLI installation, and reopen Shell.`));
+    }).catch(error => writeError(tc.connectionFailed({ message: describeError(error, locale) })));
     await exited;
   } finally { clearInterval(clock); process.removeListener("SIGTERM", shutdown); session.close(); tui.stop({ preserveScreen: true }); }
 }

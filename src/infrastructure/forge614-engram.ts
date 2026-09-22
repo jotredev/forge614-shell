@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { EngramInitDecisions } from "../contracts/engram-init.ts";
+import { ShellError } from "../shell-error.ts";
 
 export type RunEngram = (command: string, args: string[]) => Promise<{ status: number | null; stdout: string; stderr: string }>;
 
@@ -25,12 +26,14 @@ export function locateEngramBinary(home: string, env?: NodeJS.ProcessEnv): strin
   return join(forgeHome, "engram", "bin", "forge614-engram");
 }
 
-function parseEngramError(stderr: string): string {
+/** Engram's own reported error, extracted from its JSON error payload — external data, returned
+ * literally and never wrapped or translated. `undefined` means Engram reported nothing usable. */
+function parseEngramError(stderr: string): string | undefined {
   try {
     const payload = JSON.parse(stderr) as EngramErrorPayload;
     if (typeof payload.error === "string" && payload.error) return payload.error;
-  } catch { /* fall through to the generic message below */ }
-  return "Forge614 Engram command failed.";
+  } catch { /* fall through */ }
+  return undefined;
 }
 
 /** Masks every literal occurrence of the connection string, matching the summary screen's masking. */
@@ -47,13 +50,16 @@ async function runEngramCommand(
   const result = await (options.run ?? defaultRun)(binary, args);
   // A null status with nothing on stderr means the binary never ran (missing or not executable).
   if (result.status === null && !result.stderr.trim()) {
-    throw new Error(`Forge614 Engram is unavailable at ${binary}. Install or reinstall Forge614 Engram to repair this dependency.`);
+    throw new ShellError("engram-unavailable-at-path", { path: binary });
   }
-  if (result.status !== 0) throw new Error(`forge614-engram ${command} failed: ${parseEngramError(result.stderr)}`);
+  if (result.status !== 0) {
+    const external = parseEngramError(result.stderr);
+    throw new ShellError("engram-command-failed", { command, detail: external ?? "Forge614 Engram command failed." });
+  }
   try {
     return JSON.parse(result.stdout);
   } catch {
-    throw new Error(`forge614-engram ${command} returned an invalid result.`);
+    throw new ShellError("engram-invalid-result", { command });
   }
 }
 
@@ -73,8 +79,11 @@ export async function applyEngramInit(
   try {
     initResult = await runEngramCommand("init", initArgs, options);
   } catch (error) {
-    // Last line of defence: the connection string must never reach any output, including error text.
-    throw new Error(redactSecret(error instanceof Error ? error.message : String(error), decisions.postgresUrl));
+    // Last line of defence: the connection string must never reach any output, including error
+    // text. Preserves the underlying error's own type (a `ShellError`'s stable code and params, so
+    // it still renders correctly in any locale later, or an external message as a plain `Error`) —
+    // only the text is redacted, never re-typed as something else.
+    throw redactShellError(error, decisions.postgresUrl);
   }
   let reinforcementResult: unknown | null = null;
   if (decisions.reinforcement) {
@@ -83,11 +92,24 @@ export async function applyEngramInit(
     } catch (error) {
       // Same last line of defence as the init catch block: Engram just persisted this connection
       // string, so it must never reach any output, including error text, from this call either.
-      const message = redactSecret(error instanceof Error ? error.message : String(error), decisions.postgresUrl);
-      throw new Error(`${message} Local memory initialization completed successfully; only reinforcement could not be enabled.`);
+      // `.message` is always valid English for a `ShellError` (see shell-error.ts) or the literal
+      // external text otherwise, so it is a safe `detail` even though this layer knows no locale —
+      // only the wrapping "reinforcement could not be enabled" suffix is guaranteed to translate.
+      const redacted = redactShellError(error, decisions.postgresUrl);
+      throw new ShellError("engram-reinforcement-failed-after-init", { detail: redacted.message });
     }
   }
   return { initResult, reinforcementResult };
+}
+
+/** Redacts a caught error's text without changing its type: a `ShellError` keeps its `code` (and
+ * has every string param redacted); anything else becomes a plain `Error` with redacted text. */
+function redactShellError(error: unknown, secret: string | null): Error {
+  if (error instanceof ShellError) {
+    const params = Object.fromEntries(Object.entries(error.params).map(([key, value]) => [key, redactSecret(value, secret)]));
+    return new ShellError(error.code, params);
+  }
+  return new Error(redactSecret(error instanceof Error ? error.message : String(error), secret));
 }
 
 export interface EngramUpdateResult {
@@ -105,7 +127,7 @@ interface EngramUpdatePayload {
 function toEngramUpdateResult(payload: unknown): EngramUpdateResult {
   const result = payload as EngramUpdatePayload;
   if (typeof result.updated !== "boolean" || typeof result.previousVersion !== "string" || typeof result.installedVersion !== "string") {
-    throw new Error("forge614-engram update returned an invalid result.");
+    throw new ShellError("engram-update-invalid-result");
   }
   return { updated: result.updated, previousVersion: result.previousVersion, installedVersion: result.installedVersion };
 }

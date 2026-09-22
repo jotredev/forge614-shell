@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { ClaudeSession } from "./session.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { getStartupContext } from "../../infrastructure/forge614-engram.ts";
+import { ShellError, describeError } from "../../shell-error.ts";
 
 test("context summary is read before closing the single-message input stream", async () => {
   let closed = false;
@@ -224,4 +225,28 @@ test("concurrent messages cannot start a second writer", async () => {
   await expect(session.send("second", () => {}, async () => false)).rejects.toThrow("already running");
   expect(() => session.resume("other")).toThrow();
   release(); await first;
+});
+
+test("Claude's own errors are typed ShellErrors, translatable at the presentation boundary — never hardcoded English that leaks past a Spanish selection", async () => {
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: () => (async function* () {
+    yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+  })() });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const busySession = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => gate, run: () => (async function* () {
+    yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+  })() });
+  const turn = busySession.send("hi", () => {}, async () => false);
+  let caught: unknown;
+  try { busySession.resume("other-session"); } catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(ShellError);
+  expect((caught as ShellError).code).toBe("claude-switch-session-busy");
+  expect(describeError(caught, "en")).toBe("Stop the current turn before switching sessions.");
+  expect(describeError(caught, "es")).toBe("Detén el turno actual antes de cambiar de sesión.");
+  release(); await turn;
+
+  try { await session.setWorkMode("not-a-real-mode"); } catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(ShellError);
+  expect((caught as ShellError).code).toBe("claude-work-mode-unknown");
+  expect(describeError(caught, "es")).toBe("Claude Code no reportó ese modo de permisos.");
 });

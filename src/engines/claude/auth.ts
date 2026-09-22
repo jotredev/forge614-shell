@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { discoverSelectableEngines } from "../../infrastructure/forge614-engines.ts";
+import { ShellError } from "../../shell-error.ts";
 
 const exec = promisify(execFile);
 
@@ -9,19 +10,19 @@ export function claudeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const conflicts = Object.keys(env).filter(key => env[key] && (
     /^(ANTHROPIC_(API_KEY|AUTH_TOKEN|BASE_URL|CUSTOM_HEADERS|PROFILE)|CLAUDE_CODE_(OAUTH_TOKEN|API_KEY|API_KEY_HELPER|USE_.*|BASE_URL))$/i.test(key)
   ));
-  if (conflicts.length) throw new Error(`Subscription mode cannot start with these overrides: ${conflicts.join(", ")}. Use a clean terminal; no account settings were changed.`);
+  if (conflicts.length) throw new ShellError("claude-env-conflict", { keys: conflicts.join(", ") });
   return { ...env };
 }
 
 export function requireSubscription(status: { loggedIn?: boolean; authMethod?: string }): void {
-  if (!status.loggedIn) throw new Error("Please use /login to sign in through official Claude Code.");
-  if (status.authMethod !== "claude.ai") throw new Error("This connector requires a Claude subscription login, not API or cloud authentication. Use /login.");
+  if (!status.loggedIn) throw new ShellError("claude-login-required");
+  if (status.authMethod !== "claude.ai") throw new ShellError("claude-subscription-required");
 }
 
 export async function findClaude(env: NodeJS.ProcessEnv): Promise<string> {
   const engine = (await discoverSelectableEngines({ env })).find(engine => engine.id === "claude");
   if (engine) return engine.executable;
-  throw new Error("Official Claude Code was not found on PATH. Install Claude Code first. Automatic installation is not available in this delivery.");
+  throw new ShellError("claude-not-found");
 }
 
 export async function checkAuthentication(executable: string, env: NodeJS.ProcessEnv, cwd: string): Promise<void> {
@@ -52,6 +53,6 @@ export async function officialLogin(executable: string, env: NodeJS.ProcessEnv, 
   await new Promise<void>((resolve, reject) => {
     const child = spawn(executable, ["auth", "login"], { env: claudeEnvironment(env), cwd, stdio: "inherit", signal });
     child.once("error", reject);
-    child.once("exit", code => code === 0 ? resolve() : reject(new Error(`Claude Code login exited with code ${code}.`)));
+    child.once("exit", code => code === 0 ? resolve() : reject(new ShellError("claude-login-exit-code", { code: String(code) })));
   });
 }

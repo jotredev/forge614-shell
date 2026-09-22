@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { AvailableEngine } from "../contracts/available-engine.ts";
 import type { McpCapableAgent } from "../contracts/mcp-agent.ts";
+import { ShellError } from "../shell-error.ts";
 
 export type DetectRun = (command: string, args: string[]) => Promise<{ status: number | null; stdout: string; stderr: string }>;
 
@@ -57,10 +58,10 @@ export const defaultRun: DetectRun = async (command, args) => {
 };
 
 function validateReport(value: unknown): EnginesReport {
-  if (!value || typeof value !== "object") throw new Error("Forge614 Engines returned an invalid detection result.");
+  if (!value || typeof value !== "object") throw new ShellError("engines-invalid-detection");
   const report = value as EnginesReport;
-  if (report.schemaVersion !== 1) throw new Error("Forge614 Engines is incompatible with this Shell version. Reinstall Forge614 Shell to repair its required dependency.");
-  if (!Array.isArray(report.agents)) throw new Error("Forge614 Engines returned an invalid detection result.");
+  if (report.schemaVersion !== 1) throw new ShellError("engines-incompatible-schema");
+  if (!Array.isArray(report.agents)) throw new ShellError("engines-invalid-detection");
   return report;
 }
 
@@ -89,14 +90,14 @@ export async function discoverSelectableEngines(options: {
   const binary = enginesBinary(home, options.env);
   const result = await (options.run ?? defaultRun)(binary, ["detect"]);
   if (result.status !== 0) {
-    throw new Error("Forge614 Engines is unavailable. Reinstall Forge614 Shell to repair its required dependency.");
+    throw new ShellError("engines-unavailable");
   }
   let report: EnginesReport;
   try {
     report = validateReport(JSON.parse(result.stdout));
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("Forge614 Engines")) throw error;
-    throw new Error("Forge614 Engines returned an invalid detection result.");
+    if (error instanceof ShellError) throw error;
+    throw new ShellError("engines-invalid-detection");
   }
   return (report.agents as EnginesAgent[]).map(toSelectableAgent).filter((agent): agent is AvailableEngine => Boolean(agent));
 }
@@ -117,14 +118,14 @@ export async function discoverMcpCapableAgents(options: {
   const run = options.run ?? defaultRun;
   const detectResult = await run(binary, ["detect"]);
   if (detectResult.status !== 0) {
-    throw new Error("Forge614 Engines is unavailable. Reinstall Forge614 Shell to repair its required dependency.");
+    throw new ShellError("engines-unavailable");
   }
   let report: EnginesReport;
   try {
     report = validateReport(JSON.parse(detectResult.stdout));
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("Forge614 Engines")) throw error;
-    throw new Error("Forge614 Engines returned an invalid detection result.");
+    if (error instanceof ShellError) throw error;
+    throw new ShellError("engines-invalid-detection");
   }
   const installed = (report.agents as EnginesAgent[]).filter(
     (agent): agent is EnginesAgent & { id: string; executable: string } =>
@@ -166,19 +167,26 @@ async function runEnginesCommand(
   const binary = enginesBinary(home, options.env);
   const result = await (options.run ?? defaultRun)(binary, args);
   if (result.status === null && !result.stdout.trim() && !result.stderr.trim()) {
-    throw new Error(`Forge614 Engines is unavailable at ${binary}. Install or reinstall Forge614 Engines to repair this dependency.`);
+    throw new ShellError("engines-unavailable-at-path", { path: binary });
   }
+  // Engines' own reported error message (from its JSON error payload) is external data and is
+  // thrown literally, never wrapped or translated; only the fallback, when Engines reported
+  // nothing usable, is Shell's own text and goes through the typed-error boundary.
+  const commandFailed = () => {
+    const external = parseEnginesError(result.stdout, result.stderr);
+    return external ? new Error(external) : new ShellError("engines-command-failed", { label });
+  };
   let parsed: unknown;
   try {
     parsed = JSON.parse(result.stdout);
   } catch {
-    throw new Error(parseEnginesError(result.stdout, result.stderr) ?? `forge614-engines ${label} failed.`);
+    throw commandFailed();
   }
   if (parsed && typeof parsed === "object" && "error" in (parsed as Record<string, unknown>)) {
-    throw new Error(parseEnginesError(result.stdout, result.stderr) ?? `forge614-engines ${label} failed.`);
+    throw commandFailed();
   }
   if (result.status !== 0) {
-    throw new Error(parseEnginesError(result.stdout, result.stderr) ?? `forge614-engines ${label} failed.`);
+    throw commandFailed();
   }
   return parsed;
 }
@@ -192,7 +200,7 @@ export interface McpPlanResult {
 function toMcpPlanResult(payload: unknown): McpPlanResult {
   const plan = (payload as McpPlanPayload).plan;
   if (!plan || typeof plan.planId !== "string" || !plan.planId) {
-    throw new Error("forge614-engines returned an invalid plan.");
+    throw new ShellError("engines-invalid-plan");
   }
   const writes = Array.isArray(plan.writes) ? plan.writes : [];
   const firstWrite = writes[0] as { path?: unknown } | undefined;
@@ -254,7 +262,7 @@ export async function applyEnginesPlan(options: {
   const payload = await runEnginesCommand(["apply", "--plan-id", options.planId], "apply", options);
   const result = (payload as McpApplyPayload).result;
   if (!result || typeof result.applied !== "boolean") {
-    throw new Error("forge614-engines apply returned an invalid result.");
+    throw new ShellError("engines-invalid-apply-result");
   }
   const changedFiles = Array.isArray(result.changedFiles)
     ? result.changedFiles.filter((entry): entry is string => typeof entry === "string")
@@ -334,16 +342,14 @@ const PENDING_RUNTIME_REASONS = new Set([
 
 // Compatibility with Engines is detected structurally (does a `hook` field exist at all?), never by
 // comparing a version string — Engines' own release number is not this file's business.
-const OUTDATED_ENGINES_MESSAGE = 'Forge614 Engines needs to be updated. Run "forge614-shell update", then try again.';
-
-function toHookRuntimeStatus(value: unknown, invalidMessage: string): HookRuntimeStatus {
+function toHookRuntimeStatus(value: unknown, invalidCode: "engines-invalid-plan" | "engines-invalid-verification"): HookRuntimeStatus {
   if (!value || typeof value !== "object" || typeof (value as { kind?: unknown }).kind !== "string" || !HOOK_RUNTIME_KINDS.has((value as { kind: string }).kind)) {
-    throw new Error(invalidMessage);
+    throw new ShellError(invalidCode);
   }
   const status = value as { kind: string; reason?: unknown };
   if (status.kind === "pending-runtime-verification") {
     if (typeof status.reason !== "string" || !PENDING_RUNTIME_REASONS.has(status.reason)) {
-      throw new Error(invalidMessage);
+      throw new ShellError(invalidCode);
     }
     return { kind: "pending-runtime-verification", reason: status.reason as HookRuntimeReason };
   }
@@ -352,15 +358,15 @@ function toHookRuntimeStatus(value: unknown, invalidMessage: string): HookRuntim
 
 function toMemoryComponentStatus(value: unknown): MemoryComponentStatus {
   if (!value || typeof value !== "object" || typeof (value as { kind?: unknown }).kind !== "string" || !MEMORY_COMPONENT_KINDS.has((value as { kind: string }).kind)) {
-    throw new Error("forge614-engines returned an invalid plan.");
+    throw new ShellError("engines-invalid-plan");
   }
   const status = value as { kind: string; reason?: unknown; details?: unknown };
   if (status.kind === "unsupported") {
-    if (typeof status.reason !== "string") throw new Error("forge614-engines returned an invalid plan.");
+    if (typeof status.reason !== "string") throw new ShellError("engines-invalid-plan");
     return { kind: "unsupported", reason: status.reason };
   }
   if (status.kind === "blocked") {
-    if (typeof status.reason !== "string" || typeof status.details !== "string") throw new Error("forge614-engines returned an invalid plan.");
+    if (typeof status.reason !== "string" || typeof status.details !== "string") throw new ShellError("engines-invalid-plan");
     return { kind: "blocked", reason: status.reason, details: status.details };
   }
   return { kind: status.kind as "noop" | "write" };
@@ -369,7 +375,7 @@ function toMemoryComponentStatus(value: unknown): MemoryComponentStatus {
 function toMemoryInstallPlan(payload: unknown): MemoryInstallPlan {
   const plan = (payload as MemoryPlanPayload).plan;
   if (!plan || typeof plan.planId !== "string" || !plan.planId || typeof plan.agentId !== "string" || typeof plan.noop !== "boolean" || !plan.metadata) {
-    throw new Error("forge614-engines returned an invalid plan.");
+    throw new ShellError("engines-invalid-plan");
   }
   const { mcp, instructions, hook, overallStatus } = plan.metadata;
   if (
@@ -377,13 +383,13 @@ function toMemoryInstallPlan(payload: unknown): MemoryInstallPlan {
     !instructions || !Array.isArray(instructions.paths) || !instructions.paths.every((p): p is string => typeof p === "string") ||
     typeof overallStatus !== "string" || !MEMORY_OVERALL_STATUSES.has(overallStatus)
   ) {
-    throw new Error("forge614-engines returned an invalid plan.");
+    throw new ShellError("engines-invalid-plan");
   }
   if (hook === undefined) {
-    throw new Error(OUTDATED_ENGINES_MESSAGE);
+    throw new ShellError("engines-outdated");
   }
   if (typeof hook.path !== "string") {
-    throw new Error("forge614-engines returned an invalid plan.");
+    throw new ShellError("engines-invalid-plan");
   }
   return {
     planId: plan.planId,
@@ -391,7 +397,7 @@ function toMemoryInstallPlan(payload: unknown): MemoryInstallPlan {
     noop: plan.noop,
     mcp: { path: mcp.path, status: toMemoryComponentStatus(mcp.status) },
     instructions: { paths: instructions.paths, status: toMemoryComponentStatus(instructions.status) },
-    hook: { path: hook.path, status: toMemoryComponentStatus(hook.status), runtimeStatus: toHookRuntimeStatus(hook.runtimeStatus, "forge614-engines returned an invalid plan.") },
+    hook: { path: hook.path, status: toMemoryComponentStatus(hook.status), runtimeStatus: toHookRuntimeStatus(hook.runtimeStatus, "engines-invalid-plan") },
     overallStatus: overallStatus as MemoryOverallStatus,
   };
 }
@@ -421,23 +427,23 @@ function toMemoryVerification(payload: unknown): MemoryVerification {
     !Array.isArray(verification.instructions.paths) || !verification.instructions.paths.every((p): p is string => typeof p === "string") ||
     typeof verification.overallStatus !== "string" || !VERIFY_OVERALL_STATUSES.has(verification.overallStatus)
   ) {
-    throw new Error("forge614-engines returned an invalid verification result.");
+    throw new ShellError("engines-invalid-verification");
   }
   if (verification.hook === undefined) {
-    throw new Error(OUTDATED_ENGINES_MESSAGE);
+    throw new ShellError("engines-outdated");
   }
   const hook = verification.hook;
   if (
     typeof hook.supported !== "boolean" || typeof hook.path !== "string" ||
     typeof hook.present !== "boolean" || typeof hook.dryRunOk !== "boolean"
   ) {
-    throw new Error("forge614-engines returned an invalid verification result.");
+    throw new ShellError("engines-invalid-verification");
   }
   return {
     agentId: verification.agentId,
     mcp: { path: verification.mcp.path, present: verification.mcp.present },
     instructions: { supported: verification.instructions.supported, paths: verification.instructions.paths, present: verification.instructions.present },
-    hook: { supported: hook.supported, path: hook.path, present: hook.present, dryRunOk: hook.dryRunOk, runtimeStatus: toHookRuntimeStatus(hook.runtimeStatus, "forge614-engines returned an invalid verification result.") },
+    hook: { supported: hook.supported, path: hook.path, present: hook.present, dryRunOk: hook.dryRunOk, runtimeStatus: toHookRuntimeStatus(hook.runtimeStatus, "engines-invalid-verification") },
     overallStatus: verification.overallStatus as MemoryVerification["overallStatus"],
   };
 }
@@ -474,7 +480,7 @@ function toEnginesUpdateResult(payload: unknown): EnginesUpdateResult {
     typeof result.currentVersion !== "string" || typeof result.latestVersion !== "string" ||
     (result.note !== undefined && typeof result.note !== "string")
   ) {
-    throw new Error("forge614-engines returned an invalid update result.");
+    throw new ShellError("engines-invalid-update-result");
   }
   return {
     updated: result.updated, currentVersion: result.currentVersion, latestVersion: result.latestVersion,

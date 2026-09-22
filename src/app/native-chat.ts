@@ -4,6 +4,8 @@ import type { NativeId } from "../engines/types.ts";
 import { runNativeUI } from "../ui/basic/native.ts";
 import { openLoginBrowser } from "../infrastructure/browser.ts";
 import { getStartupContext } from "../infrastructure/forge614-engram.ts";
+import { getCatalog } from "../i18n/index.ts";
+import type { Locale } from "../i18n/index.ts";
 
 /**
  * CodexSession calls its `getStartupContextFn` with no `env` of its own (it holds no env
@@ -22,12 +24,13 @@ export function codexStartupContext(
 }
 
 // Composition root: views render sessions; they do not construct transports.
-export async function startNativeUI(id: NativeId, executable: string, args: string[], version?: string): Promise<void> {
-  if (args.length) throw new Error(`${id} mode accepts no CLI options yet. Use the in-chat commands.`);
-  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error("Native chat requires an interactive terminal.");
+export async function startNativeUI(id: NativeId, executable: string, args: string[], version?: string, locale: Locale = "en"): Promise<void> {
+  const t = getCatalog(locale).chat;
+  if (args.length) throw new Error(t.nativeCliOptionsUnsupported({ id }));
+  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error(t.nativeRequiresInteractiveTerminal);
   const cwd = process.cwd();
   await runNativeUI(id, cwd, (emit, approve) => {
     const rpc = startNativeProcess(id, executable, cwd, process.env, text => emit({ type: "text", text }));
-    return new CodexSession(rpc, cwd, emit, approve, openLoginBrowser, codexStartupContext);
-  }, undefined, version);
+    return new CodexSession(rpc, cwd, emit, approve, openLoginBrowser, codexStartupContext, locale);
+  }, undefined, version, locale);
 }

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { CodexSession } from "./session.ts";
 import { FixtureRpc } from "../../../tests/support/rpc-fixture.ts";
 import { getStartupContext } from "../../infrastructure/forge614-engram.ts";
+import { ShellError, describeError } from "../../shell-error.ts";
 
 function codexFixture() {
   const rpc = new FixtureRpc();
@@ -378,4 +379,30 @@ test("an MCP tool call from a server other than forge614-engram falls back to a 
   await session.send("please open an issue");
   expect(events.some(event => event.type === "text" && event.text.startsWith("Tool: github: create_issue"))).toBe(true);
   expect(events.some(event => event.type === "text" && event.text.includes("🧠"))).toBe(false);
+});
+
+test("Codex's own errors are typed ShellErrors that translate at the presentation boundary", async () => {
+  const rpc = codexFixture();
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  let caught: unknown;
+  try { await session.setModel("not-a-real-model"); } catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(ShellError);
+  expect((caught as ShellError).code).toBe("codex-model-unknown");
+  expect(describeError(caught, "en")).toBe("Choose an available model from /model.");
+  expect(describeError(caught, "es")).toBe("Elige un modelo disponible desde /model.");
+
+  try { await session.setWorkMode("bogus:mode"); } catch (error) { caught = error; }
+  expect((caught as ShellError).code).toBe("codex-mode-unknown");
+  expect(describeError(caught, "es")).toBe("Elige un modo reportado por Codex.");
+});
+
+test("Codex's own status/login narration renders in the session's own locale, not just its errors", async () => {
+  const rpc = codexFixture();
+  const events: any[] = [];
+  const session = new CodexSession(rpc, "/project", event => events.push(event), async () => true, undefined, undefined, "es");
+  await session.initialize();
+  expect(session.status()[0]).toContain("Cuenta de ChatGPT");
+  await session.logout();
+  expect(events.some(event => event.type === "text" && event.text === "Se desconectó localmente de Codex en esta sesión de Shell. Tu cuenta nativa y otras aplicaciones no cambiaron. Usa /login para reconectar.")).toBe(true);
 });

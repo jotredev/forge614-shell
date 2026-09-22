@@ -1,12 +1,17 @@
 import { Editor, TuiAltScreen, ProcessTerminal, visibleWidth, matchesKey } from "@earendil-works/pi-tui";
 import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { accent as cyan, danger, muted, fit, paint, success, warning } from "./theme.ts";
+import { getCatalog } from "../../i18n/index.ts";
+import type { Locale } from "../../i18n/index.ts";
 
-const forgeCommands = [
-  ["/model", "Select model"], ["/effort", "Reasoning level"], ["/resume", "Chat history"],
-  ["/refresh", "Refresh plan usage (supported engines)"], ["/new", "New conversation"], ["/login", "Connect account"], ["/logout", "Disconnect locally"],
-  ["/status", "Session details"], ["/stop", "Cancel current operation; keep Shell open"], ["/help", "Browse all commands"], ["/commands", "Browse all commands"], ["/quit", "Exit Shell"],
-].map(([value, label]) => ({ value: value!, label: label! }));
+function defaultForgeCommands(locale: Locale): ComposerChoice[] {
+  const t = getCatalog(locale).chat;
+  return [
+    ["/model", t.commandSelectModel], ["/effort", t.commandReasoningLevel], ["/resume", t.commandChatHistory],
+    ["/refresh", t.commandRefreshPlanUsageEngines], ["/new", t.commandNewConversation], ["/login", t.commandConnectAccount], ["/logout", t.commandDisconnectLocally],
+    ["/status", t.commandSessionDetails], ["/stop", t.commandCancelKeepOpen], ["/help", t.commandBrowseAllCommands], ["/commands", t.commandBrowseAllCommands], ["/quit", t.commandExitShell],
+  ].map(([value, label]) => ({ value: value!, label: label! }));
+}
 export interface ComposerChoice { value: string; label: string; display?: string; group?: string; }
 export interface ComposerCommandGroup { title: string; items: ComposerChoice[]; }
 
@@ -15,22 +20,24 @@ const planning = paint("52;170;166");
 export type WorkModePresentation = { text: string; help: string };
 
 /** Copy only translates native mode identifiers; it never changes their behavior. */
-export function workModePresentation(mode?: string): WorkModePresentation {
+export function workModePresentation(mode?: string, locale: Locale = "en"): WorkModePresentation {
+  const t = getCatalog(locale).workMode;
+  const withCycle = (text: string) => `${text} · ${t.shiftTabToCycle}`;
   switch (mode) {
-    case "bypassPermissions": return { text: danger("▶▶ bypass permissions on"), help: muted("no confirmations · Shift+Tab to cycle") };
-    case "auto": return { text: warning("▶▶ auto mode on"), help: muted("the engine decides approvals · Shift+Tab to cycle") };
-    case "default": return { text: muted("Ⅱ manual mode on"), help: muted("asks before risky actions · Shift+Tab to cycle") };
-    case "acceptEdits": return { text: purple("▶▶ accept edits on"), help: muted("auto-approves file edits · Shift+Tab to cycle") };
-    case "plan": return { text: planning("Ⅱ plan mode on"), help: muted("plans only; tools cannot run · Shift+Tab to cycle") };
-    case "dontAsk": return { text: warning("Ⅱ don't ask mode on"), help: muted("denies actions without prior approval · Shift+Tab to cycle") };
+    case "bypassPermissions": return { text: danger(t.bypassPermissionsOn), help: muted(withCycle(t.bypassPermissionsHelp)) };
+    case "auto": return { text: warning(t.autoModeOn), help: muted(withCycle(t.autoModeHelp)) };
+    case "default": return { text: muted(t.manualModeOn), help: muted(withCycle(t.manualModeHelp)) };
+    case "acceptEdits": return { text: purple(t.acceptEditsOn), help: muted(withCycle(t.acceptEditsHelp)) };
+    case "plan": return { text: planning(t.planModeOn), help: muted(withCycle(t.planModeHelp)) };
+    case "dontAsk": return { text: warning(t.dontAskModeOn), help: muted(withCycle(t.dontAskModeHelp)) };
     default: {
       const [approval, sandbox] = mode?.split(":") ?? [];
       if (approval === "onRequest" || approval === "unlessTrusted") {
-        const sandboxText = sandbox === "readOnly" ? "read only" : sandbox === "workspaceWrite" ? "workspace write" : sandbox;
-        if (approval === "onRequest") return { text: muted(`Ⅱ manual mode on · ${sandboxText}`), help: muted("asks for approval · Shift+Tab to cycle") };
-        return { text: warning(`▶▶ auto mode on · ${sandboxText}`), help: muted("trusted workspace · Shift+Tab to cycle") };
+        const sandboxText = sandbox === "readOnly" ? t.readOnly : sandbox === "workspaceWrite" ? t.workspaceWrite : sandbox;
+        if (approval === "onRequest") return { text: muted(t.manualModeOnWithSandbox({ sandbox: sandboxText ?? "" })), help: muted(withCycle(t.manualModeApprovalHelp)) };
+        return { text: warning(t.autoModeOnWithSandbox({ sandbox: sandboxText ?? "" })), help: muted(withCycle(t.trustedWorkspaceHelp)) };
       }
-      return { text: muted("Ⅱ engine mode"), help: muted("Shift+Tab to cycle") };
+      return { text: muted(t.engineMode), help: muted(t.shiftTabToCycle) };
     }
   }
 }
@@ -40,37 +47,47 @@ function rule(width: number): string {
   return "─".repeat(Math.max(0, width));
 }
 
-/** Gives the status dot its own color per state, so "Working" reads as busy at a glance instead of blending into "Ready". */
+/**
+ * Gives the status dot its own color per state, so a busy status reads as busy at a glance instead
+ * of blending into "ready". Matches against both locales' status text (never just the active
+ * locale's) so a stale status string set right before a language switch still colors correctly.
+ */
 function statusColor(status: string): (text: string) => string {
-  if (status.startsWith("Working")) return warning;
-  switch (status) {
-    case "Ready": return success;
-    case "Awaiting permission": return danger;
-    case "Checking account": return muted;
-    default: return warning; // e.g. "Connect with /login" — needs the person's attention
-  }
+  if (isWorkingStatus(status)) return warning;
+  const en = getCatalog("en").chat; const es = getCatalog("es").chat;
+  const enTc = getCatalog("en").claudeChat; const esTc = getCatalog("es").claudeChat;
+  if (status === en.statusReady || status === es.statusReady) return success;
+  if (status === en.awaitingPermission || status === es.awaitingPermission) return danger;
+  if (status === enTc.statusCheckingAccount || status === esTc.statusCheckingAccount) return muted;
+  return warning; // e.g. "Connect with /login" — needs the person's attention
+}
+
+function isWorkingStatus(status: string): boolean {
+  return status.startsWith(getCatalog("en").chat.statusWorking) || status.startsWith(getCatalog("es").chat.statusWorking);
 }
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-/** A live-moving dot while busy — a static "Working" label reads as frozen once the person stares at it. */
+/** A live-moving dot while busy — a static label reads as frozen once the person stares at it. */
 function statusDot(status: string): string {
-  return status.startsWith("Working") ? SPINNER_FRAMES[Math.floor(Date.now() / 120) % SPINNER_FRAMES.length]! : "●";
+  return isWorkingStatus(status) ? SPINNER_FRAMES[Math.floor(Date.now() / 120) % SPINNER_FRAMES.length]! : "●";
 }
 
 /** A focused editor rendered as Forge614's primary writing surface. */
 export class ForgeComposer extends Editor {
-  private status = "Ready";
+  private status: string;
   private workModeHint?: string;
   private selectedChoice = 0;
   private currentValue?: string;
   private dismissed = "";
-  private commandGroups: ComposerCommandGroup[] = [{ title: "FORGE614", items: forgeCommands }];
+  private commandGroups: ComposerCommandGroup[];
   private skillChoices: ComposerChoice[] = [];
   private picker?: { title: string; items: ComposerChoice[]; resolve: (value?: string) => void };
   private repaint: () => void;
-  constructor(tui: TUI) {
+  constructor(tui: TUI, private readonly locale: Locale = "en") {
     super(tui, { borderColor: cyan, selectList: { selectedPrefix: cyan, selectedText: cyan, description: muted, scrollInfo: muted, noMatch: muted } }, { paddingX: 1 });
     this.repaint = () => tui.requestRender();
+    this.status = getCatalog(locale).chat.statusReady;
+    this.commandGroups = [{ title: "FORGE614", items: defaultForgeCommands(locale) }];
   }
   choose(title: string, items: ComposerChoice[], current?: string): Promise<string | undefined> {
     this.cancelChoice();
@@ -90,7 +107,7 @@ export class ForgeComposer extends Editor {
   }
   private commandItems(): ComposerChoice[] { return this.commandGroups.flatMap(group => group.items.map(item => ({ ...item, group: group.title }))); }
   chooseCommand(): Promise<string | undefined> {
-    return this.choose("Commands", this.commandItems().filter(item => item.value !== "/help" && item.value !== "/commands"));
+    return this.choose(getCatalog(this.locale).chat.commandsFallbackTitle, this.commandItems().filter(item => item.value !== "/help" && item.value !== "/commands"));
   }
   private suggestions(): ComposerChoice[] {
     const text = this.getText();
@@ -141,14 +158,15 @@ export class ForgeComposer extends Editor {
     return this.renderContent(width - margin * 2).map(line => " ".repeat(margin) + line);
   }
   private renderContent(width: number): string[] {
+    const t = getCatalog(this.locale).chat;
     const innerWidth = Math.max(1, width - 4);
     if (width < 10) return super.render(Math.max(1, width));
     const editor = super.render(innerWidth).slice(1, -1);
     const title = `  ${statusDot(this.status)} ${this.status}  `;
     const topFill = rule(Math.max(0, width - visibleWidth(title) - 5));
-    const mode = this.workModeHint ? workModePresentation(this.workModeHint) : undefined;
-    const hint = mode ? mode.text : muted("/help or /commands · Browse commands");
-    const shortcuts = mode ? mode.help : muted("Shift+Enter newline");
+    const mode = this.workModeHint ? workModePresentation(this.workModeHint, this.locale) : undefined;
+    const hint = mode ? mode.text : muted(t.helpOrCommandsHint);
+    const shortcuts = mode ? mode.help : muted(t.shiftEnterNewline);
     const hintWidth = visibleWidth(hint) + visibleWidth(shortcuts);
     const hintLine = innerWidth >= hintWidth + 2 ? `${hint}${" ".repeat(innerWidth - hintWidth)}${shortcuts}` : hint;
 
@@ -163,7 +181,7 @@ export class ForgeComposer extends Editor {
     const leftWidth = Math.max(0, ...visibleItems.map((item, offset) => visibleWidth(leftText(item, offset))));
     const menu = items.length ? [
       ...visibleItems.flatMap((item, offset) => [
-        ...(offset === 0 || item.group !== visibleItems[offset - 1]?.group ? [fit(cyan(item.group ?? this.picker?.title ?? "Commands"), width)] : []),
+        ...(offset === 0 || item.group !== visibleItems[offset - 1]?.group ? [fit(cyan(item.group ?? this.picker?.title ?? t.commandsFallbackTitle), width)] : []),
         fit((() => {
           const isCursor = start + offset === this.selectedChoice;
           const isCurrent = item.value === this.currentValue;
@@ -172,7 +190,7 @@ export class ForgeComposer extends Editor {
           return item.label ? `${left}  ${muted(item.label)}` : left;
         })(), width),
       ]),
-      fit(muted(`${this.picker?.title ?? "Commands"} · ${start + 1}–${Math.min(start + 5, items.length)} of ${items.length} · ↑/↓ choose · Enter confirm · Esc cancel`), width),
+      fit(muted(t.menuFooter({ title: this.picker?.title ?? t.commandsFallbackTitle, from: start + 1, to: Math.min(start + 5, items.length), total: items.length })), width),
     ] : [];
     return [
       ...menu,
@@ -187,7 +205,7 @@ export class ForgeComposer extends Editor {
   }
 }
 
-export function createComposer(tui: TUI = new TuiAltScreen(new ProcessTerminal())): { component: ForgeComposer; input: ForgeComposer } {
-  const input = new ForgeComposer(tui);
+export function createComposer(tui: TUI = new TuiAltScreen(new ProcessTerminal()), locale: Locale = "en"): { component: ForgeComposer; input: ForgeComposer } {
+  const input = new ForgeComposer(tui, locale);
   return { component: input, input };
 }

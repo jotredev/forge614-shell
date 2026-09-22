@@ -1,4 +1,6 @@
 import { accent, border, danger, fit, warning } from "./theme.ts";
+import { getCatalog } from "../../i18n/index.ts";
+import type { Locale } from "../../i18n/index.ts";
 
 /** A usage meter's own color escalates as it fills — muted at first, amber near the limit, red at or over it — instead of always looking the same regardless of how close you are to running out. */
 export function usageColor(percent: number): (text: string) => string {
@@ -7,23 +9,20 @@ export function usageColor(percent: number): (text: string) => string {
   return accent;
 }
 
-/** The engine's own default — Shell never resolves this to a concrete level. Kept short: it also has to fit the sidebar's narrow column. */
+/** The engine's own default — Shell never resolves this to a concrete level. Kept short: it also has to fit the sidebar's narrow column. English-only constant kept for callers that cannot pass a locale; prefer `getCatalog(locale).metrics.reasoningDefaultLabel` wherever a locale is known. */
 export const REASONING_DEFAULT_LABEL = "Default (auto)";
 
-export function effortLabel(level?: string | null): string {
-  return level ? level.charAt(0).toUpperCase() + level.slice(1) : REASONING_DEFAULT_LABEL;
+export function effortLabel(level?: string | null, locale: Locale = "en"): string {
+  return level ? level.charAt(0).toUpperCase() + level.slice(1) : getCatalog(locale).metrics.reasoningDefaultLabel;
 }
 
-const effortDescriptions: Record<string, string> = {
-  low: "Fastest, least deliberation",
-  medium: "Balanced speed and thoroughness",
-  high: "More thorough, slower",
-  xhigh: "Most thorough, slowest",
-  max: "Maximum depth, slowest",
-};
+function effortDescriptions(locale: Locale): Record<string, string> {
+  const t = getCatalog(locale).metrics;
+  return { low: t.effortLow, medium: t.effortMedium, high: t.effortHigh, xhigh: t.effortXhigh, max: t.effortMax };
+}
 
-export function effortDescription(level: string): string {
-  return effortDescriptions[level] ?? "";
+export function effortDescription(level: string, locale: Locale = "en"): string {
+  return effortDescriptions(locale)[level] ?? "";
 }
 
 /** "1M", not "1000k" — and keeps one decimal (e.g. "1.5k") when rounding to a whole unit would lose real precision. */
@@ -38,25 +37,27 @@ export function compactNumber(value: number): string {
   return String(value);
 }
 
-export function usageTitle(label: string): string {
-  const names: Record<string, string> = { five_hour: "5-hour limit", seven_day: "Weekly limit", seven_day_opus: "Weekly · Opus", seven_day_sonnet: "Weekly · Sonnet", seven_day_oauth_apps: "Weekly · connected apps", extra_usage: "Extra usage" };
-  return names[label] ?? (label.includes("_") ? label.replaceAll("_", " ").replace(/\b\w/g, c => c.toUpperCase()) + " (provider)" : label);
+export function usageTitle(label: string, locale: Locale = "en"): string {
+  const t = getCatalog(locale).metrics;
+  const names: Record<string, string> = { five_hour: t.usageFiveHourLimit, seven_day: t.usageWeeklyLimit, seven_day_opus: t.usageWeeklyOpus, seven_day_sonnet: t.usageWeeklySonnet, seven_day_oauth_apps: t.usageWeeklyConnectedApps, extra_usage: t.usageExtraUsage };
+  return names[label] ?? (label.includes("_") ? label.replaceAll("_", " ").replace(/\b\w/g, c => c.toUpperCase()) + t.usageProviderSuffix : label);
 }
 
 /** Provider-internal buckets are not stable user-facing plan limits. */
 export function isDisplayableUsage(label: string): boolean {
   return label !== "nimbus_quill";
 }
-export function resetLabel(reset?: string, now = Date.now()): string {
-  if (!reset) return "Reset time unavailable";
-  if (/^\d+[dhm](\s+\d+[dhm])*$/.test(reset)) return `Resets in ${reset}`;
+export function resetLabel(reset?: string, now = Date.now(), locale: Locale = "en"): string {
+  const t = getCatalog(locale).metrics;
+  if (!reset) return t.resetTimeUnavailable;
+  if (/^\d+[dhm](\s+\d+[dhm])*$/.test(reset)) return t.resetsIn({ time: reset });
   const timestamp = Date.parse(reset);
-  if (!Number.isFinite(timestamp)) return "Reset time unavailable";
+  if (!Number.isFinite(timestamp)) return t.resetTimeUnavailable;
   const minutes = Math.ceil((timestamp - now) / 60000);
-  if (minutes <= 0) return "Awaiting updated limit";
-  if (minutes >= 1440) return `Resets in ${Math.floor(minutes / 1440)}d ${Math.floor(minutes % 1440 / 60)}h`;
-  if (minutes >= 60) return `Resets in ${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-  return `Resets in ${minutes}m`;
+  if (minutes <= 0) return t.awaitingUpdatedLimit;
+  if (minutes >= 1440) return t.resetsIn({ time: `${Math.floor(minutes / 1440)}d ${Math.floor(minutes % 1440 / 60)}h` });
+  if (minutes >= 60) return t.resetsIn({ time: `${Math.floor(minutes / 60)}h ${minutes % 60}m` });
+  return t.resetsIn({ time: `${minutes}m` });
 }
 export function progressBar(percent: number, width: number): string {
   const cells = Math.max(1, Math.floor(width));

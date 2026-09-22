@@ -1,3 +1,6 @@
+import { getCatalog } from "../../i18n/index.ts";
+import type { Locale } from "../../i18n/index.ts";
+
 export interface Quota {
   status?: string;
   utilization?: number;
@@ -49,16 +52,22 @@ export function updateTelemetry(state: Telemetry, event: Record<string, any>): T
   return next;
 }
 
-export function telemetryLines(state: Telemetry): string[] {
-  const unknown = "not reported";
+export function telemetryLines(state: Telemetry, locale: Locale = "en"): string[] {
+  const t = getCatalog(locale).telemetry;
+  const unknown = t.notReported;
   return [
-    `Model: ${state.model ?? unknown} | Applied effort: ${state.effort === null ? "none" : state.effort ?? unknown}`,
-    `Last query tokens: input ${state.inputTokens ?? unknown} | output ${state.outputTokens ?? unknown} | cache read ${state.cacheRead ?? unknown} | cache write ${state.cacheWrite ?? unknown}`,
-    `Last reported context: ${state.contextTokens ?? unknown} / ${state.contextWindow ?? unknown}`,
-    `Last query API-price estimate: ${state.estimateUSD === undefined ? unknown : `$${state.estimateUSD.toFixed(4)}`} — not a bill`,
+    t.modelLine({ model: state.model ?? unknown, effort: state.effort === null ? t.effortNone : state.effort ?? unknown }),
+    t.tokensLine({
+      input: String(state.inputTokens ?? unknown), output: String(state.outputTokens ?? unknown),
+      cacheRead: String(state.cacheRead ?? unknown), cacheWrite: String(state.cacheWrite ?? unknown),
+    }),
+    t.contextLine({ used: String(state.contextTokens ?? unknown), window: String(state.contextWindow ?? unknown) }),
+    t.costLine({ estimate: state.estimateUSD === undefined ? unknown : `$${state.estimateUSD.toFixed(4)}` }),
     ...(["five_hour", "seven_day", ...Object.keys(state.quotas).filter(key => key !== "five_hour" && key !== "seven_day")].map(key => {
       const quota = state.quotas[key];
-      return `${key} (last report): ${quota?.utilization === undefined ? unknown : `${Math.round(quota.utilization * 100)}% used`} | ${quota?.status ?? unknown} | resets: ${quota?.resetsAt ? new Date(quota.resetsAt * 1000).toLocaleString() : unknown}${quota?.isUsingOverage ? " | EXTRA USAGE ACTIVE (provider account setting)" : ""}`;
+      const used = quota?.utilization === undefined ? unknown : t.percentUsed({ percent: Math.round(quota.utilization * 100) });
+      const resets = quota?.resetsAt ? new Date(quota.resetsAt * 1000).toLocaleString() : unknown;
+      return t.quotaLine({ key, used, status: quota?.status ?? unknown, resets }) + (quota?.isUsingOverage ? t.extraUsageActive : "");
     })),
   ];
 }
