@@ -77,7 +77,7 @@ Evidence expires after 7 days. This never deletes memory or configuration — it
 
 Shell never displays or logs configuration-file `afterContent` (proposed content) or `beforeHash` (the previous-content fingerprint); the preview shows paths and statuses only. A PostgreSQL connection string entered during Engram initialization is sent only to Engram and never reaches the screen or the log at any point in the run. This applies to the hook component too — its write can touch an assistant's entire local settings file (for example Claude Code's `~/.claude/settings.json`, which also holds every existing hook and permission rule), so its `afterContent`/`beforeHash` are exactly as sensitive as the MCP entry's, and never shown.
 
-`configured` appears only when Engines' own `verify memory-integration` confirms both parts, or when the plan already reported both as present with nothing to write. An error, `applied: false`, or a verification that does not confirm both parts is never reported as success. One failed assistant does not hide the other assistants' outcomes.
+`configured` appears only when Engines' own `verify memory-integration` confirms both parts. An error, `applied: false`, or a verification that does not confirm both parts is never reported as success. One failed assistant does not hide the other assistants' outcomes.
 
 The infrastructure also contains `planMcpRemove` and `removeEngramMcpFromAgent`, internal foundations for future uninstallation. There is no public memory-removal command or interface yet; it must not be documented as available.
 

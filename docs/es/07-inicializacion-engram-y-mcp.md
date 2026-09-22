@@ -77,7 +77,7 @@ La evidencia caduca después de 7 días. Esto nunca elimina memoria ni configura
 
 Shell nunca presenta ni registra `afterContent` (contenido propuesto) ni `beforeHash` (huella del contenido previo) de los archivos de configuración; la vista previa solo muestra rutas y estados. La cadena de conexión PostgreSQL introducida durante la inicialización de Engram se envía únicamente a Engram y nunca llega a la pantalla ni al registro en ningún punto de la ejecución. Esto se aplica también al componente del hook — su escritura puede tocar todo el archivo de configuración local de un asistente (por ejemplo, `~/.claude/settings.json` de Claude Code, que también contiene todos los hooks y reglas de permisos existentes), así que su `afterContent`/`beforeHash` son exactamente igual de sensibles que los de la entrada MCP, y nunca se muestran.
 
-`configured` solo aparece si el propio `verify memory-integration` de Engines confirma ambas partes, o si el plan ya reportó ambas presentes sin nada que escribir. Un error, `applied: false` o una verificación que no confirma ambas partes nunca se informa como éxito. Un asistente fallido no oculta el resultado de los demás.
+`configured` solo aparece si el propio `verify memory-integration` de Engines confirma ambas partes. Un error, `applied: false` o una verificación que no confirma ambas partes nunca se informa como éxito. Un asistente fallido no oculta el resultado de los demás.
 
 La infraestructura también incluye `planMcpRemove` y `removeEngramMcpFromAgent`, bases internas para una futura desinstalación. No existe todavía un comando público ni interfaz de eliminación de memoria; no debe documentarse como disponible.
 
