@@ -27,6 +27,14 @@ When Claude Code or Codex calls a tool from the `forge614-engram` MCP server, th
 
 Claude Code obtains the information from the SDK tool name: `mcp__<server>__<tool>`. Codex obtains it from `item.server` and `item.tool` in its `mcpToolCall` `app-server` notifications (the JSON-RPC protocol behind its interface). Those fields were verified with a real session before the indicator was implemented. Shared logic lives in `src/engines/mcp-labels.ts` and has dedicated tests.
 
+## Three-scope memory and Engram notices
+
+Like three shelves consulted at once — the person's, the hallway one shared with other repositories, and this project's — the chat hands the assistant the memory of the `shared`, `ecosystem` (the project's group, if it has one) and `project` scopes, in that order and inside the same data block, never as an instruction. With an Engram older than 1.6.0 there is no group scope and everything stays as before.
+
+When Engram reports something, the chat shows it once in Shell's own text (es/en): that it updated its database so it can use groups (with the backup path), or that it re-linked the folder to the project declared in its `.forge614/project.json` file. If that file is invalid, Engram delivers no memory at all and Shell says so visibly; the chat keeps working without memory until the file is fixed or deleted.
+
+The no-project reception screen (a list of recent projects, with each one's group) **does not exist yet**: decision 0003 declares it pending and it is not part of this delivery.
+
 ## Sessions and permissions
 
 Codex lists and resumes threads in the current directory; it rejects a thread from another project or one active in another client. Codex work modes come from its configuration requirements and can combine approval policy with sandboxing. Claude retains its native history. Before an action requiring confirmation, Shell shows the question in the interface.

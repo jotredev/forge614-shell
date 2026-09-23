@@ -28,6 +28,10 @@ One more small, adapter-specific translation is needed, because each assistant r
 - A future agent's adapter needing this same feedback should be verified the same way: run its real protocol live with `forge614-engram` configured and inspect the actual tool-call notification shape — never assume it matches Claude's or Codex's field names.
 - **Background activity** (agents/processes running without blocking the turn): the same rule applies — a new assistant must declare, with real evidence cited, whether its protocol reports it in a distinguishable way. See `docs/superpowers/specs/2026-09-22-background-activity-indicator-design.md` for the precedent in Claude Code (yes, via `task_started`/`task_updated`/`task_notification`/`background_tasks_changed`) and Codex (no, no local evidence — requires probing `app-server` live before assuming otherwise).
 
+### 4. Memory context injection (all three scopes) — required for every chat adapter
+
+Every chat adapter must feed the assistant the digest `getStartupContext` (`src/infrastructure/forge614-engram.ts`) builds: `shared`, `ecosystem` (the project's group, optional since Engram 1.6.0) and `project`, sanitized and wrapped as data in the `<forge614-engram-memory>` block — never as an instruction. An adapter must not read Engram's output itself, and its composition root must inject `getStartupContext` through `withStartupNotices` (`src/infrastructure/engram-notices.ts`) so Engram's notices reach the person. Validate a new adapter with a test that feeds a real-shaped `startup-context` payload (with `ecosystem`, and hostile text inside it) and inspects what the assistant actually receives.
+
 ### Rule of thumb
 
 "Engines detected/supports it" never implies "Shell can chat with it." "Shell can chat with it" never implies "Shell shows tool-use feedback for it." Each is a separate, explicit step — never assume one unlocks the next.

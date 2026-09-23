@@ -13,6 +13,7 @@ import { ShellSidebar } from "./sidebar.ts";
 import { readRuntimeResources } from "../../infrastructure/runtime-resources.ts";
 import { loadEnginePreference, saveEnginePreference } from "../../infrastructure/shell-preferences.ts";
 import { getStartupContext } from "../../infrastructure/forge614-engram.ts";
+import { withStartupNotices } from "../../infrastructure/engram-notices.ts";
 import { ShellStatusBar } from "./status-bar.ts";
 import { effortDescription, effortLabel, isDisplayableUsage } from "./metrics.ts";
 import { ActivityCard, chatMessage } from "./transcript.ts";
@@ -81,7 +82,11 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const env = claudeEnvironment(process.env);
   const executable = selectedExecutable ?? await findClaude(env);
   const cwd = process.cwd();
-  const session = new ClaudeSession({ cwd, env, executable, getStartupContext });
+  // Engram's notices (a database migration, a folder re-linked, an unreadable project file) reach the
+  // person as chat lines; the session itself never knows about them. `write`/`writeError` are
+  // declared below and only run when the first turn fetches memory, long after they exist.
+  const showNotice = (text: string, isProblem: boolean) => { if (isProblem) writeError(text); else write(text); };
+  const session = new ClaudeSession({ cwd, env, executable, getStartupContext: withStartupNotices(getStartupContext, showNotice, locale) });
   const surface = workspaceTerminal(terminal ?? new ProcessTerminal());
   const tui = new TuiAltScreen(surface, true, undefined, { mouse: true });
   const transcript = new Container();

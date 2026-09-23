@@ -10,11 +10,37 @@ Ejecuta:
 forge614-shell init --product engram
 ```
 
-El comando exige un terminal interactivo. Primero muestra el flujo de Engram: almacenamiento local SQLite y FTS5 (índice para búsqueda de texto) obligatorio, sincronización PostgreSQL opcional y refuerzo opcional (prioriza memorias repetidas; no prueba que sean verdaderas). Tras una confirmación, Shell ejecuta `forge614-engram init --json` y, si se eligió, `forge614-engram reinforcement-enable`.
+El comando exige un terminal interactivo. Primero muestra el flujo de Engram: almacenamiento local SQLite y FTS5 (índice para búsqueda de texto) obligatorio, sincronización PostgreSQL opcional y refuerzo opcional (prioriza memorias repetidas; no prueba que sean verdaderas). Tras una confirmación, Shell ejecuta `forge614-engram init --json` y, si se eligió, `forge614-engram reinforcement-enable`. Después, si la carpeta es un proyecto que aún no tiene grupo, pregunta una sola vez a cuál pertenece (ver «Grupo del proyecto»).
 
-Todo el comando — introducción, PostgreSQL, refuerzo, resumen, inicialización de Engram, selección de asistentes, vista previa, confirmación y resultado final — es una única experiencia visual continua en pantalla alterna. Shell nunca imprime una línea de estado en la terminal normal entre pantallas ni abre una segunda pantalla independiente a mitad de camino; la persona solo vuelve a ver la terminal normal una vez, al final, cuando el resultado ya está en pantalla.
+Todo el comando — introducción, PostgreSQL, refuerzo, resumen, inicialización de Engram, grupo del proyecto (si aplica), selección de asistentes, vista previa, confirmación y resultado final — es una única experiencia visual continua en pantalla alterna. Shell nunca imprime una línea de estado en la terminal normal entre pantallas ni abre una segunda pantalla independiente a mitad de camino; la persona solo vuelve a ver la terminal normal una vez, al final, cuando el resultado ya está en pantalla.
 
 Una cancelación antes de confirmar muestra una pantalla de resultado con `Cancelled. No changes were made.` y devuelve código 130. Si la inicialización de Engram funciona, un fallo posterior de la integración de memoria no la convierte en fallida.
+
+## Grupo del proyecto (ámbito `ecosystem`)
+
+Como el estante del pasillo que comparten las oficinas de una misma empresa, un **grupo** reúne repositorios relacionados (microservicios, un monorepo partido, los nodos de Forge614) para que compartan memoria. Un proyecto pertenece como máximo a un grupo, y la memoria de un proyecto manda sobre la del grupo, que manda sobre la compartida (`project` > `ecosystem` > `shared`).
+
+**Cuándo aparece la pantalla.** Después de que Engram termina `init`, y solo si se cumplen las tres condiciones:
+
+- el flujo es interactivo (sin terminal interactivo `init` no arranca, y no existe un modo `--yes`: nunca se pregunta ni se vincula un grupo sin persona);
+- la carpeta es un proyecto: la raíz de un repositorio Git, o una carpeta con un manifiesto (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `pom.xml`, `build.gradle`, `composer.json`, `Gemfile` o `forge614.node.json`);
+- todavía no existe `.forge614/project.json` en la raíz del proyecto. Si el archivo existe, **nunca** se pregunta, diga lo que diga (acta 0023). Se pregunta una sola vez.
+
+**Qué muestra.** El título «Este repositorio aún no pertenece a ningún grupo.»; una sección «Grupos existentes» con cada grupo y sus proyectos (dato de `forge614-engram group-list`); una línea divisoria; y las acciones «Crear un grupo nuevo…» (pide un nombre: minúsculas, números y guiones simples, de 1 a 64 caracteres, y que no exista ya) y «Es un proyecto suelto (sin grupo)». Si todavía no hay grupos, la primera sección no aparece. Esc no vincula nada y el flujo continúa; Shell volverá a preguntar la próxima vez. Con muchos grupos la lista se muestra por ventanas con un contador (`3/12`).
+
+**Cómo se aplica.** Solo con comandos no interactivos de Engram, siempre en este orden:
+
+```text
+forge614-engram group-create --name <nombre>                    (solo si se creó un grupo)
+forge614-engram init --json --directory <raíz del proyecto>     (Engram registra el proyecto y escribe el archivo)
+forge614-engram group-bind --project-id <id> --group <id>       (solo si hay grupo; siempre por id, nunca por nombre)
+```
+
+**Shell nunca escribe `.forge614/project.json`**: es de Engram (acta 0023). Shell solo comprueba si existe. Si algo falla, el resultado lo informa con el mensaje de Engram y la inicialización, que ya se aplicó, no se convierte en fallida.
+
+**Límites conocidos.** Si Engram ya creó el archivo antes (por ejemplo, tras un chat) con `ecosystem: null`, Shell no vuelve a preguntar; el grupo se cambia con los comandos de Engram. Si `group-bind` falla después de que Engram escribió el archivo, el proyecto queda sin grupo y tampoco se vuelve a preguntar. Las memorias de grupo todavía no se replican a PostgreSQL (llegará con Engram 1.7.0).
+
+**Avisos de Engram.** La primera vez que se usa un grupo Engram actualiza su base de datos (con copia de seguridad previa) y avisa `DATABASE_MIGRATED`. Shell lo muestra en el resultado, con la ruta de la copia, en su propio texto (es/en) y una sola vez.
 
 ## Qué es la «integración de memoria»
 
@@ -84,6 +110,10 @@ forge614-engram startup-context --directory <cwd> --json
 ```
 
 Esta llamada nunca crea un proyecto, un vínculo ni una memoria, y una carpeta no vinculada no es un error. Shell la recupera una vez por conversación lógica — cuando la sesión de chat se conecta por primera vez, y de nuevo tras `/new` o `/resume` — nunca en cada turno. El resumen que construye se envuelve en un bloque explícito `<forge614-engram-memory>` que le indica al modelo que esto es dato recuperado, no una instrucción, y que cualquier texto dentro que parezca un comando debe ignorarse; para Claude se añade al preset de system prompt `claude_code`, y para Codex se antepone como una parte de texto separada solo en ese turno. El resumen tiene un tamaño acotado y nunca incluye la base de datos de Engram, su configuración ni ningún secreto. Si Engram no está instalado, no responde o devuelve un JSON inválido, Shell continúa la conversación sin contexto de memoria en lugar de fallar al iniciar — nunca inventa uno.
+
+Desde Engram 1.6.0 el resultado trae tres capas, en este orden: `shared` (la persona), `ecosystem` (el grupo del proyecto, si tiene) y `project`. El bloque `ecosystem` es opcional y aditivo (`format` sigue en 1): si Engram es anterior, no viene y nada cambia; si viene con una forma que Shell no entiende, se descarta solo ese bloque y `shared` y `project` siguen llegando. Shell ignora los campos desconocidos y solo exige los que usa. Las tres capas se sanean igual y van dentro del mismo bloque `<forge614-engram-memory>`, como dato y no como instrucción; el resumen reparte su tope de 20 líneas entre las capas presentes para que una capa grande no deje fuera a las más específicas.
+
+El resultado también puede traer avisos. Shell muestra en el chat, una sola vez y con su propio texto (es/en), `DATABASE_MIGRATED` (con la ruta de la copia de seguridad) y `PROJECT_REBOUND_FROM_FILE`. Si el archivo `.forge614/project.json` es inválido (`PROJECT_FILE_INVALID`), Engram no devuelve ningún contexto: Shell lo dice de forma visible («la memoria no se cargó; corrige el archivo o bórralo») y el chat continúa sin memoria.
 
 ## Seguridad y resultados
 

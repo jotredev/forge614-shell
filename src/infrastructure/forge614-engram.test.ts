@@ -216,7 +216,7 @@ test("updateEngram rejects a malformed result instead of guessing its shape", as
   })).rejects.toThrow("forge614-engram update returned an invalid result.");
 });
 
-import { getStartupContext } from "./forge614-engram.ts";
+import { getStartupContext, STARTUP_CONTEXT_MAX_CHARS } from "./forge614-engram.ts";
 
 test("getStartupContext returns unavailable, never throws, when the binary is missing", async () => {
   const result = await getStartupContext("/tmp/some-project", {
@@ -279,7 +279,7 @@ test("getStartupContext caps total digest size", async () => {
     run: async () => ({ status: 0, stdout: JSON.stringify(payload), stderr: "" }),
   });
   expect(result.available).toBe(true);
-  if (result.available) expect(result.text.length).toBeLessThanOrEqual(6020);
+  if (result.available) expect(result.text.length).toBeLessThanOrEqual(STARTUP_CONTEXT_MAX_CHARS);
 });
 
 // --- Strict contract validation: only the exact confirmed public shape is ever trusted. ---
