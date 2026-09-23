@@ -7,7 +7,13 @@ import { chooseMemoryAgents, showMemoryPreviewConfirm } from "../ui/startup/memo
 import type { MemoryPreviewItem } from "../ui/startup/memory-setup.ts";
 import { EngramFlowScreen } from "../ui/startup/frame.ts";
 import { showResult, showWorking } from "../ui/startup/engram-progress.ts";
-import { applyEngramInit, type RunEngram } from "../infrastructure/forge614-engram.ts";
+import {
+  applyEngramInit, bindEngramFolder, bindEngramGroup, createEngramGroup, listEngramGroups, type RunEngram,
+} from "../infrastructure/forge614-engram.ts";
+import { chooseGroup } from "../ui/startup/group-picker.ts";
+import { resolveGroupPrompt } from "../infrastructure/project-identity.ts";
+import { createNoticeTracker, noticeText } from "../infrastructure/engram-notices.ts";
+import type { EngramNotice } from "../infrastructure/engram-notices.ts";
 import {
   applyEnginesPlan, discoverMcpCapableAgents, planMemoryInstall, verifyMemoryIntegration,
   type MemoryComponentStatus, type MemoryInstallPlan, type MemoryVerification,
@@ -75,6 +81,8 @@ export interface RunInitOptions {
    * deterministic and side-effect-free for a given set of options.
    */
   readonly locale?: Locale;
+  /** The project folder; defaults to `process.cwd()`. Injectable so tests never depend on where they run. */
+  readonly cwd?: string;
 }
 
 /** The minimal slice of `process.stdin`'s lifecycle this module needs to detect a real close. */
@@ -272,6 +280,62 @@ async function runMemorySetupStep(
 }
 
 /**
+ * Asks — once, and only when it applies — which group this project belongs to, and applies the
+ * answer through Engram's own non-interactive commands (acta 0023). Runs after `init` was applied
+ * (Engram must be initialized for `group-list`, and Shell makes no Engram call before confirmation).
+ * Shell never writes `.forge614/project.json`: `init --directory` makes Engram write it. Returns the
+ * lines for the final result screen, and never throws — a failure here is reported, never turned into
+ * a failed init, exactly like the assistant-integration step that follows.
+ */
+async function runGroupStep(
+  screen: EngramFlowScreen,
+  options: { cwd: string; interactive: boolean; home?: string; env?: NodeJS.ProcessEnv; run?: RunEngram; locale: Locale; signal?: AbortSignal; tracker: ReturnType<typeof createNoticeTracker> },
+): Promise<string[]> {
+  const t = getCatalog(options.locale);
+  const engram = { home: options.home, env: options.env, run: options.run };
+  const aborted = () => Boolean(options.signal?.aborted);
+  const noticeLines = (notices: readonly EngramNotice[]) => options.tracker.fresh(notices).map(notice => noticeText(notice, t));
+  const lines: string[] = [];
+  try {
+    const decision = await resolveGroupPrompt({ cwd: options.cwd, interactive: options.interactive });
+    if (!decision.ask || aborted()) return [];
+    const groups = await showWorking(screen, "Forge614 Engram", t.groupResult.loading, () => listEngramGroups(engram));
+    if (aborted()) return [];
+    const choice = await chooseGroup(groups, screen, options.locale, options.signal);
+    if (aborted()) return [];
+    if (!choice) return [t.groupResult.skipped];
+    const notices: EngramNotice[] = [];
+    let outcome: string;
+    try {
+      await showWorking(screen, "Forge614 Engram", t.groupResult.applying, async () => {
+        if (choice.kind === "new") {
+          // Created first: if the name is already taken Engram fails before writing the identity file.
+          const group = await createEngramGroup(choice.name, engram);
+          notices.push(...group.notices);
+          const folder = await bindEngramFolder(decision.root, engram);
+          notices.push(...folder.notices);
+          notices.push(...(await bindEngramGroup(folder.projectId, group.groupId, engram)).notices);
+        } else {
+          const folder = await bindEngramFolder(decision.root, engram);
+          notices.push(...folder.notices);
+          if (choice.kind === "existing") notices.push(...(await bindEngramGroup(folder.projectId, choice.group.id, engram)).notices);
+        }
+      });
+      outcome = choice.kind === "new" ? t.groupResult.created({ group: choice.name })
+        : choice.kind === "existing" ? t.groupResult.bound({ group: choice.group.name })
+        : t.groupResult.loose;
+    } catch (error) {
+      outcome = t.groupResult.failed({ message: describeError(error, options.locale) });
+    }
+    lines.push(outcome, ...noticeLines(notices));
+  } catch (error) {
+    if (aborted()) return [];
+    return [t.groupResult.failed({ message: describeError(error, options.locale) })];
+  }
+  return lines;
+}
+
+/**
  * Entry point for `forge614-shell init --product engram`. Makes no Engram call before confirmation.
  * Owns one continuous alternate-screen session from the intro screen to the final result — no
  * step here ever prints to the plain terminal or opens a second alt-screen. Never returns silently:
@@ -361,6 +425,11 @@ export async function runInitCommand(args: string[], options: RunInitOptions = {
       applyEngramInit(flow.decisions, { run: options.run, home: options.home, env: options.env }));
     if (signal.aborted) return "aborted";
     const resultLines = [t.result.initComplete];
+    const groupLines = await runGroupStep(screen, {
+      cwd: options.cwd ?? process.cwd(), interactive, home: options.home, env: options.env, run: options.run, locale, signal, tracker: createNoticeTracker(),
+    });
+    if (signal.aborted) return "aborted";
+    if (groupLines.length) resultLines.push("", ...groupLines);
     try {
       const { outcomes, applied, notice } = await runMemorySetupStep(screen, { home: options.home, env: options.env, enginesRun: options.enginesRun, chooseMemoryAgents: options.chooseMemoryAgents, locale, signal });
       if (signal.aborted) return "aborted";

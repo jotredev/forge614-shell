@@ -56,7 +56,10 @@ if (args.length === 1 && args[0] === "update") {
       process.exitCode = 130;
     } else {
       effectiveLocale = locale;
-      await runInitCommand(args.slice(1), { version: metadata.version, env: process.env, locale, terminal });
+      // `interactive` comes from the real TTYs, never from having a terminal object: `terminal` above
+      // exists even when stdin is a pipe, and passing only it made `init` start its screens (and then
+      // die on stdin closing) instead of refusing at once as documented.
+      await runInitCommand(args.slice(1), { version: metadata.version, env: process.env, locale, terminal, interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY) });
     }
   } catch (error) {
     console.error(getCatalog(effectiveLocale).cli.initFailed({ message: describeError(error, effectiveLocale) }));

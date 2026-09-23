@@ -46,6 +46,10 @@ export type ShellErrorCode =
   | "engram-invalid-result"
   | "engram-reinforcement-failed-after-init"
   | "engram-update-invalid-result"
+  | "GROUP_NAME_INVALID"
+  | "GROUP_NAME_TAKEN"
+  | "ENGRAM_GROUP_LIST_INVALID"
+  | "ENGRAM_GROUP_RESULT_INVALID"
   | "codex-turn-failed"
   | "init-requires-product"
   | "init-unexpected-args"
@@ -101,6 +105,41 @@ export interface Catalog {
     summaryCommandsHeading: string;
     summaryNoAgentNotice: string;
     navHint: string;
+  };
+  /** Group-selection screen shown once inside `init --product engram` (acta 0023 §5). */
+  groupPicker: {
+    title: string;
+    existingHeading: string;
+    /** `projects` is a comma-separated list of project names, already shortened to fit. */
+    projectsLine: (params: { projects: string }) => string;
+    noProjects: string;
+    createLabel: string;
+    looseLabel: string;
+    hint: string;
+  };
+  groupName: {
+    title: string;
+    prompt: string;
+    hint: string;
+  };
+  /** One line per outcome of the group step, folded into the final result screen. */
+  groupResult: {
+    bound: (params: { group: string }) => string;
+    created: (params: { group: string }) => string;
+    loose: string;
+    skipped: string;
+    failed: (params: { message: string }) => string;
+    /** Shown while Engram lists the existing groups. */
+    loading: string;
+    /** Shown while Engram applies the chosen group. */
+    applying: string;
+  };
+  /** Notices Forge614 Engram reports; Shell shows its own text for the code, never Engram's message. */
+  engramNotices: {
+    /** `backup` is the backup path Engram reported, or an empty string when there was none. */
+    databaseMigrated: (params: { backup: string }) => string;
+    projectReboundFromFile: string;
+    projectFileInvalid: string;
   };
   memoryPicker: {
     title: string;

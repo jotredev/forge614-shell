@@ -10,11 +10,37 @@ Run:
 forge614-shell init --product engram
 ```
 
-The command requires an interactive terminal. It first shows the Engram flow: mandatory local SQLite and FTS5 storage (a text-search index), optional PostgreSQL synchronization, and optional reinforcement (ranks repeated memories higher; it does not prove they are true). After confirmation, Shell runs `forge614-engram init --json` and, if chosen, `forge614-engram reinforcement-enable`.
+The command requires an interactive terminal. It first shows the Engram flow: mandatory local SQLite and FTS5 storage (a text-search index), optional PostgreSQL synchronization, and optional reinforcement (ranks repeated memories higher; it does not prove they are true). After confirmation, Shell runs `forge614-engram init --json` and, if chosen, `forge614-engram reinforcement-enable`. Afterwards, if the folder is a project that does not have a group yet, it asks once which group it belongs to (see "Project group").
 
-The whole command — intro, PostgreSQL, reinforcement, summary, Engram initialization, assistant selection, preview, confirmation, and the final result — is one continuous alternate-screen visual flow. Shell never prints a plain-terminal status line between screens and never opens a second, independent screen partway through; the person only ever sees the normal terminal again once, at the very end, when the result is already on screen.
+The whole command — intro, PostgreSQL, reinforcement, summary, Engram initialization, project group (when it applies), assistant selection, preview, confirmation, and the final result — is one continuous alternate-screen visual flow. Shell never prints a plain-terminal status line between screens and never opens a second, independent screen partway through; the person only ever sees the normal terminal again once, at the very end, when the result is already on screen.
 
 Cancelling before confirmation shows a `Cancelled. No changes were made.` result screen and returns exit code 130. If Engram initialization succeeds, a later memory-integration failure does not make it fail.
+
+## Project group (the `ecosystem` scope)
+
+Like the shelf in the hallway that the offices of one company share, a **group** gathers related repositories (microservices, a split monorepo, the Forge614 nodes) so they share memory. A project belongs to at most one group, and a project's memory outranks the group's, which outranks the shared one (`project` > `ecosystem` > `shared`).
+
+**When the screen appears.** After Engram finishes `init`, and only when all three conditions hold:
+
+- the flow is interactive (without an interactive terminal `init` does not start, and there is no `--yes` mode: a group is never asked for or linked without a person);
+- the folder is a project: the root of a Git repository, or a folder with a manifest (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `pom.xml`, `build.gradle`, `composer.json`, `Gemfile`, or `forge614.node.json`);
+- `.forge614/project.json` does not exist yet at the project root. If the file exists, the person is **never** asked, whatever it says (decision 0023). It is asked only once.
+
+**What it shows.** The title "This repository does not belong to any group yet."; an "Existing groups" section with each group and its projects (from `forge614-engram group-list`); a divider line; and the actions "Create a new group…" (asks for a name: lowercase letters, digits and single hyphens, 1 to 64 characters, and not already taken) and "It is a standalone project (no group)". With no groups yet, the first section does not appear. Esc links nothing and the flow continues; Shell asks again next time. With many groups the list is windowed with a counter (`3/12`).
+
+**How it is applied.** Only with Engram's non-interactive commands, always in this order:
+
+```text
+forge614-engram group-create --name <name>                       (only when a group was created)
+forge614-engram init --json --directory <project root>           (Engram registers the project and writes the file)
+forge614-engram group-bind --project-id <id> --group <id>        (only when there is a group; always by id, never by name)
+```
+
+**Shell never writes `.forge614/project.json`**: it belongs to Engram (decision 0023). Shell only checks whether it exists. If something fails, the result reports it with Engram's own message, and the initialization, which was already applied, does not become a failure.
+
+**Known limits.** If Engram already created the file earlier (for example after a chat) with `ecosystem: null`, Shell does not ask again; the group is changed with Engram's commands. If `group-bind` fails after Engram wrote the file, the project stays without a group and is not asked again either. Group memories are not replicated to PostgreSQL yet (coming with Engram 1.7.0).
+
+**Engram notices.** The first time a group is used, Engram updates its database (with a backup first) and reports `DATABASE_MIGRATED`. Shell shows it in the result, with the backup path, in its own text (es/en), and only once.
 
 ## What "memory integration" means
 
@@ -84,6 +110,10 @@ forge614-engram startup-context --directory <cwd> --json
 ```
 
 This call never creates a project, a link, or a memory, and an unlinked directory is not an error. Shell fetches it once per logical conversation — when the chat session first connects, and again after `/new` or `/resume` — never on every single turn. The digest it builds is wrapped in an explicit `<forge614-engram-memory>` block telling the model this is retrieved data, not an instruction, and any text inside that looks like a command is to be ignored; for Claude it is appended to the `claude_code` system prompt preset, and for Codex it is prepended as a separate text part on that turn only. The digest is size-bounded and never includes Engram's database, its configuration, or any secret. If Engram is not installed, does not respond, or returns invalid JSON, Shell continues the conversation with no memory context rather than failing to start — it never invents one.
+
+Since Engram 1.6.0 the result carries three layers, in this order: `shared` (the person), `ecosystem` (the project's group, if it has one) and `project`. The `ecosystem` block is optional and additive (`format` stays at 1): with an older Engram it is absent and nothing changes; if it arrives in a shape Shell does not understand, only that block is dropped and `shared` and `project` still arrive. Shell ignores unknown fields and is strict only about the ones it uses. The three layers are sanitized the same way and travel inside the same `<forge614-engram-memory>` block, as data and not as instructions; the digest shares its 20-line cap among the layers that are present so one large layer cannot push out the more specific ones.
+
+The result may also carry notices. Shell shows in the chat, once and in its own text (es/en), `DATABASE_MIGRATED` (with the backup path) and `PROJECT_REBOUND_FROM_FILE`. If the `.forge614/project.json` file is invalid (`PROJECT_FILE_INVALID`), Engram returns no context at all: Shell says so visibly ("memory was not loaded; fix the file or delete it") and the chat continues without memory.
 
 ## Security and outcomes
 

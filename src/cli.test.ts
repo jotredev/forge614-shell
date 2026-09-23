@@ -20,3 +20,24 @@ test("the init branch's own error catch reports in the locale the person just se
   expect(catchBlock).toContain("getCatalog(effectiveLocale)");
   expect(catchBlock).not.toContain("getCatalog(staticLocale)");
 });
+
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getCatalog } from "./i18n/index.ts";
+
+test("without a real terminal, init refuses at once (it never starts the screens, so it can never ask or link a group)", () => {
+  const home = mkdtempSync(join(tmpdir(), "forge614-shell-cli-notty-"));
+  try {
+    const result = spawnSync("bun", [new URL("./cli.ts", import.meta.url).pathname, "init", "--product", "engram"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000,
+      env: { PATH: process.env.PATH, HOME: home, FORGE614_HOME: join(home, "forge614"), FORGE614_SHELL_LOCALE: "es" },
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(getCatalog("es").startup.requiresInteractiveTerminal);
+    // The interactive screens were never opened: no alternate screen, no "stdin closed" result.
+    expect(result.stdout).not.toContain("\u001b[?1049h");
+    expect(result.stdout + result.stderr).not.toContain("La entrada interactiva se cerró");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});

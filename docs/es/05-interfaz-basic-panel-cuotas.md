@@ -27,6 +27,14 @@ Cuando Claude Code o Codex llama una herramienta del servidor MCP `forge614-engr
 
 Claude Code obtiene el dato del nombre de herramienta que entrega su SDK: `mcp__<servidor>__<herramienta>`. Codex lo obtiene de `item.server` e `item.tool` en sus notificaciones `mcpToolCall` de `app-server` (protocolo JSON-RPC para su interfaz). Esos campos se verificaron con una sesión real antes de implementar el indicador. La lógica compartida está en `src/engines/mcp-labels.ts` y tiene pruebas propias.
 
+## Memoria de tres ámbitos y avisos de Engram
+
+Como tres estantes que se consultan a la vez —el de la persona, el del pasillo compartido con otros repositorios y el de este proyecto—, el chat entrega al asistente la memoria de los ámbitos `shared`, `ecosystem` (el grupo del proyecto, si lo tiene) y `project`, en ese orden y dentro del mismo bloque de datos, nunca como instrucción. Si Engram es anterior a 1.6.0 no hay ámbito de grupo y todo sigue igual.
+
+Cuando Engram avisa algo, el chat lo muestra una sola vez con texto propio (es/en): que actualizó su base de datos para poder usar grupos (con la ruta de la copia de seguridad), o que volvió a vincular la carpeta con el proyecto que declara su archivo `.forge614/project.json`. Si ese archivo es inválido, Engram no entrega ninguna memoria y Shell lo dice de forma visible; el chat sigue funcionando sin memoria hasta que se corrija o se borre el archivo.
+
+La pantalla de recepción sin proyecto (lista de proyectos recientes, con el grupo de cada uno) **todavía no existe**: el acta 0003 la declara pendiente y no forma parte de esta entrega.
+
 ## Sesiones y permisos
 
 Codex lista y retoma hilos del directorio actual; rechaza un hilo de otro proyecto o activo en otro cliente. Los modos de trabajo de Codex proceden de sus requisitos de configuración y pueden combinar política de aprobación con sandbox. Claude mantiene su propio historial nativo. Antes de una acción que requiera confirmación, Shell muestra la pregunta en la interfaz.
