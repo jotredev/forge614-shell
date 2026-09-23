@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "id": "63e74e33-950c-456d-9383-9f112963f79f",
+    "name": "forge614-shell"
+  },
+  "ecosystem": {
+    "id": "e0b3e1c9-ffbb-4b6b-8a55-79fbf3e8f0b4",
+    "name": "forge614"
+  }
+}
