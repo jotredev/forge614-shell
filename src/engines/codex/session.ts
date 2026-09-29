@@ -1,8 +1,14 @@
 import type { RpcConnection } from "../../infrastructure/rpc.ts";
 import type {
-  Approve, CancelOutcome, Emit, NativeAccountUsage, NativeApp, NativeBackgroundTerminal, NativeCollaborationMode, NativeConfigWrite, NativeFeature, NativeGoal, NativeHook,
-  NativeMcpServer, NativeMemorySettings, NativeModel, NativeReviewTarget, NativeSession, NativeSessionInfo, NativeSkill, NativeVisualState, NativeWorkMode, WorkModeChange,
+  Approve, CancelOutcome, Emit, NativeAccountUsage, NativeApp, NativeAutoReviewDenial, NativeBackgroundTerminal, NativeCollaborationMode, NativeConfigWrite, NativeFeature,
+  NativeFeedbackCategory, NativeGoal, NativeHook, NativeImportDetection, NativeImportItem, NativeImportSource, NativeMcpServer, NativeMemorySettings, NativeModel,
+  NativePlugin, NativePluginDetail, NativeReviewTarget, NativeSession, NativeSessionInfo, NativeSkill, NativeVisualState, NativeWorkMode, WorkModeChange,
 } from "../types.ts";
+import { MAX_RECENT_DENIALS, denialFromNotification } from "./auto-review.ts";
+import type { AutoReviewDenialRecord } from "./auto-review.ts";
+import { limitLabel } from "./limits.ts";
+import { pluginDetail as readPluginDetail, pluginEntries } from "./plugins.ts";
+import type { PluginEntry } from "./plugins.ts";
 import { buildCodexWorkModes, sandboxPolicyFor } from "./work-modes.ts";
 import { markdownTranscript } from "./transcript.ts";
 import type { CodexWorkMode } from "./work-modes.ts";
@@ -92,6 +98,32 @@ function isEngramStartupHook(hook: NativeHook): boolean {
     && hook.enabled && (hook.trust === "trusted" || hook.trust === "managed");
 }
 
+/**
+ * An item of `externalAgentConfig/detect` (`v2/ExternalAgentConfigMigrationItem.ts`) as Shell keeps it: how many objects it holds and their names
+ * (`external_agent_config_migration_item_count` and the names of `external_agent_config_migration_started_lines`), with the item itself kept
+ * to be handed back untouched. Without `details` an item stands for one file, except memory, which then holds none.
+ */
+function toImportItem(raw: any): NativeImportItem {
+  const details = raw.details ?? undefined;
+  const list = (items: any[] | undefined, name: (item: any) => string | undefined) => (items ?? []).map(name).filter((value): value is string => Boolean(value));
+  let names: string[] = []; let count = 1;
+  switch (raw.itemType) {
+    case "PLUGINS": names = (details?.plugins ?? []).flatMap((group: any) => (group.pluginNames ?? []).map(String)); count = details ? names.length : 1; break;
+    case "SKILLS": names = list(details?.skills, item => item.name); count = details ? (details.skills ?? []).length : 1; break;
+    case "MCP_SERVER_CONFIG": names = list(details?.mcpServers, item => item.name); count = details ? (details.mcpServers ?? []).length : 1; break;
+    case "SUBAGENTS": names = list(details?.subagents, item => item.name); count = details ? (details.subagents ?? []).length : 1; break;
+    case "HOOKS": names = list(details?.hooks, item => item.name); count = details ? (details.hooks ?? []).length : 1; break;
+    case "COMMANDS": names = list(details?.commands, item => item.name); count = details ? (details.commands ?? []).length : 1; break;
+    case "MEMORY": names = (details?.memory ?? []).map(String); count = details ? names.length : 0; break;
+    case "SESSIONS": names = list(details?.sessions, item => item.title ?? undefined); count = details ? (details.sessions ?? []).length : 1; break;
+    default: break;
+  }
+  return { type: String(raw.itemType), description: String(raw.description ?? ""), cwd: typeof raw.cwd === "string" && raw.cwd ? raw.cwd : null, count, names, raw };
+}
+
+/** The tools `/import` can copy from, in Codex's order: the id `migrationSource` takes and the name shown. */
+const IMPORT_SOURCES = [{ id: "claude-code", label: "Claude Code" }, { id: "cursor", label: "Cursor" }] as const;
+
 function wrapStartupContext(text: string): string {
   return [
     "<forge614-engram-memory>",
@@ -150,6 +182,15 @@ export class CodexSession implements NativeSession {
   private lastAgentMessage?: string;
   /** «Generate memories» as last read or saved, to know when the open thread must be told (`thread/memoryMode/set`). */
   private memoryGenerate?: boolean;
+  /** The denials of this conversation's automatic review that `/approve` offers, newest first (Codex keeps ten); emptied when the conversation changes. */
+  private denials: AutoReviewDenialRecord[] = [];
+  /** The conversation's rollout file (`Thread.path`), which `/feedback` attaches as a log, and the last turn's id, which it sends as a tag. */
+  private rolloutPath?: string;
+  private lastTurnId?: string;
+  /** The id of the import in progress (`externalAgentConfig/import`), until its `completed` notification: Codex allows one at a time. */
+  private importId?: string;
+  /** The plugins of the last `plugin/list`, by `key`, with where each one lives. */
+  private pluginIndex = new Map<string, PluginEntry>();
 
   private readonly locale: Locale;
 
@@ -310,15 +351,19 @@ export class CodexSession implements NativeSession {
     const buckets = data.rateLimitsByLimitId ?? { codex: data.rateLimits };
     const lines: string[] = [];
     const usage: NonNullable<NativeVisualState["usage"]> = [];
-    for (const [label, bucket] of Object.entries(buckets) as [string, any][]) {
+    for (const [id, bucket] of Object.entries(buckets) as [string, any][]) {
       for (const name of ["primary", "secondary"]) {
         const window = bucket?.[name];
         if (typeof window?.usedPercent === "number") {
           const reported = typeof window.resetsAt === "number";
+          // A limit is named by how long its window is (`limitLabel`), never by Codex's «primary» and «secondary»; Codex's own bucket says only that, another one adds its name.
+          const windowName = limitLabel(window.windowDurationMins, name === "secondary", this.locale);
+          const label = id.toLowerCase() === "codex" ? windowName
+            : getCatalog(this.locale).metrics.usageLimitOfBucket({ limit: windowName, bucket: String(bucket?.limitName || id).replaceAll("_", " ") });
           // `/status` says the reset in local time and in words; the sidebar's meter keeps the ISO string, which `resetLabel` turns into «Resets in …».
           const moment = reported ? formatMoment(window.resetsAt * 1000, this.locale) : this.t.notReported;
-          lines.push(this.t.quotaLine({ label: `${label} ${name}`, percent: String(window.usedPercent), resets: moment }));
-          usage.push({ label: `${label} ${name}`, usedPercent: window.usedPercent, ...(reported ? { reset: new Date(window.resetsAt * 1000).toISOString() } : {}) });
+          lines.push(this.t.quotaLine({ label, percent: String(window.usedPercent), resets: moment }));
+          usage.push({ label, usedPercent: window.usedPercent, ...(reported ? { reset: new Date(window.resetsAt * 1000).toISOString() } : {}) });
         }
       }
     }
@@ -358,7 +403,7 @@ export class CodexSession implements NativeSession {
       }, this.locale, "/f614:login");
       if (!done) { this.emit({ type: "text", text: this.t.logoutCancelled }); return; }
       this.auth = this.t.disconnectedShort;
-      this.sessionId = undefined; this.loaded = false; this.tokens = this.t.tokensNotReported; this.context = undefined;
+      this.sessionId = undefined; this.loaded = false; this.tokens = this.t.tokensNotReported; this.context = undefined; this.threadChanged();
       this.items.clear(); this.streamed.clear(); this.runningCommands.clear();
       this.emit({ type: "text", text: this.t.disconnectedLocally });
     } finally { this.busy = false; this.emit({ type: "status", text: "" }); }
@@ -399,7 +444,15 @@ export class CodexSession implements NativeSession {
     if (!model?.efforts?.includes(effort)) throw new ShellError("codex-effort-unknown");
     this.effort = effort;
   }
-  reset(): void { this.idle(); this.sessionId = undefined; this.loaded = false; this.tokens = this.t.tokensNotReported; this.context = undefined; }
+  reset(): void { this.idle(); this.sessionId = undefined; this.loaded = false; this.tokens = this.t.tokensNotReported; this.context = undefined; this.threadChanged(); }
+  /**
+   * Forgets what belonged to the conversation that is no longer open — the denials `/approve` offered (Codex empties them when the thread changes),
+   * the last turn's id and the rollout file `/feedback` would attach — and keeps the new conversation's rollout file when it is known.
+   */
+  private threadChanged(rolloutPath?: unknown): void {
+    this.denials = []; this.lastTurnId = undefined;
+    this.rolloutPath = typeof rolloutPath === "string" && rolloutPath ? rolloutPath : undefined;
+  }
   /**
    * The project's saved threads for the `/resume` selector: title (name, or the first message when it
    * has none), first message (`preview`, without the memory block Shell sends in front of it), folder and last
@@ -430,7 +483,7 @@ export class CodexSession implements NativeSession {
     if (thread.cwd !== this.cwd) throw new ShellError("codex-session-foreign-project");
     if (thread.status?.type === "active") throw new ShellError("codex-session-active-elsewhere");
     this.finishTurn?.();
-    this.sessionId = id; this.loaded = false; this.tokens = this.t.tokensNotReported; this.proposedPlan = undefined;
+    this.sessionId = id; this.loaded = false; this.tokens = this.t.tokensNotReported; this.proposedPlan = undefined; this.threadChanged(thread.path);
     this.showHistory(thread.turns ?? []);
   }
   /**
@@ -479,7 +532,7 @@ export class CodexSession implements NativeSession {
         ...(mode ? { approvalPolicy: mode.approvalPolicy, sandboxPolicy: sandboxPolicyFor(mode.sandbox) } : { approvalPolicy: "untrusted" }),
         ...(collaboration ? { collaborationMode: collaboration } : {}),
       });
-      this.turnId = result.turn.id;
+      this.turnId = result.turn.id; this.lastTurnId = this.turnId;
       if (this.aborted.signal.aborted) await this.interruptTurn(this.sessionId, this.turnId!);
       await finished;
     } finally { this.busy = false; this.turnId = undefined; this.finishTurn = undefined; this.aborted.abort(); }
@@ -516,6 +569,8 @@ export class CodexSession implements NativeSession {
     const config = this.threadConfig(mode);
     const result = await this.requestWithMode(mode, this.sessionId ? "thread/resume" : "thread/start", { ...config, ...(this.sessionId ? { threadId: this.sessionId } : {}) });
     if (result.modelProvider !== "openai") throw new ShellError("codex-unexpected-provider");
+    if (this.sessionId !== result.thread.id) this.threadChanged(result.thread.path);
+    else if (typeof result.thread.path === "string" && result.thread.path) this.rolloutPath = result.thread.path;
     this.sessionId = result.thread.id; this.loaded = true; this.model = result.model; this.effort ??= result.reasoningEffort;
     await this.loadStartupContext();
   }
@@ -612,7 +667,7 @@ export class CodexSession implements NativeSession {
   }
   /** Leaves the session with no conversation open, as after `reset()`, and drops what was pending for the old one. */
   private forgetThread(): void {
-    this.sessionId = undefined; this.loaded = false; this.tokens = this.t.tokensNotReported; this.context = undefined; this.pendingStartupContext = undefined;
+    this.sessionId = undefined; this.loaded = false; this.tokens = this.t.tokensNotReported; this.context = undefined; this.pendingStartupContext = undefined; this.threadChanged();
   }
   /** `/clear`: starts the new conversation at once (`thread/start`); if Codex cannot, the current one stays as it was. */
   async clearThread(): Promise<void> {
@@ -765,7 +820,7 @@ export class CodexSession implements NativeSession {
       try { await this.rpc.request("thread/name/set", { threadId: forkId, name }); }
       catch (error) { this.emit({ type: "text", text: this.native.forkNameFailed({ error: error instanceof Error ? error.message : String(error) }) }); }
     }
-    this.sessionId = forkId; this.loaded = true; this.model = result.model ?? this.model;
+    this.sessionId = forkId; this.loaded = true; this.model = result.model ?? this.model; this.threadChanged(result.thread.path);
     this.tokens = this.t.tokensNotReported; this.context = undefined; this.pendingStartupContext = undefined; this.proposedPlan = undefined;
     this.showHistory(result.thread.turns ?? []);
   }
@@ -850,6 +905,121 @@ export class CodexSession implements NativeSession {
   async resetMemories(): Promise<void> {
     await this.rpc.request("memory/reset");
   }
+  /**
+   * Keeps a denial of the automatic review for `/approve`, like Codex's `RecentAutoReviewDenials::push`: only a denied one, moved to the front
+   * when it arrives again, at most ten. One whose action cannot be sent back (see `denialFromNotification`) is not kept.
+   */
+  private recordDenial(params: any): void {
+    const denial = denialFromNotification(params, this.native);
+    if (!denial) return;
+    this.denials = [denial, ...this.denials.filter(item => item.id !== denial.id)].slice(0, MAX_RECENT_DENIALS);
+  }
+  /** `/approve`: what the automatic review denied recently in this conversation, newest first, each with its one-line summary and the reviewer's reason when it gave one. */
+  autoReviewDenials(): NativeAutoReviewDenial[] {
+    return this.denials.map(({ id, summary, rationale }) => ({ id, summary, ...(rationale !== undefined ? { rationale } : {}) }));
+  }
+  /**
+   * `/approve` → `thread/approveGuardianDeniedAction` (`v2/ThreadApproveGuardianDeniedActionParams.ts`) with the conversation and the denial's event, as
+   * Codex's `approve_recent_auto_review_denial` does: the denial leaves the list before it is sent. False when it is no longer there (or no conversation is open).
+   */
+  async approveAutoReviewDenial(id: string): Promise<boolean> {
+    const found = this.denials.find(item => item.id === id);
+    if (!found || !this.sessionId) return false;
+    this.denials = this.denials.filter(item => item.id !== id);
+    await this.rpc.request("thread/approveGuardianDeniedAction", { threadId: this.sessionId, event: found.event });
+    return true;
+  }
+  /**
+   * `/feedback` → `feedback/upload` (`v2/FeedbackUploadParams.ts`) with what Codex's `build_feedback_upload_params` sends: the category as `classification`,
+   * the note as `reason`, the conversation id, whether logs go and, with logs, the conversation's rollout file as an extra log, and the last turn's id as a tag.
+   * Only what exists is sent. The screen asks the person first: this leaves the machine.
+   */
+  async uploadFeedback(input: { category: NativeFeedbackCategory; includeLogs: boolean; note?: string }): Promise<{ threadId: string }> {
+    const note = input.note?.trim();
+    const response = await this.rpc.request("feedback/upload", {
+      classification: input.category,
+      ...(note ? { reason: note } : {}),
+      ...(this.sessionId ? { threadId: this.sessionId } : {}),
+      includeLogs: input.includeLogs,
+      ...(input.includeLogs && this.rolloutPath ? { extraLogFiles: [this.rolloutPath] } : {}),
+      ...(this.lastTurnId ? { tags: { turn_id: this.lastTurnId } } : {}),
+    });
+    return { threadId: String(response?.threadId) };
+  }
+  /**
+   * `/import`, step one → `externalAgentConfig/detect` (`v2/ExternalAgentConfigDetectParams.ts`) for Claude Code and then Cursor, with the home folder and this project, as
+   * Codex's flow does. Copies nothing. A source that has nothing to import is left out; one that fails is reported by name, and the others are still read.
+   */
+  async detectExternalSetup(): Promise<NativeImportDetection> {
+    const sources: NativeImportSource[] = []; const errors: string[] = [];
+    for (const source of IMPORT_SOURCES) {
+      try {
+        const response = await this.rpc.request("externalAgentConfig/detect", { includeHome: true, cwds: [this.cwd], migrationSource: source.id });
+        const items = (response?.items ?? []).map(toImportItem);
+        if (items.length) sources.push({ id: source.id, label: source.label, items });
+      } catch (error) { errors.push(`${source.label}: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+    return { sources, errors };
+  }
+  /**
+   * `/import`, step two → `externalAgentConfig/import` (`v2/ExternalAgentConfigImportParams.ts`): the chosen items exactly as the server listed them, with the same
+   * `migrationSource` the detection used, `providerId` and `source: "cli"` like Codex. This writes into `~/.codex`: the screen asks first. One import at a time; the end
+   * arrives as `externalAgentConfig/import/completed` and is told to the person.
+   */
+  async importExternalSetup(source: string, items: NativeImportItem[]): Promise<void> {
+    if (this.importId !== undefined) throw new Error(this.native.importRunning);
+    const response = await this.rpc.request("externalAgentConfig/import", { migrationItems: items.map(item => item.raw), source: "cli", providerId: source, migrationSource: source });
+    this.importId = String(response?.importId);
+  }
+  /** The end of the import Shell started (`v2/ExternalAgentConfigImportCompletedNotification.ts`), told like Codex's `external_agent_config_migration_finished_lines`; another client's import is not ours. */
+  private importFinished(params: any): void {
+    if (this.importId === undefined || params?.importId !== this.importId) return;
+    this.importId = undefined;
+    const results: any[] = params.itemTypeResults ?? [];
+    const imported = results.reduce((total, result) => total + (result.successes?.length ?? 0), 0);
+    const failed = results.reduce((total, result) => total + (result.failures?.length ?? 0), 0);
+    const lines = [this.native.importFinished({ imported, failed })];
+    if (results.length) {
+      lines.push(this.native.importResultsByType);
+      for (const result of results) lines.push(`• ${this.native.importResultLine({
+        label: this.native.importTypeLabel({ type: String(result.itemType) }), imported: result.successes?.length ?? 0, failed: result.failures?.length ?? 0,
+      })}`);
+    }
+    lines.push(this.native.importRunAgain);
+    this.emit({ type: "text", text: lines.join("\n") });
+  }
+  /** `/plugins` → `plugin/list` for this folder (`v2/PluginListParams.ts`), as Codex's screen asks it; see `pluginEntries` for how the answer is ordered. Remembers where each plugin lives for the calls that follow. */
+  async plugins(): Promise<NativePlugin[]> {
+    const response = await this.rpc.request("plugin/list", { cwds: [this.cwd], forceRefetch: false });
+    const entries = pluginEntries(response);
+    this.pluginIndex = new Map(entries.map(entry => [entry.plugin.key, entry]));
+    return entries.map(entry => entry.plugin);
+  }
+  /** The plugin `key` named by the last `plugin/list`, or an error when it is not there any more. */
+  private pluginEntry(key: string): PluginEntry {
+    const entry = this.pluginIndex.get(key);
+    if (!entry) throw new Error(this.native.pluginDetailFailed({ error: key }));
+    return entry;
+  }
+  /** `/plugins` detail → `plugin/read` (`v2/PluginReadParams.ts`) with the marketplace file, or the remote marketplace name, and the plugin's name. */
+  async pluginDetail(key: string): Promise<NativePluginDetail> {
+    const entry = this.pluginEntry(key);
+    if (!entry.location) throw new Error(this.native.pluginNoLocation);
+    return readPluginDetail(await this.rpc.request("plugin/read", { ...entry.location, pluginName: entry.requestName }), entry.plugin.marketplace);
+  }
+  /** `/plugins` install → `plugin/install` (`v2/PluginInstallParams.ts`). It downloads code from a third party: the screen asks first. Resolves with the names of the apps that still need to be connected. */
+  async installPlugin(key: string): Promise<{ appsNeedingAuth: string[] }> {
+    const entry = this.pluginEntry(key);
+    if (!entry.location) throw new Error(this.native.pluginNoLocation);
+    const response = await this.rpc.request("plugin/install", { ...entry.location, pluginName: entry.requestName });
+    return { appsNeedingAuth: (response?.appsNeedingAuth ?? []).map((app: any) => String(app.name)) };
+  }
+  /** `/plugins` uninstall → `plugin/uninstall` (`v2/PluginUninstallParams.ts`) with the plugin's id. The screen asks first. */
+  async uninstallPlugin(key: string): Promise<void> {
+    const entry = this.pluginEntry(key);
+    if (!entry.uninstallId) throw new Error(this.native.pluginNoUninstallId);
+    await this.rpc.request("plugin/uninstall", { pluginId: entry.uninstallId });
+  }
   /** `/export`: the whole conversation (`thread/read` with its turns) in Codex's Markdown transcript format. */
   async exportTranscript(): Promise<string> {
     if (!this.sessionId) throw new Error(this.native.exportNoConversation);
@@ -909,9 +1079,12 @@ export class CodexSession implements NativeSession {
       return;
     }
     if (method === "account/rateLimits/updated") { this.updateQuotas(params); this.emit({ type: "status", text: "" }); return; }
+    if (method === "externalAgentConfig/import/completed") { this.importFinished(params); return; }
     if (params.threadId !== this.sessionId) return;
     // During a review the turn to follow is the one `review/start` answered with: the `turn/started` that arrives belongs to the reviewing sub-agent.
     if (method === "turn/started" && !this.reviewing) this.turnId = params.turn.id;
+    if (method === "turn/started") this.lastTurnId = params.turn.id;
+    if (method === "item/autoApprovalReview/completed") this.recordDenial(params);
     if (method === "item/agentMessage/delta") {
       this.streamed.add(params.itemId);
       this.emit({ type: "delta", id: params.itemId, text: params.delta });

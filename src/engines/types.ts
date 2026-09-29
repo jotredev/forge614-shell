@@ -84,6 +84,39 @@ export interface NativeAccountUsage { lifetimeTokens?: string; peakDailyTokens?:
 export interface NativeBackgroundTerminal { command: string; cwd: string; pid?: number }
 /** The goal set for a long task: its `status` is the assistant's own word for it. */
 export interface NativeGoal { objective: string; status: string; tokenBudget?: number; tokensUsed: number; timeUsedSeconds: number }
+/** A category of `/feedback`, named as Codex's own `FeedbackUploadParams.classification` names it. */
+export type NativeFeedbackCategory = "bug" | "bad_result" | "good_result" | "safety_check" | "other";
+/** An action the assistant's automatic review denied recently (`/approve`): its one-line summary and the reviewer's reason, when it gave one. */
+export interface NativeAutoReviewDenial { id: string; summary: string; rationale?: string }
+/**
+ * One thing the assistant found to import from another tool (`/import`): its `type` as the assistant names it, its own `description` (the
+ * paths it will copy), the project folder it belongs to (`null` = the home folder), how many objects it holds and their names. `raw` is what
+ * the assistant listed, kept to hand back exactly as it came when the person chooses to import it.
+ */
+export interface NativeImportItem { type: string; description: string; cwd: string | null; count: number; names: string[]; raw: unknown }
+/** A tool the assistant can import from, with what it found there. */
+export interface NativeImportSource { id: string; label: string; items: NativeImportItem[] }
+/** The result of looking for importable setup: the sources that had something, and the errors of the ones that could not be checked. */
+export interface NativeImportDetection { sources: NativeImportSource[]; errors: string[] }
+/** A plugin the assistant lists (`/plugins`), reduced to what its list and its actions need; `key` names it for the calls that follow. */
+export interface NativePlugin {
+  key: string; name: string; displayName: string; description?: string; marketplace: string;
+  installed: boolean; enabled: boolean;
+  installPolicy: "notAvailable" | "available" | "installedByDefault";
+  availability: "available" | "disabledByAdmin";
+  /** Whether the assistant told where the plugin lives, which installing needs. */
+  canInstall: boolean;
+  /** Whether the assistant told how to uninstall it. */
+  canUninstall: boolean;
+}
+/** Where a plugin comes from, as the assistant reports it. */
+export type NativePluginSource =
+  | { kind: "local" } | { kind: "git"; url: string; ref?: string } | { kind: "npm"; package: string; version?: string } | { kind: "remote"; marketplace: string };
+/** What a plugin holds and how it is set up (`plugin/read`); `hooks` is the ready-made summary («PreToolUse (1), Stop (2)»), empty when there are none. */
+export interface NativePluginDetail {
+  description?: string; source: NativePluginSource; authPolicy: "onInstall" | "onUse"; version?: string;
+  skills: string[]; hooks: string; apps: string[]; mcpServers: string[];
+}
 /** `planReady`: a turn finished in plan mode with a proposed plan (its Markdown is `text`), so the screen can offer to implement it. */
 export interface NativeEvent {
   type: "text" | "delta" | "status" | "reset" | "planReady"; text: string; id?: string;
@@ -170,6 +203,22 @@ export interface NativeSession {
   enableMemories?(): Promise<NativeConfigWrite>;
   /** Deletes the assistant's local memories for good; the screen asks first. */
   resetMemories?(): Promise<void>;
+  /** The actions the automatic review denied recently in this conversation, newest first, for `/approve`. */
+  autoReviewDenials?(): NativeAutoReviewDenial[];
+  /** Approves one retry of a denied action; false when it is no longer on the list. */
+  approveAutoReviewDenial?(id: string): Promise<boolean>;
+  /** Sends feedback to the assistant's maker (`/feedback`), with the conversation's logs only when `includeLogs`; resolves with the conversation id it was recorded under. */
+  uploadFeedback?(input: { category: NativeFeedbackCategory; includeLogs: boolean; note?: string }): Promise<{ threadId: string }>;
+  /** Looks for setup to import from the other tools the assistant knows (`/import`). Copies nothing. */
+  detectExternalSetup?(): Promise<NativeImportDetection>;
+  /** Copies the chosen items into the assistant's own folder. Resolves when the assistant took the request; its end is reported as a message. */
+  importExternalSetup?(source: string, items: NativeImportItem[]): Promise<void>;
+  /** The plugins of the available marketplaces (`/plugins`), installed ones first. */
+  plugins?(): Promise<NativePlugin[]>;
+  pluginDetail?(key: string): Promise<NativePluginDetail>;
+  /** Installs a plugin (downloads code from a third party); resolves with the names of the apps that still need to be connected. */
+  installPlugin?(key: string): Promise<{ appsNeedingAuth: string[] }>;
+  uninstallPlugin?(key: string): Promise<void>;
   /** The whole conversation in the assistant's own Markdown export format. */
   exportTranscript?(): Promise<string>;
   /** Files in the session folder matching `query`, as paths relative to it. */
