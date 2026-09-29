@@ -13,8 +13,13 @@ function defaultForgeCommands(locale: Locale): ComposerChoice[] {
     ["/status", t.commandSessionDetails], ["/f614:stop", t.commandCancelKeepOpen], ["/help", t.commandBrowseAllCommands], ["/commands", t.commandBrowseAllCommands], ["/quit", t.commandExitShell],
   ].map(([value, label]) => ({ value: value!, label: label! }));
 }
-/** `search`, when set, is the text a searchable picker matches typed words against; without it the row's display and label are searched. */
-export interface ComposerChoice { value: string; label: string; display?: string; group?: string; search?: string; }
+/**
+ * `search`, when set, is the text a searchable picker matches typed words against; without it the row's display and label are searched.
+ * `key`, when set, is a single letter that picks the row straight away in a picker that is not searchable (uppercase or lowercase).
+ */
+export interface ComposerChoice { value: string; label: string; display?: string; group?: string; search?: string; key?: string; }
+/** How a picker opens: `searchable` filters as the person types; `numbered: false` drops the «1.» before each row; `footer` replaces the default «title · 1–2 of 2 · …» line. */
+export interface ComposerChooseOptions { searchable?: boolean; numbered?: boolean; footer?: string; }
 export interface ComposerCommandGroup { title: string; items: ComposerChoice[]; }
 
 /** Lowercase and without accents, so «CAFÉ», «Café» and «cafe» all read the same when searching. */
@@ -122,7 +127,7 @@ export class ForgeComposer extends Editor {
   /** The `@` query last searched and the files it found. */
   private fileQuery = "";
   private fileChoices: ComposerChoice[] = [];
-  private picker?: { title: string; items: ComposerChoice[]; searchable: boolean; resolve: (value?: string) => void };
+  private picker?: { title: string; items: ComposerChoice[]; searchable: boolean; numbered: boolean; footer?: string; resolve: (value?: string) => void };
   private pickerQuery = "";
   private repaint: () => void;
   constructor(tui: TUI, private readonly locale: Locale = "en") {
@@ -134,15 +139,19 @@ export class ForgeComposer extends Editor {
   /**
    * Opens a selector: arrows move, Enter resolves the highlighted value, Esc resolves nothing. With
    * `searchable`, typing also filters the rows (see `filterChoices`) and Backspace widens the search
-   * again; without it typed letters are ignored, as they always were.
+   * again; without it typed letters are ignored, as they always were, except a row's own `key`, which picks it.
+   * The first row starts marked unless `current` names another. See `ComposerChooseOptions` for the look.
    */
-  choose(title: string, items: ComposerChoice[], current?: string, options: { searchable?: boolean } = {}): Promise<string | undefined> {
+  choose(title: string, items: ComposerChoice[], current?: string, options: ComposerChooseOptions = {}): Promise<string | undefined> {
     this.cancelChoice();
     if (!items.length) return Promise.resolve(undefined);
     this.selectedChoice = Math.max(0, items.findIndex(item => item.value === current));
     this.currentValue = current;
     this.pickerQuery = "";
-    return new Promise(resolve => { this.picker = { title, items, searchable: Boolean(options.searchable), resolve }; this.repaint(); });
+    return new Promise(resolve => {
+      this.picker = { title, items, searchable: Boolean(options.searchable), numbered: options.numbered !== false, ...(options.footer ? { footer: options.footer } : {}), resolve };
+      this.repaint();
+    });
   }
   cancelChoice(): void { const picker = this.picker; this.picker = undefined; this.currentValue = undefined; this.pickerQuery = ""; picker?.resolve(); this.repaint(); }
   /** What the menu lists right now: the open picker's rows narrowed by what was typed, or the "/" and "$" suggestions. */
@@ -225,6 +234,8 @@ export class ForgeComposer extends Editor {
       this.repaint();
       return;
     }
+    const keyed = this.picker && data.length === 1 ? this.picker.items.find(item => item.key !== undefined && item.key.toLowerCase() === data.toLowerCase()) : undefined;
+    if (keyed) { const picker = this.picker!; this.picker = undefined; picker.resolve(keyed.value); this.repaint(); return; }
     const items = this.activeItems();
     if (items.length) {
       if (matchesKey(data, "up") || matchesKey(data, "down")) {
@@ -281,7 +292,7 @@ export class ForgeComposer extends Editor {
     const visibleItems = items.slice(start, start + 5);
     // Numbering and the ✓ for the active value only make sense for a deliberate choose() menu
     // (/model, /effort, /resume…) — not for the live "/" or "$" autocomplete-as-you-type list.
-    const numbered = Boolean(this.picker);
+    const numbered = Boolean(this.picker?.numbered);
     const leftText = (item: ComposerChoice, index: number) =>
       `${numbered ? `${start + index + 1}. ` : ""}${item.display ?? item.value}${item.value === this.currentValue ? " ✓" : ""}`;
     const leftWidth = Math.max(0, ...visibleItems.map((item, offset) => visibleWidth(leftText(item, offset))));
@@ -300,7 +311,7 @@ export class ForgeComposer extends Editor {
           return item.label ? `${left}  ${muted(item.label)}` : left;
         })(), width),
       ]),
-      fit(muted(t.menuFooter({ title: this.picker?.title ?? t.commandsFallbackTitle, from: start + 1, to: Math.min(start + 5, items.length), total: items.length })), width),
+      fit(muted(this.picker?.footer ?? t.menuFooter({ title: this.picker?.title ?? t.commandsFallbackTitle, from: start + 1, to: Math.min(start + 5, items.length), total: items.length })), width),
     ] : searchRow.length ? [...searchRow, fit(muted(t.searchNoMatches), width)] : [];
     return [
       ...menu,

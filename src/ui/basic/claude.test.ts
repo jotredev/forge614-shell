@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -160,6 +160,101 @@ else {
     terminal.output = ""; enter("/f614:stop");
     for (let i = 0; i < 60 && !plain().includes(getCatalog("en").chat.statusReady); i++) await tick();
     expect(plain()).toContain(getCatalog("en").chat.statusReady);
+  } finally {
+    enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
+    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+  }
+});
+
+/**
+ * A Claude Code tool permission end to end: the fake `claude` asks `can_use_tool` for a Bash call (the SDK's `BashInput`
+ * with a `description`), the screen shows the description, the folder and the command in plain words with «Sí»/«No» and
+ * «Sí» marked (no JSON, no `/yes`, no numbers), Enter alone approves and Esc denies, and the fake receives exactly
+ * `allow` and then `deny`. It exists because the request used to be printed as `Permiso solicitado: Bash { "command": … }`
+ * with «/no» marked first.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: a Bash permission reads in plain words, Enter alone approves it and Esc denies it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "forge614-permission-ui-"));
+  const executable = join(root, "claude"); const marker = join(root, "decisions");
+  const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
+  const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+  const plain = () => stripVTControlCharacters(terminal.output);
+  const previousForgeHome = process.env.FORGE614_HOME;
+  process.env.FORGE614_HOME = join(root, "forge614-home");
+  try {
+    await writeFile(executable, `#!${process.execPath}
+const fs=require('fs');
+if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
+else {
+  require('readline').createInterface({input:process.stdin}).on('line',line=>{
+    const msg=JSON.parse(line);
+    if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
+    if(msg.type==='user') console.log(JSON.stringify({type:'control_request',request_id:'permission-'+Date.now(),request:{subtype:'can_use_tool',tool_name:'Bash',input:{command:'rtk grep -rn changelog .',description:'Buscar el changelog de Engram en este repositorio'},tool_use_id:'tool-1'}}));
+    if(msg.type==='control_response' && msg.response.response && msg.response.response.behavior) {
+      fs.appendFileSync(${JSON.stringify(marker)},msg.response.response.behavior+'\\n');
+      console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,duration_ms:1,duration_api_ms:1,num_turns:1,result:'ok',session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],uuid:'result-'+Date.now()}));
+    }
+  });
+}`, { mode: 0o755 });
+    ui = startClaudeUI([], executable, terminal, undefined, "es"); await tick();
+    for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
+    enter("run it"); await tick();
+    for (let i = 0; i < 60 && !plain().includes("› Sí"); i++) await tick();
+    const screen = plain();
+    expect(screen).toContain("Buscar el changelog de Engram en este repositorio");
+    expect(screen).toContain(`Carpeta: ${process.cwd()}`);
+    expect(screen).toContain("rtk grep -rn changelog .");
+    expect(screen).toContain("› Sí");
+    for (const internal of ["\"command\"", "\"description\"", "Permiso solicitado: Bash", "/yes", "/no denegar", "Denegar"]) expect(screen).not.toContain(internal);
+    terminal.input("\r");
+    for (let i = 0; i < 60 && !existsSync(marker); i++) await tick();
+    expect(readFileSync(marker, "utf8")).toBe("allow\n");
+    for (let i = 0; i < 60 && !plain().includes(getCatalog("es").chat.statusReady); i++) await tick();
+    enter("run it again"); await tick();
+    for (let i = 0; i < 60 && !plain().includes(getCatalog("es").chat.awaitingPermission); i++) await tick();
+    await tick();
+    terminal.input("\x1b");
+    for (let i = 0; i < 60 && readFileSync(marker, "utf8") === "allow\n"; i++) await tick();
+    expect(readFileSync(marker, "utf8")).toBe("allow\ndeny\n");
+  } finally {
+    enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
+    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+  }
+});
+
+/**
+ * The «Disconnect only in this session?» question of `/logout` uses the same Sí/No selector as any tool permission: its own
+ * sentence, «Yes» marked, Enter alone confirms. It exists because that question went through the tool-permission path
+ * as a fake tool called «Sign out» and would have been read as `Use the Sign out tool`.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: the /logout question keeps its own sentence with a marked Yes, and Enter alone confirms", async () => {
+  const root = await mkdtemp(join(tmpdir(), "forge614-logout-choice-ui-"));
+  const executable = join(root, "claude");
+  const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
+  const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+  const plain = () => stripVTControlCharacters(terminal.output);
+  const previousForgeHome = process.env.FORGE614_HOME;
+  process.env.FORGE614_HOME = join(root, "forge614-home");
+  try {
+    await writeFile(executable, `#!${process.execPath}
+if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
+else {
+  require('readline').createInterface({input:process.stdin}).on('line',line=>{
+    const msg=JSON.parse(line);
+    if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
+  });
+}`, { mode: 0o755 });
+    ui = startClaudeUI([], executable, terminal); await tick();
+    for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
+    enter("/logout"); await tick();
+    expect(plain()).toContain(getCatalog("en").logout.confirmPrompt({ engine: "Claude Code" }).slice(0, 30));
+    expect(plain()).toContain("› Yes");
+    expect(plain()).not.toContain("Sign out");
+    terminal.input("\r");
+    // The card wraps a long sentence across rows, so the check reads its start.
+    const confirmed = getCatalog("en").claudeChat.disconnectedLocally.slice(0, 40);
+    for (let i = 0; i < 30 && !plain().includes(confirmed); i++) await tick();
+    expect(plain()).toContain(confirmed);
   } finally {
     enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;

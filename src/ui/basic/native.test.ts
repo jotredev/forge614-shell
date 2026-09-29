@@ -1035,3 +1035,60 @@ test("/exit with Codex behaves like /quit and /exit! like /quit!", async () => {
   await tick(); idleTerminal.input("/exit"); idleTerminal.input("\r"); await idleUi;
   expect(idleClosed).toBe(true);
 });
+
+/** A `commandExecution` item and its approval request, with the shape of the generated protocol (`v2/ThreadItem.ts`, `v2/CommandExecutionRequestApprovalParams.ts`). */
+const commandExecution = {
+  item: {
+    type: "commandExecution", id: "i", command: "touch example", cwd: "/project", processId: null, source: "agent", status: "inProgress",
+    commandActions: [{ type: "unknown", command: "touch example" }], aggregatedOutput: null, exitCode: null, durationMs: null, pluginId: null,
+  },
+  request: {
+    kind: "command", threadId: "t", turnId: "u", itemId: "i", startedAtMs: 1790000000000, approvalId: null, environmentId: null,
+    reason: "Needs to create a file", networkApprovalContext: null, command: "touch example", cwd: "/project",
+    commandActions: [{ type: "unknown", command: "touch example" }], proposedExecpolicyAmendment: null, proposedNetworkPolicyAmendments: null,
+  },
+};
+
+/**
+ * With a Codex command permission open, the screen reads in plain words (what, where, the command) with «Yes»/«No» (or
+ * «Sí»/«No») and the approving row marked, none of the event's JSON, and Enter alone approves. It exists because Codex's
+ * request used to be printed as the whole event (`"type": "commandExecution"`, `"pluginId": null`…) with «/no» marked first.
+ */
+for (const locale of ["es", "en"] as const) {
+  test(`a Codex command permission shows plain words and «${locale === "es" ? "Sí" : "Yes"}» marked, and Enter alone approves it (${locale})`, async () => {
+    const { terminal, rpc, ui, enter, plain } = codexUi(locale);
+    try {
+      await tick(); enter("run something"); await tick();
+      rpc.onNotification("item/started", { threadId: "t", turnId: "u", item: commandExecution.item });
+      const answer = rpc.onRequest("item/commandExecution/requestApproval", commandExecution.request);
+      await tick();
+      const screen = plain();
+      expect(screen).toContain("Needs to create a file");
+      expect(screen).toContain(`${locale === "es" ? "Carpeta" : "Folder"}: /project`);
+      expect(screen).toContain("touch example");
+      expect(screen).toContain(`› ${locale === "es" ? "Sí" : "Yes"}`);
+      for (const internal of ["\"type\"", "pluginId", "aggregatedOutput", "commandActions", "item/commandExecution/requestApproval", "/yes", "/no "]) expect(screen).not.toContain(internal);
+      terminal.input("\r");
+      expect(await answer).toEqual({ decision: "accept" });
+      rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+      await tick();
+    } finally { enter("/quit!"); await ui; }
+  });
+}
+
+/** Every way of saying No on a Codex permission — Esc, the down arrow with Enter, the N key — declines, and none of them approves by accident. */
+for (const [name, keys] of [["Esc", ["\x1b"]], ["the down arrow and Enter", ["\x1b[B", "\r"]], ["the N key", ["n"]]] as const) {
+  test(`a Codex command permission is declined with ${name}`, async () => {
+    const { terminal, rpc, ui, enter } = codexUi("es");
+    try {
+      await tick(); enter("run something"); await tick();
+      rpc.onNotification("item/started", { threadId: "t", turnId: "u", item: commandExecution.item });
+      const answer = rpc.onRequest("item/commandExecution/requestApproval", commandExecution.request);
+      await tick();
+      for (const key of keys) { terminal.input(key); await tick(); }
+      expect(await answer).toEqual({ decision: "decline" });
+      rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+      await tick();
+    } finally { enter("/quit!"); await ui; }
+  });
+}

@@ -261,11 +261,7 @@ export interface Catalog {
     commandBrowseCommands: string;
     commandExitShell: string;
     permissionRequestedTitle: string;
-    permissionInlineLegend: string;
     awaitingPermission: string;
-    permissionFooter: string;
-    denyLabel: string;
-    allowOnceLabel: string;
     noPermissionPending: string;
     answerPendingPermissionFirst: string;
     unknownCommand: (params: { name: string }) => string;
@@ -663,6 +659,49 @@ export interface Catalog {
     diffNoChanges: string;
     diffNotRepo: string;
     diffFailed: (params: { error: string }) => string;
+  };
+  /**
+   * The permission question (its two words and its footer) and the plain-language text of a permission request
+   * (`engines/permission-text.ts`). The names of tools, servers and commands, and any text the assistant itself wrote
+   * (a Bash `description`, Codex's `reason`), are never part of these: they go in as they came.
+   */
+  permission: {
+    question: string;
+    yes: string;
+    no: string;
+    footer: string;
+    folder: string;
+    file: string;
+    files: string;
+    inPlace: string;
+    pattern: string;
+    search: string;
+    address: string;
+    text: string;
+    filter: string;
+    runCommand: string;
+    editFile: string;
+    writeFile: string;
+    editNotebook: string;
+    createFile: string;
+    deleteFile: string;
+    readFile: string;
+    findFiles: string;
+    searchText: string;
+    fetchPage: string;
+    searchWeb: string;
+    mcpTool: (params: { tool: string; server: string }) => string;
+    genericTool: (params: { tool: string }) => string;
+    editFiles: (params: { count: number }) => string;
+    createFiles: (params: { count: number }) => string;
+    deleteFiles: (params: { count: number }) => string;
+    changeFiles: (params: { count: number }) => string;
+    changeFilesUnknown: string;
+    kindAdd: string;
+    kindDelete: string;
+    kindUpdate: string;
+    movedTo: (params: { path: string }) => string;
+    andMore: (params: { count: number }) => string;
   };
   codexChat: {
     compacted: string;
