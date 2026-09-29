@@ -297,6 +297,7 @@ export interface Catalog {
     searchLabel: string;
     searchPlaceholder: string;
     searchNoMatches: string;
+    askFooter: string;
     /** Group title of the files `@` offers. */
     filesGroup: string;
     /** Group title of the skills `$` offers, and the name its footer counts them by. */
@@ -407,6 +408,15 @@ export interface Catalog {
     usageWeeklyOverageIncluded: string;
     usageOtherLimit: string;
     usageProviderSuffix: string;
+    usageDailyLimit: string;
+    usageMonthlyLimit: string;
+    usageAnnualLimit: string;
+    usageHoursLimit: (params: { count: number }) => string;
+    usageDaysLimit: (params: { count: number }) => string;
+    usageMinutesLimit: (params: { count: number }) => string;
+    usageGenericLimit: string;
+    usageAdditionalLimit: string;
+    usageLimitOfBucket: (params: { limit: string; bucket: string }) => string;
     resetTimeUnavailable: string;
     resetsIn: (params: { time: string }) => string;
     awaitingUpdatedLimit: string;
@@ -579,10 +589,12 @@ export interface Catalog {
     reviewCustomHint: string;
   };
   /**
-   * Codex's own words for the screens Shell reproduces (`/permissions`, Plan, `/review`, `/fork`, `/apps`,
-   * `/experimental`, `/memories`, `/export`, `/copy`, `/diff`), copied verbatim from Codex 0.159.0's terminal app
-   * (`codex-rs/tui/src`). They are the same in every language on purpose: inside Shell each assistant keeps its
-   * native experience, so these are never translated.
+   * The words of the screens Shell reproduces from Codex (`/permissions`, Plan, `/review`, `/fork`, `/apps`,
+   * `/experimental`, `/memories`, `/export`, `/copy`, `/diff`, `/approve`, `/feedback`, `/import`, `/plugins`),
+   * taken from Codex 0.159.0's terminal app (`codex-rs/tui/src`) in English and translated into Spanish: the
+   * person reads every text in Shell's language, and only the names of commands and modes stay as Codex has them.
+   * Where Codex has no such text (the questions that ask before something leaves Shell or is written outside it)
+   * the wording is Shell's own, in both languages.
    */
   codexNative: {
     permissionsTitle: string;
@@ -693,6 +705,155 @@ export interface Catalog {
     diffNoChanges: string;
     diffNotRepo: string;
     diffFailed: (params: { error: string }) => string;
+    approveNone: string;
+    approveNoneHint: string;
+    approveTitle: string;
+    approveSelect: string;
+    approveNoRationale: string;
+    approveRecorded: string;
+    approveRecordedHint: string;
+    approveGone: string;
+    denialWriteStdin: (params: { process: string; input: string }) => string;
+    denialPatchOne: (params: { file: string }) => string;
+    denialPatchMany: (params: { count: number }) => string;
+    denialNetwork: (params: { target: string }) => string;
+    denialMcp: (params: { tool: string; label: string }) => string;
+    denialPermissionReason: (params: { reason: string }) => string;
+    denialPermission: string;
+    feedbackTitle: string;
+    feedbackBug: string;
+    feedbackBugDescription: string;
+    feedbackBadResult: string;
+    feedbackBadResultDescription: string;
+    feedbackGoodResult: string;
+    feedbackGoodResultDescription: string;
+    feedbackSafetyCheck: string;
+    feedbackSafetyCheckDescription: string;
+    feedbackOther: string;
+    feedbackOtherDescription: string;
+    feedbackLogsTitle: string;
+    feedbackLogsBody: string;
+    feedbackLogsYes: string;
+    feedbackLogsYesDescription: string;
+    feedbackLogsNo: string;
+    feedbackNoteTitle: (params: { category: string }) => string;
+    feedbackNotePlaceholder: string;
+    feedbackSafetyPlaceholder: string;
+    feedbackDisclosure: string;
+    feedbackConfirmTitle: string;
+    feedbackConfirmNo: string;
+    feedbackConfirmYes: string;
+    feedbackSummary: (params: { category: string; note: string; logs: string; conversation: string }) => string;
+    feedbackNoNote: string;
+    feedbackLogsIncluded: string;
+    feedbackLogsExcluded: string;
+    feedbackConversationNone: string;
+    feedbackCancelled: string;
+    feedbackUploaded: string;
+    feedbackRecordedNoLogs: string;
+    feedbackIssue: string;
+    feedbackMention: (params: { id: string }) => string;
+    feedbackThanks: string;
+    feedbackThreadId: (params: { id: string }) => string;
+    feedbackFailed: (params: { error: string }) => string;
+    importNone: string;
+    importDetectFailed: (params: { errors: string }) => string;
+    importSourceTitle: string;
+    importTitle: (params: { source: string }) => string;
+    importHelp: string;
+    importProceed: (params: { count: number }) => string;
+    importCancel: string;
+    importHome: string;
+    importProject: (params: { path: string }) => string;
+    importNothingSelected: string;
+    importConfirmTitle: string;
+    importConfirmIntro: (params: { source: string }) => string;
+    importConfirmWarning: (params: { source: string }) => string;
+    importConfirmNo: string;
+    importConfirmYes: string;
+    importRoute: (params: { from: string; to: string }) => string;
+    importCancelled: string;
+    importStarted: string;
+    importAppliesToNew: string;
+    importImporting: string;
+    importMoreNames: (params: { count: number }) => string;
+    importRemainingOne: string;
+    importRemainingMany: (params: { count: number }) => string;
+    importFailed: (params: { error: string }) => string;
+    importRunning: string;
+    importFinished: (params: { imported: number; failed: number }) => string;
+    importResultsByType: string;
+    importResultLine: (params: { label: string; imported: number; failed: number }) => string;
+    importRunAgain: string;
+    pluginsDisabled: string;
+    pluginsDisabledHint: string;
+    pluginsTitle: string;
+    pluginsSubtitle: string;
+    pluginsBody: string;
+    pluginsInstalledCount: (params: { installed: number; total: number }) => string;
+    pluginsNone: string;
+    pluginsLoadFailed: (params: { error: string }) => string;
+    pluginStatusInstalled: string;
+    pluginStatusDisabled: string;
+    pluginStatusAvailable: string;
+    pluginStatusNotInstallable: string;
+    pluginStatusAdminAssigned: string;
+    pluginDetailCanInstall: string;
+    pluginDetailInstalledByAdmin: string;
+    pluginDetailEnabledByAdmin: string;
+    pluginDetailDisabledByAdmin: string;
+    pluginTerms: string;
+    pluginSourceLocal: string;
+    pluginSourceRemote: (params: { marketplace: string }) => string;
+    pluginAuthOnInstall: string;
+    pluginAuthOnUse: string;
+    pluginLineAuth: string;
+    pluginLineVersion: string;
+    pluginLineSkills: string;
+    pluginLineHooks: string;
+    pluginLineApps: string;
+    pluginLineMcp: string;
+    pluginNoSkills: string;
+    pluginNoHooks: string;
+    pluginNoApps: string;
+    pluginNoMcp: string;
+    pluginBack: string;
+    pluginBackDescription: string;
+    pluginInstall: string;
+    pluginInstallDescription: string;
+    pluginUninstall: string;
+    pluginUninstallDescription: string;
+    pluginInstalledByAdmin: string;
+    pluginInstalledByAdminDescription: string;
+    pluginDisabledByAdminDescription: string;
+    pluginNotInstallable: string;
+    pluginNoLocation: string;
+    pluginNoUninstallId: string;
+    pluginInstallTitle: (params: { name: string }) => string;
+    pluginInstallBody: string;
+    pluginInstallNo: string;
+    pluginInstallYes: string;
+    pluginInstallCancelled: string;
+    pluginUninstallTitle: (params: { name: string }) => string;
+    pluginUninstallBody: string;
+    pluginUninstallNo: string;
+    pluginUninstallYes: string;
+    pluginUninstallCancelled: string;
+    pluginInstalled: (params: { name: string }) => string;
+    pluginInstalledNoAuth: string;
+    pluginInstalledNeedsAuth: (params: { count: number; apps: string }) => string;
+    pluginInstalledAuthHint: string;
+    pluginUninstalled: (params: { name: string }) => string;
+    pluginUninstalledHint: string;
+    pluginInstallFailed: (params: { name: string; error: string }) => string;
+    pluginUninstallFailed: (params: { name: string; error: string }) => string;
+    pluginDetailFailed: (params: { error: string }) => string;
+    pluginMarketplaces: string;
+    pluginMarketplacesDescription: string;
+    pluginMarketplacesNotConnected: string;
+    /** The name of an import item's type in its list («Settings», «Recent chat sessions»), and in the summaries («Chat sessions»); an unknown type keeps its own code. */
+    importItemLabel: (params: { type: string }) => string;
+    importTypeLabel: (params: { type: string }) => string;
   };
   /**
    * The permission question (its two words and its footer) and the plain-language text of a permission request

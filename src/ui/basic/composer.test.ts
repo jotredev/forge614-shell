@@ -183,3 +183,53 @@ test("a busy status too wide for the box keeps its label and time and drops the 
   expect(narrow).toContain("Compactando el contexto · 12s");
   expect(narrow).not.toContain("Haciendo espacio");
 });
+
+/**
+ * `/feedback` needs a note in the person's own words, and Shell had no way to ask for free text inside a question. `ask` shows the question with its
+ * placeholder under the title, gives back what was typed (trimmed) on Enter, nothing on Esc, and an empty note as «» — the person can send no note, as in Codex.
+ */
+test("a text question shows its title and placeholder, returns the trimmed text on Enter and nothing on Esc", async () => {
+  const composer = new ForgeComposer(fakeTui, "en");
+  const answer = composer.ask("Tell us more (bug)", "(optional) Write a short description", { body: "Your feedback can be used to improve ChatGPT." });
+  const shown = screen(composer);
+  expect(shown).toContain("Tell us more (bug)");
+  expect(shown).toContain("(optional) Write a short description");
+  expect(shown).toContain("Your feedback can be used to improve ChatGPT.");
+  type(composer, "  It hangs on start "); composer.handleInput("\r");
+  expect(await answer).toBe("It hangs on start");
+  expect(screen(composer)).not.toContain("Tell us more");
+  const empty = composer.ask("Note", "placeholder");
+  composer.handleInput("\r");
+  expect(await empty).toBe("");
+  const cancelled = composer.ask("Note", "placeholder");
+  type(composer, "half"); composer.handleInput("\x1b");
+  expect(await cancelled).toBeUndefined();
+  expect(composer.getText()).toBe("");
+});
+
+/** While a text question is open, a typed «/» is text and not a command: the command menu does not open and Enter does not run anything. */
+test("a text question takes «/» as text and does not open the command menu", async () => {
+  const composer = new ForgeComposer(fakeTui, "en");
+  let submitted = false; composer.onSubmit = () => { submitted = true; };
+  const answer = composer.ask("Note", "placeholder");
+  type(composer, "/quit"); composer.handleInput("\r");
+  expect(await answer).toBe("/quit");
+  expect(submitted).toBe(false);
+});
+
+/** `cancelChoice` (used when Shell quits) also closes a text question, resolving nothing, so no promise is left waiting. */
+test("cancelChoice closes an open text question without an answer", async () => {
+  const composer = new ForgeComposer(fakeTui, "en");
+  const answer = composer.ask("Note", "placeholder");
+  composer.cancelChoice();
+  expect(await answer).toBeUndefined();
+});
+
+/** `startAt` puts the cursor on a row without marking it with «✓» (which means «current value»): the import list toggles a row and reopens with the cursor still on it. */
+test("startAt starts the cursor on the named row without marking it as the current value", async () => {
+  const composer = new ForgeComposer(fakeTui, "en");
+  const result = composer.choose("Import", items, undefined, { startAt: "c" });
+  expect(screen(composer)).not.toContain("✓");
+  composer.handleInput("\r");
+  expect(await result).toBe("c");
+});

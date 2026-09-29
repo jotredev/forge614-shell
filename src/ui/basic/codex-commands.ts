@@ -9,6 +9,7 @@ import { formatDuration } from "./duration.ts";
 import { CODEX_INIT_PROMPT } from "../../engines/codex/prompts.ts";
 import { copyChoices } from "../../engines/codex/transcript.ts";
 import type { CopyChoice } from "../../engines/codex/transcript.ts";
+import { outsideCommandHandlers } from "./codex-outside-commands.ts";
 
 /**
  * What some Codex commands do on the person's own machine, as Codex's terminal app does it locally too: read-only
@@ -38,8 +39,13 @@ export interface CodexCommandScreen {
   write(text: string): void;
   /** Empties the conversation view: a new conversation starts. */
   clearView(): void;
-  /** Asks a Yes/No question with «No» first (so Enter alone keeps things as they are); Esc counts as No. */
-  confirm(title: string, no: string, yes: string): Promise<boolean>;
+  /**
+   * Asks a Yes/No question with «No» first (so Enter alone keeps things as they are); Esc counts as No. `body` is what the question is about
+   * (what would be sent, copied or installed): it lives inside the question and goes away with it.
+   */
+  confirm(title: string, no: string, yes: string, body?: string): Promise<boolean>;
+  /** Asks for a line of free text under `title`: what was written (empty when nothing was), or undefined on Esc. `body` is an explanation that goes away with the question. */
+  ask(title: string, placeholder: string, body?: string): Promise<string | undefined>;
   /** Opens a selector (see `ForgeComposer.choose`): the chosen row's value, or undefined on Esc. `body` is an explanation that lives inside the question and goes away with it. */
   choose(title: string, items: ComposerChoice[], current?: string, options?: { searchable?: boolean; body?: string }): Promise<string | undefined>;
   /** Replaces what the `$` autocomplete offers. */
@@ -248,6 +254,15 @@ export function codexCommandHandlers(screen: CodexCommandScreen): Record<string,
     },
     // Codex's `/mention` only puts «@» in the box; typing after it searches the folder's files.
     mention: async () => { screen.setComposerText("@"); },
+    approve: () => needs("approve", session.autoReviewDenials?.bind(session), async list => {
+      const denials = list();
+      if (!denials.length) { write([nt.approveNone, nt.approveNoneHint].join("\n")); return; }
+      const picked = await screen.choose(nt.approveTitle, denials.map(denial => ({ value: denial.id, display: denial.summary, label: denial.rationale ?? nt.approveNoRationale, search: `${denial.summary} ${denial.rationale ?? ""}` })), undefined, { searchable: true, body: nt.approveSelect });
+      if (!picked || !session.approveAutoReviewDenial) return;
+      if (!await session.approveAutoReviewDenial(picked)) { write(nt.approveGone); return; }
+      write([nt.approveRecorded, nt.approveRecordedHint].join("\n"));
+    }),
+    ...outsideCommandHandlers(screen),
   };
 }
 

@@ -853,10 +853,10 @@ test("screen-only Codex commands and part-3 commands answer with their own messa
     const h = codexUi(locale);
     try {
       // `/rollout` is typed (Codex's menu hides it, so no suggestion replaces it); aliases such as `/pet` are covered in commands.test.ts.
-      await tick(); h.enter("/theme"); await tick(); h.enter("/rollout"); await tick(); h.enter("/approve"); await tick();
+      await tick(); h.enter("/theme"); await tick(); h.enter("/rollout"); await tick(); h.enter("/subagents"); await tick();
       expect(h.plain()).toContain(getCatalog(locale).codexCommands.screenOnly({ name: "/theme" }));
       expect(h.plain()).toContain(getCatalog(locale).codexCommands.screenOnly({ name: "/rollout" }));
-      expect(h.plain()).toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/approve" }));
+      expect(h.plain()).toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/subagents" }));
       expect(h.plain()).not.toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/theme" }));
     } finally { h.enter("/f614:quit"); await h.ui; }
   }
@@ -1226,14 +1226,15 @@ test("with Codex /f614:quit, Ctrl+C and Ctrl+D leave when idle and ask first whi
 
 /**
  * Codex's `/status` shows the reset moment of each limit in local time and in Shell's language, and no machine date. It exists
- * because the real-account test of 1.12.0 showed «codex primary: 14% usado · se reinicia 2026-10-03T23:22:22.000Z (último reporte)».
+ * because the real-account test of 1.12.0 showed «codex primary: 14% usado · se reinicia 2026-10-03T23:22:22.000Z (último reporte)». The limit is now named by
+ * its window («Usage limit» when Codex reports none), never «codex primary»; `outside-commands.test.ts` covers the named windows.
  * The reset is built with the local constructor, so the expected text does not depend on the time zone of the machine.
  */
 test("with Codex /status shows the reset moment in local time, in es and en, and no ISO date", async () => {
   const reset = Math.floor(new Date(2026, 9, 3, 17, 22, 22).getTime() / 1000);
   const expected = {
-    en: "codex primary: 14% used · resets Oct 3, 5:22 PM (last report)",
-    es: "codex primary: 14% usado · se reinicia el 3 oct, 5:22 p.m. (último reporte)",
+    en: "Usage limit: 14% used · resets Oct 3, 5:22 PM (last report)",
+    es: "Límite de uso: 14% usado · se reinicia el 3 oct, 5:22 p.m. (último reporte)",
   };
   for (const locale of ["en", "es"] as const) {
     const h = codexUi(locale, rpc => rpc.replies.set("account/rateLimits/read", { rateLimits: { primary: { usedPercent: 14, resetsAt: reset } } }), undefined, 220);
@@ -1411,6 +1412,373 @@ test("Codex /status says who delivers the memory, in es and en", async () => {
       await tick(); h.terminal.output = ""; h.enter("/status"); await tick();
       expect(h.plain(), `${locale} ${delivers}`).toContain(line);
       expect(h.plain(), `${locale} ${delivers}`).toContain(getCatalog(locale).codexSession.folderLine({ path: "/project" }));
+    } finally { h.enter("/f614:quit"); await h.ui; }
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Codex commands, part 3a: /approve, /feedback, /import, /plugins (each with the confirmations that keep «No» first) and the limit names.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** `item/autoApprovalReview/completed` as `v2/ItemGuardianApprovalReviewCompletedNotification.ts` defines it: one denied command of conversation `t`. */
+const autoDenial = {
+  threadId: "t", turnId: "u", startedAtMs: 1000, completedAtMs: 1500, reviewId: "review-1", targetItemId: "item-1", decisionSource: "agent",
+  review: { status: "denied", riskLevel: "high", userAuthorization: "low", rationale: "Deletes files outside the project" },
+  action: { type: "command", source: "shell", command: "rm -rf /tmp/build", cwd: "/project" },
+};
+
+/** With no recent denial Codex says so and how they are recorded; with one it lists the action and its rationale, Esc sends nothing and Enter approves that one retry (`thread/approveGuardianDeniedAction`). */
+test("/approve says there is nothing to approve, lists a denial and approves only the one chosen", async () => {
+  const texts = {
+    en: { none: "No recent auto-review denials in this thread.", hint: "Denials are recorded after auto-review rejects an action.", title: "Auto-review Denials", done: "Approval recorded for one retry of the selected auto-review denial." },
+    es: { none: "No hay denegaciones recientes de la revisión automática en esta conversación.", hint: "Las denegaciones se guardan cuando la revisión automática rechaza una acción.", title: "Denegaciones de la revisión automática", done: "Aprobación guardada para un reintento de la denegación elegida." },
+  };
+  for (const locale of ["en", "es"] as const) {
+    const h = codexUi(locale, rpc => rpc.replies.set("thread/approveGuardianDeniedAction", {}), undefined, 220);
+    try {
+      await withConversation(h);
+      h.terminal.output = ""; h.enter("/approve"); await tick();
+      expect(h.plain()).toContain(texts[locale].none);
+      expect(h.plain()).toContain(texts[locale].hint);
+      expect(h.rpc.calls.some(call => call.method === "thread/approveGuardianDeniedAction")).toBe(false);
+      h.rpc.onNotification("item/autoApprovalReview/completed", autoDenial);
+      h.terminal.output = ""; h.enter("/approve"); await tick();
+      expect(h.plain()).toContain(texts[locale].title);
+      expect(h.plain()).toContain("1. rm -rf /tmp/build");
+      expect(h.plain()).toContain("Deletes files outside the project");
+      h.terminal.input("\x1b"); await tick();
+      expect(h.rpc.calls.some(call => call.method === "thread/approveGuardianDeniedAction")).toBe(false);
+      h.terminal.output = ""; h.enter("/approve"); await tick(); h.terminal.input("\r"); await tick(); await tick();
+      expect(h.rpc.calls.filter(call => call.method === "thread/approveGuardianDeniedAction").map(call => call.params)).toEqual([{ threadId: "t", event: {
+        id: "review-1", turn_id: "u", started_at_ms: 1000, completed_at_ms: 1500, status: "denied", risk_level: "high", user_authorization: "low",
+        rationale: "Deletes files outside the project", decision_source: "agent", action: { type: "command", source: "shell", command: "rm -rf /tmp/build", cwd: "/project" },
+      } }]);
+      expect(h.plain()).toContain(texts[locale].done);
+      h.terminal.output = ""; h.enter("/approve"); await tick();
+      expect(h.plain()).toContain(texts[locale].none);
+    } finally { h.enter("/f614:quit"); await h.ui; }
+  }
+});
+
+/** A conversation that already has a rollout file, so `/feedback` can attach it when the person agrees to send logs. */
+const feedbackSetup = (rpc: FixtureRpc) => {
+  rpc.replies.set("thread/start", { thread: { id: "t", path: "/home/u/.codex/sessions/rollout-1.jsonl" }, model: "m", modelProvider: "openai" });
+  rpc.replies.set("feedback/upload", { threadId: "t", promptHash: null });
+};
+const uploads = (h: CommandHarness) => h.rpc.calls.filter(call => call.method === "feedback/upload");
+
+/**
+ * `/feedback` sends data to a third party, so before anything leaves it asks «Send this to OpenAI?» with the summary of what goes and «No» marked:
+ * Enter alone (which takes the marked «No») and Esc call nothing; only choosing «Yes» calls `feedback/upload`. Category, log consent and note come first, as in Codex.
+ */
+test("/feedback walks through category, logs and note, then asks with No marked and sends nothing unless the person says Yes", async () => {
+  const h = codexUi("en", feedbackSetup, undefined, 220);
+  try {
+    await withConversation(h);
+    h.terminal.output = ""; h.enter("/feedback"); await tick();
+    for (const row of ["How was this?", "1. bug", "2. bad result", "3. good result", "4. safety check", "5. other", "Crash, error message, hang, or broken UI/behavior"]) expect(h.plain()).toContain(row);
+    h.terminal.input("\r"); await tick();
+    for (const row of ["Upload logs?", "1. Yes", "2. No", "Share the current Codex session logs and diagnostics with the team for troubleshooting"]) expect(h.plain()).toContain(row);
+    h.terminal.input("\r"); await tick();
+    expect(h.plain()).toContain("Tell us more (bug)");
+    expect(h.plain()).toContain("(optional) Write a short description to help us further");
+    h.terminal.input("It hangs on start"); h.terminal.input("\r"); await tick();
+    expect(h.plain()).toContain("Send this to OpenAI?");
+    expect(h.plain()).toContain("1. No, don't send");
+    expect(h.plain()).toContain("2. Yes, send");
+    for (const line of ["• Type: bug", "• Note: It hangs on start", "• Logs and diagnostics: yes", "• Conversation: t"]) expect(h.plain()).toContain(line);
+    expect(uploads(h)).toHaveLength(0);
+    h.terminal.input("\r"); await tick();
+    expect(uploads(h)).toHaveLength(0);
+    expect(h.plain()).toContain("Nothing was sent.");
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/** Esc on the final question is a «No» too, and the question is in Spanish when Shell is: «¿Enviar esto a OpenAI?» with «No, no enviar» first. */
+test("/feedback: Esc on the confirmation sends nothing, and the confirmation is in Spanish in es", async () => {
+  const h = codexUi("es", feedbackSetup, undefined, 220);
+  try {
+    await withConversation(h);
+    h.terminal.output = ""; h.enter("/feedback"); await tick();
+    expect(h.plain()).toContain("¿Cómo te fue?");
+    h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
+    expect(h.plain()).toContain("¿Enviar los registros?");
+    h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
+    expect(h.plain()).toContain("Cuéntanos más (mal resultado)");
+    h.terminal.input("\r"); await tick();
+    expect(h.plain()).toContain("¿Enviar esto a OpenAI?");
+    expect(h.plain()).toContain("1. No, no enviar");
+    expect(h.plain()).toContain("2. Sí, enviar");
+    expect(h.plain()).toContain("• Nota: ninguna");
+    expect(h.plain()).toContain("• Registros y diagnósticos: no");
+    h.terminal.input("\x1b"); await tick();
+    expect(uploads(h)).toHaveLength(0);
+    expect(h.plain()).toContain("No se envió nada.");
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/** Choosing «Yes» calls `feedback/upload` once with the exact parameters and shows Codex's own follow-up (the issue address and the conversation id). Esc on the category or the note sends nothing. */
+test("/feedback sends with Yes, shows the follow-up and is silent when the person leaves the category or the note", async () => {
+  const h = codexUi("en", feedbackSetup, undefined, 220);
+  try {
+    await withConversation(h);
+    h.enter("/feedback"); await tick(); h.terminal.input("\x1b"); await tick();
+    h.enter("/feedback"); await tick(); h.terminal.input("\r"); await tick(); h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
+    h.terminal.input("half a note"); h.terminal.input("\x1b"); await tick();
+    expect(uploads(h)).toHaveLength(0);
+    h.terminal.output = "";
+    h.enter("/feedback"); await tick(); h.terminal.input("\r"); await tick(); h.terminal.input("\r"); await tick();
+    h.terminal.input("It hangs"); h.terminal.input("\r"); await tick();
+    h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick(); await tick();
+    expect(uploads(h).map(call => call.params)).toEqual([{
+      classification: "bug", reason: "It hangs", threadId: "t", includeLogs: true, extraLogFiles: ["/home/u/.codex/sessions/rollout-1.jsonl"], tags: { turn_id: "u" },
+    }]);
+    expect(h.plain()).toContain("Feedback uploaded.");
+    expect(h.plain()).toContain("Please open an issue using the following URL:");
+    expect(h.plain()).toContain("https://github.com/openai/codex/issues/new?template=3-cli.yml&steps=Uploaded%20thread:%20t");
+    expect(h.plain()).toContain("Or mention your thread ID t in an existing issue.");
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/** A good result has no issue to open: Codex just thanks and shows the id, and with No logs it says «recorded (no logs)». */
+test("/feedback for a good result without logs says it was recorded and thanks", async () => {
+  const h = codexUi("en", feedbackSetup, undefined, 220);
+  try {
+    await withConversation(h);
+    h.terminal.output = ""; h.enter("/feedback"); await tick();
+    h.terminal.input("\x1b[B"); h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
+    h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
+    h.terminal.input("\r"); await tick();
+    h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick(); await tick();
+    expect(uploads(h).map(call => call.params)).toEqual([{ classification: "good_result", threadId: "t", includeLogs: false, tags: { turn_id: "u" } }]);
+    expect(h.plain()).toContain("Feedback recorded (no logs).");
+    expect(h.plain()).toContain("Thanks for the feedback!");
+    expect(h.plain()).toContain("Thread ID: t");
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/** What Codex 0.159.0's `externalAgentConfig/detect` answers for Claude Code (`v2/ExternalAgentConfigMigrationItem.ts`), and nothing for Cursor. */
+const importSettings = { itemType: "CONFIG", description: "Migrate /home/u/.claude/settings.json into /home/u/.codex/config.toml", cwd: null, details: null };
+const importMcp = { itemType: "MCP_SERVER_CONFIG", description: "Migrate MCP servers from /home/u/.claude.json into /home/u/.codex/config.toml", cwd: null,
+  details: { plugins: [], skills: [], sessions: [], mcpServers: [{ name: "forge614-engram" }, { name: "github" }], hooks: [], subagents: [], commands: [] } };
+const importChats = { itemType: "SESSIONS", description: "Migrate recent Claude Code sessions", cwd: "/project",
+  details: { plugins: [], skills: [], sessions: [{ path: "/home/u/.claude/projects/p/1.jsonl", cwd: "/project", title: "Fix login" }], mcpServers: [], hooks: [], subagents: [], commands: [] } };
+const importSetup = (rpc: FixtureRpc, items: object[] = [importSettings, importMcp, importChats]) => {
+  rpc.handler = async (method, params) => {
+    if (method === "externalAgentConfig/detect") return { items: params.migrationSource === "claude-code" ? items : [], connectors: [] };
+    if (method === "externalAgentConfig/import") return { importId: "imp-1" };
+    if (!rpc.replies.has(method)) throw new Error(`Unexpected ${method}`);
+    return rpc.replies.get(method);
+  };
+};
+const imports = (h: CommandHarness) => h.rpc.calls.filter(call => call.method === "externalAgentConfig/import");
+
+/**
+ * `/import` copies setup into `~/.codex`, MCP keys and chats included, so it asks before copying: the question names exactly what is copied (each item with its
+ * source and destination), warns in plain words about MCP connections and chats, and has «No» marked. Enter alone and Esc call nothing; only «Yes» calls import.
+ */
+test("/import lists what was found, names exactly what will be copied, warns about MCP and chats and calls import only on Yes", async () => {
+  const h = codexUi("en", rpc => importSetup(rpc), undefined, 220);
+  try {
+    await tick(); h.terminal.output = ""; h.enter("/import"); await tick();
+    expect(h.rpc.calls.filter(call => call.method === "externalAgentConfig/detect").map(call => call.params)).toEqual([
+      { includeHome: true, cwds: ["/project"], migrationSource: "claude-code" }, { includeHome: true, cwds: ["/project"], migrationSource: "cursor" },
+    ]);
+    for (const row of ["Import from Claude Code", "1. Import selected (3)", "2. [x] Settings", "3. [x] MCP servers", "4. [x] Recent chat sessions", "5. Cancel"]) expect(h.plain()).toContain(row);
+    h.terminal.output = ""; h.terminal.input("\r"); await tick();
+    expect(h.plain()).toContain("Copy this into ~/.codex?");
+    for (const line of [
+      "• Settings — from /home/u/.claude/settings.json to /home/u/.codex/config.toml",
+      "• MCP servers (2: forge614-engram, github) — from /home/u/.claude.json to /home/u/.codex/config.toml",
+      "• Recent chat sessions (1: Fix login) — /project",
+    ]) expect(h.plain().replace(/\s+/g, " ")).toContain(line.replace(/\s+/g, " "));
+    expect(h.plain()).toContain("This can include the settings of your MCP connections (with their access keys) and your Claude Code chats.");
+    expect(h.plain()).toContain("1. No, don't copy");
+    expect(h.plain()).toContain("2. Yes, copy");
+    expect(imports(h)).toHaveLength(0);
+    h.terminal.input("\r"); await tick();
+    expect(imports(h)).toHaveLength(0);
+    expect(h.plain()).toContain("Nothing was copied.");
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/** Esc on the confirmation is «No» as well, in Spanish too: «¿Copiar esto a ~/.codex?» with the MCP and chats warning in plain Spanish. */
+test("/import: Esc on the confirmation copies nothing, and the question and the warning are in Spanish in es", async () => {
+  const h = codexUi("es", rpc => importSetup(rpc), undefined, 220);
+  try {
+    await tick(); h.terminal.output = ""; h.enter("/import"); await tick();
+    for (const row of ["Importar desde Claude Code", "1. Importar lo marcado (3)", "2. [x] Ajustes", "3. [x] Servidores MCP", "4. [x] Chats recientes", "5. Cancelar"]) expect(h.plain()).toContain(row);
+    h.terminal.input("\r"); await tick();
+    expect(h.plain()).toContain("¿Copiar esto a ~/.codex?");
+    expect(h.plain()).toContain("• Ajustes — de /home/u/.claude/settings.json a /home/u/.codex/config.toml");
+    expect(h.plain()).toContain("Esto puede incluir la configuración de tus conexiones MCP (con sus llaves de acceso) y tus chats de Claude Code.");
+    expect(h.plain()).toContain("1. No, no copiar");
+    expect(h.plain()).toContain("2. Sí, copiar");
+    h.terminal.input("\x1b"); await tick();
+    expect(imports(h)).toHaveLength(0);
+    expect(h.plain()).toContain("No se copió nada.");
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/** Enter on an item marks or unmarks it and reopens the list on that row; «Yes» then copies only what is still marked, with the items exactly as the server listed them, and says the import started. */
+test("/import: Enter toggles an item and Yes imports only the marked ones, then says it started", async () => {
+  const h = codexUi("en", rpc => importSetup(rpc), undefined, 220);
+  try {
+    await tick(); h.enter("/import"); await tick();
+    // The screen redraws only what changed: after toggling «MCP servers» the count and that row are what comes out again.
+    h.terminal.output = ""; h.terminal.input("\x1b[B"); h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
+    for (const row of ["1. Import selected (2)", "3. [ ] MCP servers"]) expect(h.plain()).toContain(row);
+    h.terminal.output = ""; h.terminal.input("\x1b[A"); h.terminal.input("\x1b[A"); h.terminal.input("\r"); await tick();
+    h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick(); await tick();
+    expect(imports(h).map(call => call.params)).toEqual([{ migrationItems: [importSettings, importChats], source: "cli", providerId: "claude-code", migrationSource: "claude-code" }]);
+    for (const line of ["Import started. You can keep working while it finishes.", "Imported setup will apply to new chats.", "Importing:", "Settings: 1", "Chat sessions: 1 — Fix login"]) expect(h.plain()).toContain(line);
+    expect(h.plain()).toContain("1 additional item remains. After it finishes, run /import again to review it.");
+    h.rpc.onNotification("externalAgentConfig/import/completed", { importId: "imp-1", itemTypeResults: [{ itemType: "CONFIG", successes: [{}], failures: [] }, { itemType: "SESSIONS", successes: [{}], failures: [] }] });
+    await tick();
+    expect(h.plain()).toContain("Import finished: 2 imported, 0 failed.");
+    expect(h.plain()).toContain("Run /import again to check for additional items.");
+  } finally { h.terminal.input("\x1b"); await tick(); h.enter("/f614:quit"); await h.ui; }
+});
+
+/** With nothing to import Codex says so; with a detection error and nothing found it says the check failed, and neither asks anything. */
+test("/import says when there is nothing to import and when the check failed", async () => {
+  const empty = codexUi("en", rpc => importSetup(rpc, []), undefined, 220);
+  try {
+    await tick(); empty.terminal.output = ""; empty.enter("/import"); await tick();
+    expect(empty.plain()).toContain("No compatible setup was found to import.");
+    expect(imports(empty)).toHaveLength(0);
+  } finally { empty.enter("/f614:quit"); await empty.ui; }
+  const failing = codexUi("es", rpc => { rpc.handler = async method => { if (method === "externalAgentConfig/detect") throw new Error("boom"); if (!rpc.replies.has(method)) throw new Error(`Unexpected ${method}`); return rpc.replies.get(method); }; }, undefined, 220);
+  try {
+    await tick(); failing.terminal.output = ""; failing.enter("/import"); await tick();
+    expect(failing.plain()).toContain("No se pudo revisar qué se puede importar: Claude Code: boom; Cursor: boom");
+  } finally { failing.enter("/f614:quit"); await failing.ui; }
+});
+
+/** Codex's `plugin/list` shape (`v2/PluginSummary.ts` in full) with one installed and one installable plugin, and a marketplace that Codex hides in the CLI. */
+const uiSummary = (over: Record<string, unknown> = {}) => ({
+  id: "figma@openai-curated", remotePluginId: null, version: null, localVersion: null, name: "figma", shareContext: null, source: { type: "local", path: "/m/figma" },
+  installed: false, installedAt: null, enabled: false, installPolicy: "AVAILABLE", installPolicySource: null, mustShowInstallationInterstitial: null, authPolicy: "ON_INSTALL",
+  availability: "AVAILABLE", disabledReason: null, eligiblePlanTypes: null,
+  interface: { displayName: "Figma", shortDescription: "Design context", longDescription: null, developerName: null, category: null, capabilities: [], websiteUrl: null, privacyPolicyUrl: null, termsOfServiceUrl: null, defaultPrompt: null, brandColor: null, composerIcon: null, composerIconUrl: null, logo: null, logoDark: null, logoUrl: null, logoUrlDark: null, screenshots: [], screenshotUrls: [] },
+  keywords: [], ...over,
+});
+const uiPlugins = { marketplaces: [
+  { name: "openai-bundled", path: "/b/marketplace.json", interface: null, plugins: [uiSummary({ id: "hidden@openai-bundled", name: "hidden" })] },
+  { name: "openai-curated", path: "/m/.agents/plugins/marketplace.json", interface: { displayName: "OpenAI Curated" }, plugins: [
+    uiSummary(),
+    uiSummary({ id: "docs@openai-curated", name: "docs", installed: true, enabled: true, interface: null }),
+  ] },
+], marketplaceLoadErrors: [], featuredPluginIds: [] };
+const uiPluginDetail = (summary: object, description: string) => ({ plugin: { marketplaceName: "openai-curated", marketplacePath: "/m/.agents/plugins/marketplace.json", summary, shareUrl: null, description,
+  skills: [{ name: "design-review", description: "", shortDescription: null, interface: null, path: null, enabled: true }], onboardingSkill: null,
+  hooks: [{ key: "a", eventName: "preToolUse" }], apps: [], appTemplates: [], mcpServers: ["figma-mcp"], scheduledTasks: null } });
+const pluginsSetup = (rpc: FixtureRpc) => {
+  rpc.handler = async (method, params) => {
+    if (method === "plugin/list") return uiPlugins;
+    if (method === "plugin/read") return params.pluginName === "docs" ? uiPluginDetail(uiSummary({ id: "docs@openai-curated", name: "docs", installed: true, enabled: true, interface: null }), "Read the docs.") : uiPluginDetail(uiSummary(), "Turn Figma files into implementation context.");
+    if (method === "plugin/install") return { authPolicy: "ON_INSTALL", appsNeedingAuth: [] };
+    if (method === "plugin/uninstall") return {};
+    if (!rpc.replies.has(method)) throw new Error(`Unexpected ${method}`);
+    return rpc.replies.get(method);
+  };
+};
+const pluginCalls = (h: CommandHarness, method: string) => h.rpc.calls.filter(call => call.method === method);
+
+/** `/plugins` lists the plugins with their state and marketplace (installed first, the hidden marketplace left out), opens the detail with Codex's rows and reads it with `plugin/read`. */
+test("/plugins lists installed and available plugins, opens the detail and reads it with plugin/read", async () => {
+  const h = codexUi("en", pluginsSetup, undefined, 220);
+  try {
+    await tick(); h.terminal.output = ""; h.enter("/plugins"); await tick();
+    expect(pluginCalls(h, "plugin/list").map(call => call.params)).toEqual([{ cwds: ["/project"], forceRefetch: false }]);
+    for (const row of ["Browse plugins from available marketplaces.", "Installed 1 of 2 available plugins.", "1. docs", "Installed · OpenAI Curated", "2. Figma", "Available · OpenAI Curated · Design context", "3. Marketplaces"]) expect(h.plain()).toContain(row);
+    expect(h.plain()).not.toContain("hidden");
+    h.terminal.output = ""; h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
+    expect(pluginCalls(h, "plugin/read").map(call => call.params)).toEqual([{ marketplacePath: "/m/.agents/plugins/marketplace.json", pluginName: "figma" }]);
+    for (const line of ["Figma · Can be installed · Local", "Turn Figma files into implementation context.", "Auth: Auth on install", "Skills: design-review", "Hooks: PreToolUse (1)", "Apps: No plugin apps", "MCP servers: figma-mcp", "1. Back to plugins", "2. Install plugin", "Install this plugin now"]) expect(h.plain()).toContain(line);
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/**
+ * Installing downloads code from a third party, so it asks «Install Figma?» with «No» marked: Enter alone and Esc call nothing, and only «Yes» calls
+ * `plugin/install` with the marketplace and the plugin name, then says what Codex says.
+ */
+test("/plugins install asks with No marked, calls nothing on No or Esc and plugin/install only on Yes", async () => {
+  const h = codexUi("en", pluginsSetup, undefined, 220);
+  const toInstallQuestion = async () => {
+    h.enter("/plugins"); await tick(); h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick(); h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
+  };
+  try {
+    await tick(); h.terminal.output = "";
+    await toInstallQuestion();
+    expect(h.plain()).toContain("Install Figma?");
+    expect(h.plain()).toContain("This downloads code from a third party and adds it to Codex. Only install plugins you trust.");
+    expect(h.plain()).toContain("1. No, don't install");
+    expect(h.plain()).toContain("2. Yes, install");
+    h.terminal.input("\r"); await tick();
+    expect(pluginCalls(h, "plugin/install")).toHaveLength(0);
+    expect(h.plain()).toContain("Nothing was installed.");
+    await toInstallQuestion(); h.terminal.input("\x1b"); await tick();
+    expect(pluginCalls(h, "plugin/install")).toHaveLength(0);
+    h.terminal.output = "";
+    await toInstallQuestion(); h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick(); await tick();
+    expect(pluginCalls(h, "plugin/install").map(call => call.params)).toEqual([{ marketplacePath: "/m/.agents/plugins/marketplace.json", pluginName: "figma" }]);
+    expect(h.plain()).toContain("Installed Figma plugin.");
+    expect(h.plain()).toContain("No additional app authentication is required.");
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/** Uninstalling asks «Uninstall docs?» with «No» marked too; only «Yes» calls `plugin/uninstall` with the plugin id, and it says Codex's «Bundled apps remain installed.». Spanish has its own words. */
+test("/plugins uninstall asks with No marked and calls plugin/uninstall only on Yes, in English and Spanish", async () => {
+  const texts = { en: ["Uninstall docs?", "1. No, keep it", "2. Yes, uninstall", "Uninstalled docs plugin.", "Bundled apps remain installed."], es: ["¿Desinstalar docs?", "1. No, dejarlo", "2. Sí, desinstalar", "Plugin docs desinstalado.", "Las apps que traía siguen instaladas."] };
+  for (const locale of ["en", "es"] as const) {
+    const h = codexUi(locale, pluginsSetup, undefined, 220);
+    try {
+      await tick(); h.terminal.output = ""; h.enter("/plugins"); await tick(); h.terminal.input("\r"); await tick(); h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
+      for (const line of texts[locale].slice(0, 3)) expect(h.plain(), locale).toContain(line);
+      h.terminal.input("\r"); await tick();
+      expect(pluginCalls(h, "plugin/uninstall")).toHaveLength(0);
+      h.terminal.output = ""; h.enter("/plugins"); await tick(); h.terminal.input("\r"); await tick(); h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
+      h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick(); await tick();
+      expect(pluginCalls(h, "plugin/uninstall").map(call => call.params)).toEqual([{ pluginId: "docs@openai-curated" }]);
+      for (const line of texts[locale].slice(3)) expect(h.plain(), locale).toContain(line);
+    } finally { h.enter("/f614:quit"); await h.ui; }
+  }
+});
+
+/** Marketplaces (add, remove, upgrade) are not part of this step: the row Codex's screen would offer answers honestly and calls nothing; a disabled plugins feature says so like Codex. */
+test("/plugins answers honestly for marketplaces and says when the plugins feature is off", async () => {
+  const h = codexUi("en", pluginsSetup, undefined, 220);
+  try {
+    await tick(); h.terminal.output = ""; h.enter("/plugins"); await tick();
+    h.terminal.input("\x1b[B"); h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
+    expect(h.plain()).toContain("Adding, removing and upgrading marketplaces is not connected in Shell yet.");
+    expect(h.rpc.calls.some(call => ["marketplace/add", "marketplace/remove", "marketplace/upgrade", "plugin/install"].includes(call.method))).toBe(false);
+  } finally { h.enter("/f614:quit"); await h.ui; }
+  const off = codexUi("es", rpc => {
+    pluginsSetup(rpc);
+    rpc.replies.set("experimentalFeature/list", featureList(false, [{ name: "plugins", stage: "stable", displayName: null, description: null, announcement: null, enabled: false, defaultEnabled: true }]));
+  }, undefined, 220);
+  try {
+    await tick(); off.terminal.output = ""; off.enter("/plugins"); await tick();
+    expect(off.plain()).toContain("Los plugins están desactivados.");
+    expect(off.plain()).toContain("Activa la función de plugins para usar /plugins.");
+    expect(pluginCalls(off, "plugin/list")).toHaveLength(0);
+  } finally { off.enter("/f614:quit"); await off.ui; }
+});
+
+/** The sidebar meter and `/status` name each Codex limit by its window (here 5 hours and a week), in both languages, and never by Codex's «primary» and «secondary». */
+test("with Codex the sidebar and /status name each limit by its window and never say primary or secondary", async () => {
+  const limits = { rateLimits: { primary: { usedPercent: 14, windowDurationMins: 300, resetsAt: null }, secondary: { usedPercent: 40, windowDurationMins: 10080, resetsAt: null } } };
+  const expected = { en: ["5-hour limit · 14% used", "Weekly limit · 40% used"], es: ["Límite de 5 horas · 14% usado", "Límite semanal · 40% usado"] };
+  for (const locale of ["en", "es"] as const) {
+    const h = codexUi(locale, rpc => rpc.replies.set("account/rateLimits/read", limits), undefined, 220);
+    try {
+      await tick(); await tick();
+      for (const line of expected[locale]) expect(h.plain(), locale).toContain(line);
+      h.terminal.output = ""; h.enter("/status"); await tick();
+      expect(h.plain(), locale).toContain(locale === "en" ? "5-hour limit: 14% used" : "Límite de 5 horas: 14% usado");
+      expect(h.plain(), locale).not.toMatch(/primary|secondary/i);
     } finally { h.enter("/f614:quit"); await h.ui; }
   }
 });

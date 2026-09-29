@@ -23,9 +23,10 @@ function defaultForgeCommands(locale: Locale): ComposerChoice[] {
 export interface ComposerChoice { value: string; label: string; display?: string; group?: string; search?: string; key?: string; }
 /**
  * How a picker opens: `searchable` filters as the person types; `numbered: false` drops the «1.» before each row; `footer` replaces the
- * default «title · 1–2 of 2 · …» line; `body` is an explanation of the question, drawn wrapped under its title and gone with the picker.
+ * default «title · 1–2 of 2 · …» line; `body` is an explanation of the question, drawn wrapped under its title and gone with the picker;
+ * `startAt` puts the cursor on the row with that value without marking it as the current one (a list that reopens after a change keeps the cursor where it was).
  */
-export interface ComposerChooseOptions { searchable?: boolean; numbered?: boolean; footer?: string; body?: string; }
+export interface ComposerChooseOptions { searchable?: boolean; numbered?: boolean; footer?: string; body?: string; startAt?: string; }
 export interface ComposerCommandGroup { title: string; items: ComposerChoice[]; }
 
 /** Lowercase and without accents, so «CAFÉ», «Café» and «cafe» all read the same when searching. */
@@ -145,6 +146,8 @@ export class ForgeComposer extends Editor {
   private fileQuery = "";
   private fileChoices: ComposerChoice[] = [];
   private picker?: { title: string; items: ComposerChoice[]; searchable: boolean; numbered: boolean; footer?: string; body?: string; resolve: (value?: string) => void };
+  /** An open text question (`ask`): the box takes the answer, Enter gives it back and Esc gives back nothing. */
+  private textPrompt?: { title: string; placeholder: string; body?: string; resolve: (value?: string) => void };
   private pickerQuery = "";
   private repaint: () => void;
   constructor(tui: TUI, private readonly locale: Locale = "en") {
@@ -162,7 +165,7 @@ export class ForgeComposer extends Editor {
   choose(title: string, items: ComposerChoice[], current?: string, options: ComposerChooseOptions = {}): Promise<string | undefined> {
     this.cancelChoice();
     if (!items.length) return Promise.resolve(undefined);
-    this.selectedChoice = Math.max(0, items.findIndex(item => item.value === current));
+    this.selectedChoice = Math.max(0, items.findIndex(item => item.value === (options.startAt ?? current)));
     this.currentValue = current;
     this.pickerQuery = "";
     return new Promise(resolve => {
@@ -170,9 +173,40 @@ export class ForgeComposer extends Editor {
       this.repaint();
     });
   }
-  cancelChoice(): void { const picker = this.picker; this.picker = undefined; this.currentValue = undefined; this.pickerQuery = ""; picker?.resolve(); this.repaint(); }
+  /**
+   * Asks for a line of free text — a note in the person's own words: the box is emptied and takes the answer, with `title` and `placeholder` (and `options.body`,
+   * an explanation that goes away with the question) drawn above it. Enter resolves the answer trimmed (empty when nothing was written), Esc resolves nothing.
+   * While it is open «/» is text: the command menu does not open and Enter runs no command.
+   */
+  ask(title: string, placeholder: string, options: { body?: string } = {}): Promise<string | undefined> {
+    this.cancelChoice();
+    this.setText("");
+    return new Promise(resolve => {
+      this.textPrompt = { title, placeholder, ...(options.body ? { body: options.body } : {}), resolve };
+      this.repaint();
+    });
+  }
+  /** Closes an open text question, resolving nothing, and empties what was typed into it. */
+  private closeTextPrompt(answer?: string): void {
+    const prompt = this.textPrompt; this.textPrompt = undefined;
+    this.setText("");
+    prompt?.resolve(answer);
+    this.repaint();
+  }
+  /** Keys for a text question: Esc leaves it, a plain Enter answers it; everything else (a newline with Shift+Enter, pasted text) is the editor's own. */
+  private handleTextPromptInput(data: string): void {
+    if (matchesKey(data, "escape")) { this.closeTextPrompt(); return; }
+    if (matchesKey(data, "enter")) { this.closeTextPrompt(this.getText().trim()); return; }
+    super.handleInput(data);
+    this.repaint();
+  }
+  cancelChoice(): void {
+    const picker = this.picker; this.picker = undefined; this.currentValue = undefined; this.pickerQuery = ""; picker?.resolve();
+    if (this.textPrompt) this.closeTextPrompt(); else this.repaint();
+  }
   /** What the menu lists right now: the open picker's rows narrowed by what was typed, or the "/" and "$" suggestions. */
   private activeItems(): ComposerChoice[] {
+    if (this.textPrompt) return [];
     return this.picker ? (this.picker.searchable ? filterChoices(this.picker.items, this.pickerQuery) : this.picker.items) : this.suggestions();
   }
   /** Keys for a searchable picker: arrows, Enter, Esc, Backspace and printable text; everything else is swallowed so no stray key reaches the editor. */
@@ -245,6 +279,7 @@ export class ForgeComposer extends Editor {
     return [];
   }
   handleInput(data: string): void {
+    if (this.textPrompt) { this.handleTextPromptInput(data); return; }
     if (this.picker?.searchable) { this.handleSearchInput(data); return; }
     if (this.picker && (data.startsWith("/") || this.getText().startsWith("/")) && !matchesKey(data, "escape")) {
       super.handleInput(data);
@@ -285,15 +320,29 @@ export class ForgeComposer extends Editor {
     if (event.button === "left" && ["press", "drag", "release"].includes(event.type)) return { handled: true, focus: true };
     const items = this.activeItems();
     const searchRows = this.picker?.searchable ? 1 : 0;
-    const menuRows = items.length ? Math.min(5, items.length - Math.max(0, this.selectedChoice - 4)) + 2 + searchRows + this.bodyLines(event.width).length : searchRows ? 2 : 0;
+    const menuRows = this.textPrompt ? this.promptRows(Math.max(1, event.width - 4)).length + 1
+      : items.length ? Math.min(5, items.length - Math.max(0, this.selectedChoice - 4)) + 2 + searchRows + this.bodyLines(event.width).length : searchRows ? 2 : 0;
     return super.handleMouse({ ...event, x: event.x - 4, y: event.y - 2 - menuRows, width: Math.max(1, event.width - 8) });
   }
 
-  /** The open picker's explanation wrapped for a component of `width` columns (the same margin `render` leaves), or no rows when it has none. */
-  private bodyLines(width: number): string[] {
-    if (!this.picker?.body) return [];
+  /** An explanation wrapped for a component of `width` columns (the same margin `render` leaves), or no rows when there is none. */
+  private wrapBody(body: string | undefined, width: number): string[] {
+    if (!body) return [];
     const inner = Math.max(1, width >= 14 ? width - 4 : width);
-    return wrapTextWithAnsi(muted(this.picker.body), inner).map(line => fit(line, inner));
+    return wrapTextWithAnsi(muted(body), inner).map(line => fit(line, inner));
+  }
+  /** The open picker's explanation, or no rows when it has none. */
+  private bodyLines(width: number): string[] { return this.wrapBody(this.picker?.body, width); }
+  /** What a text question draws above the box: its title, its explanation, the placeholder while nothing is typed, and the keys. `width` is the row width the menu is drawn at. */
+  private promptRows(width: number): string[] {
+    const prompt = this.textPrompt;
+    if (!prompt) return [];
+    return [
+      fit(cyan(prompt.title), width),
+      ...this.wrapBody(prompt.body, width + 4).map(line => fit(line, width)),
+      ...(this.getText() ? [] : [fit(muted(prompt.placeholder), width)]),
+      fit(muted(getCatalog(this.locale).chat.askFooter), width),
+    ];
   }
 
   render(width: number): string[] {
@@ -327,7 +376,7 @@ export class ForgeComposer extends Editor {
     const searchRow = this.picker?.searchable
       ? [fit(`${cyan(`${t.searchLabel}:`)} ${this.pickerQuery ? this.pickerQuery : muted(t.searchPlaceholder)}`, width)]
       : [];
-    const menu = items.length ? [
+    const menu = this.textPrompt ? this.promptRows(width) : items.length ? [
       ...searchRow,
       ...visibleItems.flatMap((item, offset) => [
         ...(offset === 0 || item.group !== visibleItems[offset - 1]?.group ? [fit(cyan(item.group ?? this.picker?.title ?? t.commandsFallbackTitle), width)] : []),
