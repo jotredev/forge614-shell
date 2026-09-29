@@ -66,7 +66,7 @@ if(process.argv[2]==='auth') {
     expect(terminal.output).toContain("only in this Forge614-Shell session");
     enter("/no"); await tick();
     expect(await readFile(marker, "utf8")).toBe("auth status --json\n");
-    enter("/logout"); await tick(); enter("/stop"); await tick();
+    enter("/logout"); await tick(); enter("/f614:stop"); await tick();
     expect(await readFile(marker, "utf8")).toBe("auth status --json\n");
     enter("/logout"); await tick(); enter("/yes");
     await tick();
@@ -117,6 +117,46 @@ else {
     expect(preferences().claude.mode).toBe("dontAsk");
     expect(stripVTControlCharacters(terminal.output)).toContain("Don't Ask");
     expect(stripVTControlCharacters(terminal.output)).not.toContain("Finish or /stop");
+  } finally {
+    enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
+    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+  }
+});
+
+/**
+ * Shell's own «cancel the answer in progress» is `/f614:stop` now: `/stop` no longer belongs to Shell, so
+ * it does not cancel anything. Uses a fake `claude` that accepts the prompt and never answers, so the turn
+ * stays open until it is cancelled; no real account or network is involved.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: /f614:stop cancels the running turn and a plain /stop does not", async () => {
+  const root = await mkdtemp(join(tmpdir(), "forge614-stop-ui-"));
+  const executable = join(root, "claude");
+  const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
+  const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+  const plain = () => stripVTControlCharacters(terminal.output);
+  const previousForgeHome = process.env.FORGE614_HOME;
+  process.env.FORGE614_HOME = join(root, "forge614-home");
+  try {
+    await writeFile(executable, `#!${process.execPath}
+if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
+else {
+  require('readline').createInterface({input:process.stdin}).on('line',line=>{
+    const msg=JSON.parse(line);
+    if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
+  });
+}`, { mode: 0o755 });
+    ui = startClaudeUI([], executable, terminal); await tick();
+    for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
+    enter("work please"); await tick();
+    for (let i = 0; i < 30 && !plain().includes(getCatalog("en").chat.statusWorking); i++) await tick();
+    expect(plain()).toContain(getCatalog("en").chat.statusWorking);
+    terminal.output = ""; enter("/stop"); await tick(); await tick();
+    // `/stop` is no longer Shell's: it cancels nothing, the person is told which command does, and the turn keeps running.
+    expect(plain()).toContain(getCatalog("en").claudeChat.finishOrStopFirst);
+    expect(plain()).not.toContain(getCatalog("en").chat.statusReady);
+    terminal.output = ""; enter("/f614:stop");
+    for (let i = 0; i < 60 && !plain().includes(getCatalog("en").chat.statusReady); i++) await tick();
+    expect(plain()).toContain(getCatalog("en").chat.statusReady);
   } finally {
     enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;

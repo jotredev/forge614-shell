@@ -145,7 +145,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     const native = session.commands.map(command => ({ value: `/${command.name}`, label: command.description || command.argumentHint || t.genericCommandLabel }));
     const names = new Set(native.map(command => command.value));
     const providerControls = [
-      ["/model", t.commandSelectModel], ["/effort", t.commandSelectReasoning], ["/resume", t.commandChatHistory], ["/new", t.commandNewConversation], ["/login", t.commandConnectAccount], ["/logout", t.commandDisconnectLocally], ["/status", t.commandSessionDetails], ["/stop", t.commandCancelActiveTurn],
+      ["/model", t.commandSelectModel], ["/effort", t.commandSelectReasoning], ["/resume", t.commandChatHistory], ["/new", t.commandNewConversation], ["/login", t.commandConnectAccount], ["/logout", t.commandDisconnectLocally], ["/status", t.commandSessionDetails], ["/f614:stop", t.commandCancelActiveTurn],
     ].map(([value, label]) => ({ value: value!, label: label! })).filter(command => !names.has(command.value));
     input.setCommandGroups([
       { title: "CLAUDE CODE", items: [...native, ...providerControls] },
@@ -327,7 +327,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       if (!approvals[0]) throw new Error(t.noPermissionPending);
       approvals[0].finish(name === "/yes"); return;
     }
-    if (name === "/stop") { loginAbort?.abort(); session.stop(); return; }
+    if (name === "/f614:stop") { loginAbort?.abort(); session.stop(); return; }
     if (name === "/quit" || name === "/quit!") {
       if ((session.busy || loginAbort) && name !== "/quit!") write(tc.workOrAuthActive);
       else await shutdown();
@@ -448,7 +448,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   input.onSubmit = value => {
     if (closed || !value.trim()) return;
     input.setValue("");
-    if (["/yes", "/no", "/stop", "/quit", "/quit!", "/status", "/help", "/commands", "/refresh"].includes(value.trim())) {
+    if (["/yes", "/no", "/f614:stop", "/quit", "/quit!", "/status", "/help", "/commands", "/refresh"].includes(value.trim())) {
       void command(value).catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))).finally(refresh); return;
     }
     if (commandBusy) { writeError(t.waitForCurrentOperation); return; }

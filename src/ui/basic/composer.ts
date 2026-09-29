@@ -10,7 +10,7 @@ function defaultForgeCommands(locale: Locale): ComposerChoice[] {
   return [
     ["/model", t.commandSelectModel], ["/effort", t.commandReasoningLevel], ["/resume", t.commandChatHistory],
     ["/refresh", t.commandRefreshPlanUsageEngines], ["/new", t.commandNewConversation], ["/login", t.commandConnectAccount], ["/logout", t.commandDisconnectLocally],
-    ["/status", t.commandSessionDetails], ["/stop", t.commandCancelKeepOpen], ["/help", t.commandBrowseAllCommands], ["/commands", t.commandBrowseAllCommands], ["/quit", t.commandExitShell],
+    ["/status", t.commandSessionDetails], ["/f614:stop", t.commandCancelKeepOpen], ["/help", t.commandBrowseAllCommands], ["/commands", t.commandBrowseAllCommands], ["/quit", t.commandExitShell],
   ].map(([value, label]) => ({ value: value!, label: label! }));
 }
 /** `search`, when set, is the text a searchable picker matches typed words against; without it the row's display and label are searched. */
@@ -159,8 +159,9 @@ export class ForgeComposer extends Editor {
   private suggestions(): ComposerChoice[] {
     const text = this.getText();
     if (text === this.dismissed) return [];
-    if (/^\/[a-z]*$/.test(text)) return this.commandItems().filter(item => item.value.startsWith(text));
-    if (/^\$[a-z0-9_-]*$/i.test(text)) return this.skillChoices.filter(item => item.value.startsWith(text));
+    // A command name may hold digits, «-» and «:» (`/f614:stop`, `/debug-config`); a skill name may also hold «.» and «:» (plugin skills).
+    if (/^\/[a-z0-9:_-]*$/.test(text)) return this.commandItems().filter(item => item.value.startsWith(text));
+    if (/^\$[a-z0-9_:.-]*$/i.test(text)) return this.skillChoices.filter(item => item.value.startsWith(text));
     return [];
   }
   handleInput(data: string): void {

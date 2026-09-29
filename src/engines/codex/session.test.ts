@@ -668,3 +668,246 @@ test("listSessions hands the selector each thread's name, first message, folder 
     { id: "t4", title: "t4", folder: "/project" },
   ]);
 });
+
+/**
+ * Codex native commands, part 1. Every method and parameter below is copied from the protocol generated with
+ * `codex app-server generate-ts` (and `--experimental`) for codex-cli 0.159.0; the file each one comes from is
+ * cited in its test. No real app-server or account is involved: `FixtureRpc` answers for it.
+ */
+
+/** A fixture with one turn already run, so the conversation `t` is open and the commands that need a thread can act on it. */
+async function conversationFixture() {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  await runTurn(rpc, session, "hello");
+  return { rpc, session, calls: (method: string) => rpc.calls.filter(call => call.method === method) };
+}
+
+/** `thread/backgroundTerminals/clean` and `/list` exist only in the experimental protocol (`--experimental` → `ClientRequest.ts`), which the app-server serves only to a client that declares `InitializeCapabilities.experimentalApi`. Without this, `/stop` and `/ps` would be refused by Codex. */
+test("initialize opts into the experimental API so Codex's background-terminal methods are accepted", async () => {
+  const rpc = codexFixture();
+  await new CodexSession(rpc, "/project", () => {}, async () => false).initialize();
+  expect(rpc.calls.find(call => call.method === "initialize")?.params.capabilities).toEqual({ experimentalApi: true });
+});
+
+/** `/clear` starts the new chat at once with `thread/start` (`v2/ThreadStartParams.ts`) and forgets the old one. */
+test("clearThread() starts a new Codex thread right away and drops the previous conversation", async () => {
+  const { rpc, session, calls } = await conversationFixture();
+  rpc.replies.set("thread/start", { thread: { id: "t2" }, model: "test-model", modelProvider: "openai" });
+  await session.clearThread();
+  expect(calls("thread/start")).toHaveLength(2);
+  expect(calls("thread/start").at(-1)?.params).toMatchObject({ cwd: "/project", modelProvider: "openai" });
+  expect(session.sessionId).toBe("t2");
+  expect(calls("thread/resume")).toHaveLength(0);
+});
+
+/** If Codex cannot start the new chat, the person keeps the conversation they had instead of ending up with none. */
+test("clearThread() keeps the current conversation when the new thread cannot start", async () => {
+  const { rpc, session } = await conversationFixture();
+  rpc.handler = async method => { if (method === "thread/start") throw new Error("boom"); return rpc.replies.get(method); };
+  await expect(session.clearThread()).rejects.toThrow();
+  expect(session.sessionId).toBe("t");
+});
+
+/** `/rename` → `thread/name/set` with `{ threadId, name }` (`v2/ThreadSetNameParams.ts`). */
+test("renameThread() calls thread/name/set with the thread id and the new name", async () => {
+  const { rpc, session, calls } = await conversationFixture();
+  rpc.replies.set("thread/name/set", {});
+  await session.renameThread("Release notes");
+  expect(calls("thread/name/set")).toEqual([{ method: "thread/name/set", params: { threadId: "t", name: "Release notes" } }]);
+});
+
+/** `/archive` → `thread/archive` and `/delete` → `thread/delete`, both `{ threadId }` (`v2/ThreadArchiveParams.ts`, `v2/ThreadDeleteParams.ts`); afterwards the session is in no conversation. */
+test("archiveThread() and deleteThread() call their methods with the thread id and leave no conversation open", async () => {
+  for (const [method, run] of [["thread/archive", (s: CodexSession) => s.archiveThread()], ["thread/delete", (s: CodexSession) => s.deleteThread()]] as const) {
+    const { rpc, session, calls } = await conversationFixture();
+    rpc.replies.set(method, {});
+    await run(session);
+    expect(calls(method)).toEqual([{ method, params: { threadId: "t" } }]);
+    expect(session.sessionId).toBeUndefined();
+  }
+});
+
+/** With no conversation there is no thread to rename, archive or delete: Shell says so and never calls Codex with an empty id. */
+test("rename, archive and delete without a conversation say so and never call Codex", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  for (const run of [() => session.renameThread("x"), () => session.archiveThread(), () => session.deleteThread()]) {
+    await expect(run()).rejects.toMatchObject({ code: "codex-command-needs-conversation" });
+  }
+  expect(rpc.calls.some(call => /^thread\/(name|archive|delete)/.test(call.method))).toBe(false);
+});
+
+/** `/goal` → `thread/goal/set|get|clear` (`v2/ThreadGoalSetParams.ts`, `ThreadGoalGetParams.ts`, `ThreadGoalClearParams.ts`; responses `{ goal }`, `{ goal | null }`, `{ cleared }`). Setting a goal opens the thread first when there is none yet. */
+test("goal commands call thread/goal/set, get and clear with the thread id", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  const goal = { threadId: "t", objective: "Ship 1.12", status: "active", tokenBudget: null, tokensUsed: 10, timeUsedSeconds: 5, createdAt: 1, updatedAt: 2 };
+  rpc.replies.set("thread/goal/set", { goal });
+  rpc.replies.set("thread/goal/get", { goal });
+  rpc.replies.set("thread/goal/clear", { cleared: true });
+  expect(await session.getGoal()).toBeNull();
+  expect(rpc.calls.some(call => call.method.startsWith("thread/goal"))).toBe(false);
+  expect(await session.setGoal("Ship 1.12")).toMatchObject({ objective: "Ship 1.12", status: "active", tokensUsed: 10 });
+  expect(rpc.calls.map(call => call.method)).toContain("thread/start");
+  expect(rpc.calls.find(call => call.method === "thread/goal/set")?.params).toEqual({ threadId: "t", objective: "Ship 1.12" });
+  expect(await session.getGoal()).toMatchObject({ objective: "Ship 1.12" });
+  expect(rpc.calls.find(call => call.method === "thread/goal/get")?.params).toEqual({ threadId: "t" });
+  expect(await session.clearGoal()).toBe(true);
+  expect(rpc.calls.find(call => call.method === "thread/goal/clear")?.params).toEqual({ threadId: "t" });
+});
+
+const mcpReply = {
+  data: [{
+    name: "forge614-engram", runtimeStatus: "connected", pluginId: null, httpOrigin: null,
+    serverInfo: { name: "engram", title: null, version: "1.6.0", description: null, icons: null, websiteUrl: null },
+    serverCapabilities: null, toolsError: null, resources: [], resourceTemplates: [], authStatus: "unsupported",
+    tools: { memory_search: { name: "memory_search", description: "Search memory", inputSchema: {} }, memory_get: { name: "memory_get", inputSchema: {} } },
+  }],
+  nextCursor: null,
+};
+
+/** `/mcp` → `mcpServerStatus/list` with `detail: "toolsAndAuthOnly"`, `/mcp verbose` → `detail: "full"` (`v2/ListMcpServerStatusParams.ts`, `McpServerStatusDetail.ts`); once a thread exists its id is passed so Codex reuses that thread's connections. */
+test("mcpServers() asks mcpServerStatus/list with the detail level and the thread when there is one", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.replies.set("mcpServerStatus/list", mcpReply);
+  const servers = await session.mcpServers(false);
+  expect(rpc.calls.find(call => call.method === "mcpServerStatus/list")?.params).toEqual({ detail: "toolsAndAuthOnly" });
+  expect(servers).toMatchObject([{ name: "forge614-engram", status: "connected", auth: "unsupported", version: "1.6.0", tools: [{ name: "memory_search", description: "Search memory" }, { name: "memory_get" }] }]);
+  await runTurn(rpc, session, "hello");
+  await session.mcpServers(true);
+  expect(rpc.calls.filter(call => call.method === "mcpServerStatus/list").at(-1)?.params).toEqual({ detail: "full", threadId: "t" });
+});
+
+/** The list is paged (`nextCursor`); every page is read so a server on page two is not silently missing. */
+test("mcpServers() reads every page", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.handler = async (method, params) => {
+    if (method !== "mcpServerStatus/list") return rpc.replies.get(method);
+    return params.cursor ? { data: [{ ...mcpReply.data[0], name: "second" }], nextCursor: null } : { data: [mcpReply.data[0]], nextCursor: "next" };
+  };
+  expect((await session.mcpServers(false)).map(server => server.name)).toEqual(["forge614-engram", "second"]);
+  expect(rpc.calls.filter(call => call.method === "mcpServerStatus/list").map(call => call.params.cursor)).toEqual([undefined, "next"]);
+});
+
+/** `/hooks` → `hooks/list` (`v2/HooksListParams.ts`: `cwds`, explicit so the answer is about this project) — view only. */
+test("hooks() calls hooks/list for this folder and maps each hook", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.replies.set("hooks/list", { data: [{ cwd: "/project", warnings: [], errors: [], hooks: [
+    { key: "k1", eventName: "preToolUse", matcher: "Bash", handlerType: "command", command: "echo hi", async: false, enabled: true, trustStatus: "trusted", source: "user", isManaged: false },
+    { key: "k2", eventName: "stop", matcher: null, handlerType: "mcpTool", server: "srv", tool: "tl", enabled: false, trustStatus: "untrusted", source: "project", isManaged: false },
+  ] }] });
+  const hooks = await session.hooks();
+  expect(rpc.calls.find(call => call.method === "hooks/list")?.params).toEqual({ cwds: ["/project"] });
+  expect(hooks).toMatchObject([
+    { event: "preToolUse", handler: "command", detail: "echo hi", matcher: "Bash", enabled: true, trust: "trusted" },
+    { event: "stop", handler: "mcpTool", detail: "srv: tl", enabled: false, trust: "untrusted" },
+  ]);
+});
+
+/** `/usage` → `account/usage/read` (`v2/GetAccountTokenUsageParams.ts`, `GetAccountTokenUsageResponse.ts`, `AccountTokenUsageSummary.ts`); a figure Codex leaves `null` is left out. */
+test("accountUsage() reads account/usage/read and reports only the figures Codex sent", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.replies.set("account/usage/read", { summary: { lifetimeTokens: 1234567, peakDailyTokens: null, longestRunningTurnSec: 300, currentStreakDays: 3, longestStreakDays: null }, dailyUsageBuckets: null });
+  const usage = await session.accountUsage();
+  expect(rpc.calls.find(call => call.method === "account/usage/read")?.params).toEqual({});
+  expect(usage).toEqual({ lifetimeTokens: "1234567", longestTurnSeconds: "300", currentStreakDays: "3" });
+});
+
+/** `/ps` → `thread/backgroundTerminals/list` and `/stop` → `thread/backgroundTerminals/clean`, both `{ threadId }` (experimental `v2/ThreadBackgroundTerminalsListParams.ts`, `...CleanParams.ts`, `ThreadBackgroundTerminal.ts`). */
+test("backgroundTerminals() and stopBackgroundTerminals() call Codex's own methods with the thread id", async () => {
+  const { rpc, session, calls } = await conversationFixture();
+  rpc.replies.set("thread/backgroundTerminals/list", { data: [{ itemId: "i", processId: "p", command: "npm run dev", cwd: "/project", osPid: 42, cpuPercent: 1.5, rssKb: 1000 }], nextCursor: null });
+  rpc.replies.set("thread/backgroundTerminals/clean", {});
+  expect(await session.backgroundTerminals()).toEqual([{ command: "npm run dev", cwd: "/project", pid: 42 }]);
+  expect(calls("thread/backgroundTerminals/list")[0]?.params).toEqual({ threadId: "t" });
+  expect(await session.stopBackgroundTerminals()).toBe(true);
+  expect(calls("thread/backgroundTerminals/clean")[0]?.params).toEqual({ threadId: "t" });
+});
+
+/** Before any conversation there is no thread and so no background terminal: nothing to list or stop, and Codex is not called. */
+test("background terminals without a conversation are empty and never call Codex", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  expect(await session.backgroundTerminals()).toEqual([]);
+  expect(await session.stopBackgroundTerminals()).toBe(false);
+  expect(rpc.calls.some(call => call.method.startsWith("thread/backgroundTerminals"))).toBe(false);
+});
+
+const skillsReply = { data: [{ cwd: "/project", errors: [], skills: [
+  { name: "review-pr", description: "Review a pull request", path: "/project/.agents/skills/review-pr/SKILL.md", scope: "repo", enabled: true, pluginId: null },
+  { name: "old-skill", description: "Switched off", path: "/home/u/.codex/skills/old/SKILL.md", scope: "user", enabled: false, pluginId: null },
+  { name: "plug:helper", description: "From a plugin", path: "/home/u/.codex/plugins/cache/p/skills/helper/SKILL.md", scope: "user", enabled: true, pluginId: "plug@m" },
+] }] };
+
+/** `/skills` and the `$` autocomplete → `skills/list` (`v2/SkillsListParams.ts`, `SkillsListResponse.ts`, `SkillMetadata.ts`): the official catalog, plugins included, without the ones Codex has switched off. */
+test("skills() reads skills/list for this folder and keeps the enabled ones with their paths", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.replies.set("skills/list", skillsReply);
+  expect(await session.skills()).toEqual([
+    { name: "review-pr", description: "Review a pull request", path: "/project/.agents/skills/review-pr/SKILL.md" },
+    { name: "plug:helper", description: "From a plugin", path: "/home/u/.codex/plugins/cache/p/skills/helper/SKILL.md" },
+  ]);
+  expect(rpc.calls.find(call => call.method === "skills/list")?.params).toEqual({ cwds: ["/project"] });
+});
+
+/**
+ * `$name` is a real skill for Codex only as `UserInput { type: "skill", name, path }` (`v2/UserInput.ts`); as plain
+ * text it is just a word. Each recognized `$name` goes as a skill item with its path, the message text stays as
+ * written (as Codex's own screen sends it), and a `$word` that is no skill (`$HOME`) stays text only.
+ */
+test("send() turns each recognized $skill into a skill item with its path and leaves the text as written", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.replies.set("skills/list", skillsReply);
+  await runTurn(rpc, session, "please $review-pr, then $plug:helper and look in $HOME; $review-pr again");
+  const input = rpc.calls.find(call => call.method === "turn/start")!.params.input;
+  expect(input).toEqual([
+    { type: "text", text: "please $review-pr, then $plug:helper and look in $HOME; $review-pr again" },
+    { type: "skill", name: "review-pr", path: "/project/.agents/skills/review-pr/SKILL.md" },
+    { type: "skill", name: "plug:helper", path: "/home/u/.codex/plugins/cache/p/skills/helper/SKILL.md" },
+  ]);
+});
+
+/** A message with no `$word` never asks Codex for the catalog, and a disabled skill is never sent as a skill. */
+test("send() without a $skill does not call skills/list, and a disabled skill stays text", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  await runTurn(rpc, session, "plain message");
+  expect(rpc.calls.some(call => call.method === "skills/list")).toBe(false);
+  rpc.replies.set("skills/list", skillsReply);
+  await runTurn(rpc, session, "try $old-skill");
+  expect(rpc.calls.filter(call => call.method === "turn/start").at(-1)!.params.input.at(-1)).toEqual({ type: "text", text: "try $old-skill" });
+});
+
+/** `/status` in Codex also shows the folder, the permissions and the session; Shell's lines gain those three. */
+test("status() also reports the folder, the work mode and the conversation", async () => {
+  const { session } = await conversationFixture();
+  expect(session.status()).toEqual(expect.arrayContaining(["Folder: /project", "Work mode: engine default", "Conversation: t"]));
+  await session.setWorkMode("on-request:read-only");
+  expect(session.status()).toContain("Work mode: Read Only");
+});
+
+/** Before the first message there is no conversation to name, and Shell says so instead of showing an empty id. */
+test("status() says the conversation has not started before the first message", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  expect(session.status()).toContain("Conversation: not started yet");
+});

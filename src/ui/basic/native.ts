@@ -15,7 +15,8 @@ import { ActivityCard, chatMessage } from "./transcript.ts";
 import { effortDescription, effortLabel } from "./metrics.ts";
 import { ChatText, danger } from "./theme.ts";
 import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
-import { discoverCodexSkills } from "../../engines/codex/skills.ts";
+import { codexMenuCommands, findCodexCommand } from "../../engines/codex/commands.ts";
+import { codexCommandHandlers, skillChoices } from "./codex-commands.ts";
 import { workingStatus } from "./duration.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
@@ -44,17 +45,15 @@ export async function runNativeUI(
   tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface, cwd));
   attachJumpToLatest(tui, transcriptScroll, locale);
   tui.setFocus(input);
-  const providerCommands = [
-    ["/model", t.commandSelectModel],
-    ...(id === "codex" ? [] : [["/effort", t.commandSelectReasoning]]),
-    ["/compact", t.commandCompact],
-    ["/resume", t.commandChatHistory], ["/new", t.commandNewConversation], ["/login", t.commandConnectAccount], ["/logout", t.commandDisconnectLocally], ["/status", t.commandSessionDetails], ["/stop", t.commandCancelActiveTurn],
-  ].map(([value, label]) => ({ value: value!, label: label! }));
+  // With Codex the menu is Codex's own list (names, descriptions and order as its terminal shows them on macOS);
+  // what is Shell's own sits apart under FORGE614. `/f614:stop` cancels the answer in progress: `/stop` is Codex's.
   input.setCommandGroups([
-    { title: engineLabel.toUpperCase(), items: providerCommands },
-    { title: "FORGE614", items: [{ value: "/refresh", label: t.commandRefreshPlanUsage }, { value: "/commands", label: t.commandBrowseCommands }, { value: "/quit", label: t.commandExitShell }] },
+    { title: engineLabel.toUpperCase(), items: codexMenuCommands() },
+    { title: "FORGE614", items: [
+      { value: "/login", label: t.commandConnectAccount }, { value: "/refresh", label: t.commandRefreshPlanUsage },
+      { value: "/commands", label: t.commandBrowseCommands }, { value: "/f614:stop", label: t.commandCancelActiveTurn },
+    ] },
   ]);
-  if (id === "codex") void discoverCodexSkills(cwd).then(skills => input.setSkillChoices(skills));
   let closed = false; let ready = false; let commandBusy = false;
   let finish!: () => void;
   const exited = new Promise<void>(resolve => { finish = resolve; });
@@ -189,7 +188,8 @@ export async function runNativeUI(
       if (!approvals[0]) throw new Error(t.noPermissionPending);
       approvals[0].answer(name === "/yes"); return;
     }
-    if (name === "/stop") { await session.cancel(); write(tc.cancellationRequested); return; }
+    // Shell's own «cancel the answer in progress». Plain `/stop` is Codex's «stop all background terminals».
+    if (name === "/f614:stop") { await session.cancel(); write(tc.cancellationRequested); return; }
     if (name === "/help" || name === "/commands") {
       if (approvals.length) { write(t.answerPendingPermissionFirst); return; }
       const selected = await input.chooseCommand();
@@ -197,6 +197,17 @@ export async function runNativeUI(
       return;
     }
     if (name === "/status") { write(session.status().join("\n")); return; }
+    // Codex's own commands that Shell has connected: Codex says which of them may run while it works.
+    const official = findCodexCommand((name ?? "").slice(1));
+    const handler = official ? handlers[official.name] : undefined;
+    if (official && handler) {
+      if (!ready) throw new Error(tc.waitForEngine);
+      if (official.availableDuringTask) { await handler(argument); return; }
+      if (commandBusy || session.busy) throw new Error(tc.waitForEngine);
+      commandBusy = true;
+      try { await handler(argument); } finally { commandBusy = false; refresh(); }
+      return;
+    }
     if (!ready || commandBusy || session.busy) throw new Error(tc.waitForEngine);
     commandBusy = true;
     try {
@@ -252,11 +263,21 @@ export async function runNativeUI(
           write(session.resumeNotice ?? t.historyRestored);
         }
       } else if (name === "/new") { session.reset(); transcript.clear(); streaming.clear(); }
-      // Codex's own commands are not all reachable through its app-server: say so honestly, not «unknown».
-      else write(tc.commandNotAllowed({ name: name ?? "" }));
+      // A command on Codex's list that Shell has not connected yet: say so honestly, not «unknown». A name that is not Codex's at all is unknown.
+      else if (official) write(tc.commandNotAllowed({ name: name ?? "" }));
+      else throw new Error(t.unknownCommand({ name: name ?? "" }));
     } finally { commandBusy = false; refresh(); }
   };
   session = createSession(emit, approve);
+  const handlers = codexCommandHandlers({
+    session, cwd, locale,
+    write: text => { write(text); },
+    clearView: () => { transcript.clear(); streaming.clear(); },
+    confirm: async (title, no, yes) => await input.choose(title, [{ value: "no", display: no, label: "" }, { value: "yes", display: yes, label: "" }]) === "yes",
+    setSkillChoices: skills => input.setSkillChoices(skills),
+  });
+  /** Fills the `$` autocomplete from Codex's own catalog (`skills/list`); if Codex cannot list them the autocomplete stays empty and typed `$name` still works as text. */
+  const loadSkillChoices = () => { void session.skills?.().then(skills => input.setSkillChoices(skillChoices(skills))).catch(() => {}); };
   sidebar.setRefreshAction(async () => {
     if (!session.refreshUsage) return tc.refreshNotAvailable;
     await session.refreshUsage(); refresh();
@@ -314,7 +335,7 @@ export async function runNativeUI(
         const control = workModeControl();
         if (control) await restoreWorkMode(control, saved?.mode);
       }
-      ready = true; refresh();
+      ready = true; refresh(); loadSkillChoices();
     }).catch(error => writeError(tc.connectionFailed({ message: describeError(error, locale) })));
     await exited;
   } finally { clearInterval(clock); process.removeListener("SIGTERM", shutdown); session.close(); tui.stop({ preserveScreen: true }); }

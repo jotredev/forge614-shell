@@ -9,6 +9,7 @@ import { runNativeUI } from "./native.ts";
 import { CodexSession } from "../../engines/codex/session.ts";
 import { FixtureRpc } from "../../../tests/support/rpc-fixture.ts";
 import { getCatalog } from "../../i18n/index.ts";
+import { ShellError, describeError } from "../../shell-error.ts";
 
 // Shell persists /model and /effort picks to $FORGE614_HOME/shell/preferences.json (see
 // shell-preferences.ts). Without isolating this, a test run would read and write the real
@@ -72,7 +73,7 @@ test("Shift+Tab cycles only a native work mode reported by Codex, shown with the
 });
 
 /** A Codex fixture with the three native modes available and a turn that stays open until the test completes it. */
-function codexUi() {
+function codexUi(locale: "en" | "es" = "en", configure: (rpc: FixtureRpc) => void = () => {}) {
   const terminal = new TestTerminal(); const rpc = new FixtureRpc();
   rpc.replies.set("initialize", {});
   rpc.replies.set("account/read", { account: { type: "chatgpt" }, requiresOpenaiAuth: true });
@@ -81,8 +82,9 @@ function codexUi() {
   rpc.replies.set("thread/start", { thread: { id: "t" }, model: "m", modelProvider: "openai" });
   rpc.replies.set("turn/start", { turn: { id: "u", status: "inProgress" } });
   rpc.replies.set("thread/compact/start", {});
+  configure(rpc);
   let session!: CodexSession;
-  const ui = runNativeUI("codex", "/project", (emit, approve) => session = new CodexSession(rpc, "/project", emit, approve), terminal);
+  const ui = runNativeUI("codex", "/project", (emit, approve) => session = new CodexSession(rpc, "/project", emit, approve, undefined, undefined, locale), terminal, undefined, locale);
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
   const plain = () => stripVTControlCharacters(terminal.output);
   return { terminal, rpc, ui, enter, plain, session: () => session };
@@ -205,7 +207,7 @@ test("local logout waits for consent and never calls native account logout", asy
     expect(terminal.output).not.toContain("Ask anything, or / for commands…");
     expect(terminal.output).toContain("only in this Forge614-Shell session");
     expect(rpc.calls.some(c => c.method === "account/logout")).toBe(false);
-    enter("/stop"); await tick();
+    enter("/f614:stop"); await tick();
     expect(rpc.calls.some(c => c.method === "account/logout")).toBe(false);
     enter("/logout"); await tick(); enter("/yes"); await tick();
     expect(rpc.calls.filter(c => c.method === "account/logout")).toHaveLength(0);
@@ -370,4 +372,207 @@ test("/resume <number> and /resume <id> keep working and an empty list keeps its
     await tick(); emptyTerminal.input("/resume"); emptyTerminal.input("\r"); await tick();
     expect(stripVTControlCharacters(emptyTerminal.output)).toContain(getCatalog("en").chat.noSessionsFound);
   } finally { emptyTerminal.input("/quit!"); emptyTerminal.input("\r"); await emptyUi; }
+});
+
+/**
+ * Codex native commands, part 1 — through the screen. Each case types the command and checks two things:
+ * the exact method and parameters Codex's protocol defines for it (the generated files are cited next to
+ * each method in `src/engines/codex/session.test.ts`) and what the person reads afterwards. `FixtureRpc`
+ * stands in for the app-server, so no account is involved.
+ */
+type CommandHarness = ReturnType<typeof codexUi>;
+/** Sends one message and completes its turn, so the conversation `t` exists for the commands that act on a thread. */
+async function withConversation(h: CommandHarness): Promise<void> {
+  await tick(); h.enter("hello"); await tick();
+  h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await tick();
+}
+const mcpServers = { data: [{
+  name: "forge614-engram", runtimeStatus: "connected", pluginId: null, httpOrigin: null,
+  serverInfo: { name: "engram", title: null, version: "1.6.0", description: null, icons: null, websiteUrl: null },
+  serverCapabilities: null, toolsError: null, resources: [], resourceTemplates: [], authStatus: "unsupported",
+  tools: { memory_search: { name: "memory_search", description: "Search memory", inputSchema: {} } },
+}], nextCursor: null };
+const skillCatalog = { data: [{ cwd: "/project", errors: [], skills: [
+  { name: "review-pr", description: "Review a pull request", path: "/project/.agents/skills/review-pr/SKILL.md", scope: "repo", enabled: true, pluginId: null },
+] }] };
+const goalReply = { goal: { threadId: "t", objective: "Ship 1.12", status: "active", tokenBudget: null, tokensUsed: 10, timeUsedSeconds: 5, createdAt: 1, updatedAt: 2 } };
+type CommandCase = { line: string; method: string; reply: unknown; params: unknown; exact?: boolean; shows: (c: ReturnType<typeof getCatalog>["codexCommands"]) => string };
+const commandCases: CommandCase[] = [
+  { line: "/rename Release notes", method: "thread/name/set", reply: {}, params: { threadId: "t", name: "Release notes" }, shows: c => c.renamed({ name: "Release notes" }) },
+  { line: "/goal Ship 1.12", method: "thread/goal/set", reply: goalReply, params: { threadId: "t", objective: "Ship 1.12" }, shows: c => c.goalSet({ objective: "Ship 1.12" }) },
+  { line: "/goal", method: "thread/goal/get", reply: { goal: null }, params: { threadId: "t" }, shows: c => c.goalNone },
+  { line: "/goal clear", method: "thread/goal/clear", reply: { cleared: true }, params: { threadId: "t" }, shows: c => c.goalCleared },
+  { line: "/mcp", method: "mcpServerStatus/list", reply: mcpServers, params: { detail: "toolsAndAuthOnly", threadId: "t" }, shows: () => "memory_search" },
+  { line: "/mcp verbose", method: "mcpServerStatus/list", reply: mcpServers, params: { detail: "full", threadId: "t" }, shows: () => "1.6.0" },
+  { line: "/hooks", method: "hooks/list", reply: { data: [{ cwd: "/project", warnings: [], errors: [], hooks: [{ key: "k", eventName: "preToolUse", matcher: null, handlerType: "command", command: "echo hi", async: false, enabled: true, trustStatus: "trusted", source: "user", isManaged: false }] }] }, params: { cwds: ["/project"] }, shows: () => "echo hi" },
+  { line: "/usage", method: "account/usage/read", reply: { summary: { lifetimeTokens: 1234567, peakDailyTokens: null, longestRunningTurnSec: null, currentStreakDays: null, longestStreakDays: null }, dailyUsageBuckets: null }, params: {}, shows: c => c.usageLine({ label: c.usageLifetimeTokens, value: "1234567" }) },
+  { line: "/ps", method: "thread/backgroundTerminals/list", reply: { data: [{ itemId: "i", processId: "p", command: "npm run dev", cwd: "/project", osPid: 42, cpuPercent: null, rssKb: null }], nextCursor: null }, params: { threadId: "t" }, shows: () => "npm run dev" },
+  { line: "/stop", method: "thread/backgroundTerminals/clean", reply: {}, params: { threadId: "t" }, shows: c => c.stopped },
+  { line: "/skills", method: "skills/list", reply: skillCatalog, params: { cwds: ["/project"] }, shows: () => "review-pr" },
+  { line: "/archive", method: "thread/archive", reply: {}, params: { threadId: "t" }, shows: c => c.archived },
+  { line: "/clear", method: "thread/start", reply: { thread: { id: "t2" }, model: "m", modelProvider: "openai" }, params: { cwd: "/project", modelProvider: "openai" }, exact: false, shows: c => c.cleared },
+];
+test("each Codex command of this part sends the protocol's method and parameters and shows its result", async () => {
+  for (const item of commandCases) {
+    const h = codexUi();
+    try {
+      await withConversation(h);
+      h.rpc.replies.set(item.method, item.reply);
+      h.enter(item.line); await tick(); await tick();
+      const call = h.rpc.calls.filter(c => c.method === item.method).at(-1);
+      expect(call, item.line).toBeDefined();
+      if (item.exact === false) expect(call!.params, item.line).toMatchObject(item.params as object); else expect(call!.params, item.line).toEqual(item.params);
+      expect(h.plain(), item.line).toContain(item.shows(getCatalog("en").codexCommands));
+      expect(h.plain(), item.line).not.toContain("Unknown command");
+      expect(h.plain(), item.line).not.toContain(getCatalog("en").codexChat.commandNotAllowed({ name: item.line.split(" ")[0]! }));
+    } finally { h.enter("/quit!"); await h.ui; }
+  }
+});
+
+/** `/pwd` (and Codex's spelling `/cwd`) is local: it shows the folder Shell opened Codex in and calls nothing. */
+test("/pwd and /cwd show the working folder without calling Codex", async () => {
+  const h = codexUi();
+  try {
+    await tick(); const before = h.rpc.calls.length;
+    h.enter("/pwd"); await tick(); h.enter("/cwd"); await tick();
+    expect(h.plain().split(getCatalog("en").codexCommands.pwd({ path: "/project" }))).toHaveLength(3);
+    expect(h.rpc.calls.length).toBe(before);
+  } finally { h.enter("/quit!"); await h.ui; }
+});
+
+/** `/rename` with no name says how to use it and calls nothing; with no conversation open there is nothing to rename and the person is told. */
+test("/rename without a name shows its usage and without a conversation says there is nothing to rename", async () => {
+  const h = codexUi("en", rpc => rpc.replies.set("thread/name/set", {}));
+  try {
+    await withConversation(h);
+    h.enter("/rename"); await tick();
+    expect(h.plain()).toContain(getCatalog("en").codexCommands.renameUsage);
+    expect(h.rpc.calls.some(call => call.method === "thread/name/set")).toBe(false);
+  } finally { h.enter("/quit!"); await h.ui; }
+  const empty = codexUi("en", rpc => rpc.replies.set("thread/name/set", {}));
+  try {
+    await tick(); empty.enter("/rename Something"); await tick();
+    expect(empty.plain()).toContain(describeError(new ShellError("codex-command-needs-conversation"), "en"));
+    expect(empty.rpc.calls.some(call => call.method === "thread/name/set")).toBe(false);
+  } finally { empty.enter("/quit!"); await empty.ui; }
+});
+
+/** `/delete` is forever, so it asks first: the first choice is «No», Enter on it (or Esc) calls nothing, and only «Yes» calls `thread/delete` (`v2/ThreadDeleteParams.ts`). */
+test("/delete asks first and calls thread/delete only when the person says Yes", async () => {
+  const c = getCatalog("en").codexCommands;
+  const answers: [string[], boolean][] = [[["\r"], false], [["\x1b"], false], [["\x1b[B", "\r"], true]];
+  for (const [keys, deleted] of answers) {
+    const h = codexUi("en", rpc => rpc.replies.set("thread/delete", {}));
+    try {
+      await withConversation(h);
+      h.enter("/delete"); await tick();
+      expect(h.plain()).toContain(c.deletePrompt);
+      expect(h.rpc.calls.some(call => call.method === "thread/delete")).toBe(false);
+      for (const key of keys) h.terminal.input(key);
+      await tick(); await tick();
+      const calls = h.rpc.calls.filter(call => call.method === "thread/delete");
+      if (deleted) { expect(calls).toEqual([{ method: "thread/delete", params: { threadId: "t" } }]); expect(h.plain()).toContain(c.deleted); }
+      else { expect(calls).toHaveLength(0); expect(h.plain()).toContain(c.deleteKept); }
+    } finally { h.enter("/quit!"); await h.ui; }
+  }
+});
+
+/**
+ * `/stop` is Codex's own now — «stop all background terminals» — and must not touch the turn; cancelling the
+ * answer in progress moved to `/f614:stop`. Both are allowed while Codex works (`available_during_task`).
+ */
+test("/stop with Codex stops background terminals and leaves the turn alone; /f614:stop cancels the turn", async () => {
+  const h = codexUi("en", rpc => { rpc.replies.set("thread/backgroundTerminals/clean", {}); rpc.replies.set("turn/interrupt", {}); });
+  try {
+    await tick(); h.enter("long work"); await tick();
+    expect(h.session().busy).toBe(true);
+    h.enter("/stop"); await tick();
+    expect(h.rpc.calls.filter(call => call.method === "thread/backgroundTerminals/clean")).toEqual([{ method: "thread/backgroundTerminals/clean", params: { threadId: "t" } }]);
+    expect(h.rpc.calls.some(call => call.method === "turn/interrupt")).toBe(false);
+    expect(h.session().busy).toBe(true);
+    h.enter("/f614:stop"); await tick();
+    expect(h.rpc.calls.filter(call => call.method === "turn/interrupt")).toEqual([{ method: "turn/interrupt", params: { threadId: "t", turnId: "u" } }]);
+    expect(h.plain()).toContain(getCatalog("en").codexChat.cancellationRequested.slice(0, 22)); // the message wraps on screen; its start is enough
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "interrupted" } });
+    await tick();
+  } finally { h.enter("/quit!"); await h.ui; }
+});
+
+/** While Codex works, the commands Codex allows then (`/rename`) run, and the ones it does not (`/clear`) wait instead of starting a second thread. */
+test("during a turn /rename runs and /clear waits, as Codex's available_during_task says", async () => {
+  const h = codexUi("en", rpc => rpc.replies.set("thread/name/set", {}));
+  try {
+    await tick(); h.enter("long work"); await tick();
+    h.enter("/rename While working"); await tick();
+    expect(h.rpc.calls.filter(call => call.method === "thread/name/set")).toHaveLength(1);
+    h.enter("/clear"); await tick();
+    expect(h.rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(1);
+    expect(h.plain()).toContain(getCatalog("en").codexChat.waitForEngine.slice(0, 20)); // the message wraps on screen; its start is enough
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+    await tick();
+  } finally { h.enter("/quit!"); await h.ui; }
+});
+
+/** The menu offers Codex's commands with Codex's own descriptions (Shell's own ones sit under FORGE614, `/f614:stop` among them), and hides what Codex's macOS menu hides. */
+test("the / menu shows Codex's descriptions, Shell's own group, and hides what Codex hides", async () => {
+  for (const [typed, shown, hidden] of [
+    ["/stop", ["CODEX", "stop all background terminals"], ["Cancel active turn"]],
+    ["/mc", ["list configured MCP tools"], []],
+    ["/f614:s", ["FORGE614", "/f614:stop"], []],
+    ["/rol", [], ["print the rollout file path"]],
+    ["/apps", [], ["manage apps"]],
+  ] as [string, string[], string[]][]) {
+    const h = codexUi();
+    try {
+      await tick(); h.terminal.output = ""; h.terminal.input(typed); await tick();
+      for (const text of shown) expect(h.plain(), typed).toContain(text);
+      for (const text of hidden) expect(h.plain(), typed).not.toContain(text);
+    } finally { h.terminal.input("\x1b"); h.terminal.input("\x03"); await h.ui; } // Ctrl+C quits without typing into the box that still holds the text
+  }
+});
+
+/** A command on Codex's official list that Shell has not connected yet answers with the honest message; a name that is not Codex's at all is an unknown command. */
+test("an official but unconnected command is answered honestly and a made-up one is unknown, in both languages", async () => {
+  for (const locale of ["en", "es"] as const) {
+    const h = codexUi(locale);
+    try {
+      await tick();
+      h.enter("/fork"); await tick();
+      expect(h.plain()).toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/fork" }));
+      expect(h.plain()).not.toContain(getCatalog(locale).chat.unknownCommand({ name: "/fork" }));
+      h.enter("/nope"); await tick();
+      expect(h.plain()).toContain(getCatalog(locale).chat.unknownCommand({ name: "/nope" }));
+      expect(h.plain()).not.toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/nope" }));
+    } finally { h.enter("/quit!"); await h.ui; }
+  }
+});
+
+/** The command messages exist in Spanish too: same method, the person reads Spanish. */
+test("Codex command results are shown in Spanish when Shell's language is Spanish", async () => {
+  const h = codexUi("es", rpc => rpc.replies.set("thread/backgroundTerminals/list", { data: [], nextCursor: null }));
+  try {
+    await withConversation(h);
+    h.enter("/pwd"); await tick(); h.enter("/ps"); await tick();
+    expect(h.plain()).toContain(getCatalog("es").codexCommands.pwd({ path: "/project" }));
+    expect(h.plain()).toContain(getCatalog("es").codexCommands.psNone);
+    expect(getCatalog("es").codexCommands.psNone).not.toBe(getCatalog("en").codexCommands.psNone);
+  } finally { h.enter("/quit!"); await h.ui; }
+});
+
+/** The `$` autocomplete lists Codex's own catalog (`skills/list`), and sending it reaches Codex as a real skill item with its path. */
+test("$ autocompletes from skills/list and the chosen skill is sent as a skill item", async () => {
+  const h = codexUi("en", rpc => rpc.replies.set("skills/list", skillCatalog));
+  try {
+    await tick(); h.terminal.output = ""; h.terminal.input("$rev"); await tick();
+    expect(h.plain()).toContain("Review a pull request");
+    h.terminal.input("\r"); await tick(); await tick();
+    const turn = h.rpc.calls.find(call => call.method === "turn/start")!;
+    expect(turn.params.input).toEqual([
+      { type: "text", text: "$review-pr" },
+      { type: "skill", name: "review-pr", path: "/project/.agents/skills/review-pr/SKILL.md" },
+    ]);
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+    await tick();
+  } finally { h.enter("/quit!"); await h.ui; }
 });

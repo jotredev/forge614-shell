@@ -15,10 +15,29 @@ La interfaz Basic es la única interfaz visual disponible. El selector inicial p
 | `/model`, `/effort` | Muestra o ajusta opciones que el cliente informa. |
 | `/compact` | Codex: le pide al propio motor de Codex que compacte la conversación (`thread/compact/start`) y avisa cuando termina; la memoria de Engram se vuelve a enviar con tu siguiente mensaje, igual que al abrir un hilo. Claude Code: pasa el comando a Claude Code. Cualquier otro `/comando` que Shell no pueda pasar a Codex se responde con «Codex no permite /x desde Shell todavía», no con «Comando desconocido». |
 | `Shift+Tab` | Cambia el modo de trabajo en cualquier momento, también a mitad de un turno o con un permiso pendiente. Claude Code aplica el cambio al instante. Codex lee el modo en cada turno, así que Shell acepta el cambio y avisa en una línea que se aplicará en el siguiente turno. |
-| `/status` | Muestra estado reportado por el cliente. |
-| `/stop`, `/quit` | Interrumpe el turno activo o sale. |
+| `/status` | Muestra estado reportado por el cliente. Con Codex agrega también la carpeta, el modo de trabajo y la conversación, como el `/status` de Codex. |
+| `/f614:stop` | Propio de Shell, en Claude Code y en Codex: cancela la respuesta en curso. Antes era `/stop`, que ahora pertenece a Codex. |
+| `/quit` | Sale de Shell. |
 | `/refresh` | Solicita de nuevo las cuotas que Codex o Claude informan; no envía un prompt de chat. |
-| `$` | Abre el descubrimiento de skills (instrucciones reutilizables) de Codex. |
+| `$nombre` | Codex: el autocompletado de `$` lista el catálogo oficial de habilidades (skills: instrucciones reutilizables) de Codex desde `skills/list`, con las de plugins y sin las que Codex tiene apagadas. Cada `$nombre` reconocido en un mensaje se envía a Codex como una habilidad de verdad (`{ type: "skill", name, path }`) junto al texto del mensaje, que queda tal como lo escribiste; un `$palabra` que no es habilidad queda solo como texto. |
+
+Comandos propios de Codex, conectados por su app-server (cada uno muestra un mensaje corto; los nombres y las descripciones de Codex no se traducen):
+
+| Comando | Qué hace |
+| --- | --- |
+| `/rename <nombre>` | Cambia el nombre de la conversación (`thread/name/set`). |
+| `/clear` | Empieza una conversación nueva al instante (`thread/start`) y limpia la vista. |
+| `/archive` | Archiva la conversación (`thread/archive`) y te deja en una nueva. |
+| `/delete` | Antes pregunta «Sí / No» (Enter sobre «No», o Esc, no cambia nada) y luego borra la conversación para siempre (`thread/delete`). |
+| `/goal`, `/goal <meta>`, `/goal clear` | Muestra, fija o borra la meta de una tarea larga (`thread/goal/get`, `set`, `clear`). |
+| `/mcp`, `/mcp verbose` | Lista los servidores MCP configurados (conexiones con herramientas externas) y sus herramientas; verbose agrega versión, estado de inicio de sesión, dirección y la descripción de cada herramienta (`mcpServerStatus/list`). |
+| `/hooks` | Muestra los hooks (acciones que Codex ejecuta solo en momentos fijos) con `hooks/list`; solo verlos, administrarlos no está conectado. |
+| `/usage` | Muestra el uso de tokens de la cuenta (`account/usage/read`); usar un reinicio del límite de uso todavía no está conectado. |
+| `/skills` | Lista las habilidades que Codex ofrece para esta carpeta (`skills/list`). |
+| `/pwd` | Muestra la carpeta de trabajo; no llama a nada. |
+| `/ps`, `/stop` | «Listar terminales en segundo plano» y «detener todas las terminales en segundo plano» de Codex (`thread/backgroundTerminals/list` y `/clean`). Esos dos métodos existen solo en el protocolo experimental de Codex, por eso Shell declara `experimentalApi` al conectarse. |
+
+Con Codex, el menú de `/` (y `/commands`) lista los comandos de Codex con la descripción de Codex, en el orden de Codex, y solo los que Codex muestra en macOS; los propios de Shell (`/login`, `/refresh`, `/commands`, `/f614:stop`) van aparte bajo FORGE614. Los comandos que pueden correr mientras Codex trabaja (`/rename`, `/goal`, `/mcp`, `/hooks`, `/usage`, `/skills`, `/pwd`, `/ps`, `/stop`) lo hacen; los demás esperan a que termine el turno. Un comando de Codex que Shell todavía no conectó se responde con «Codex no permite /x desde Shell todavía»; un nombre que no es de Codex es «Comando desconocido».
 
 El panel lateral muestra la sesión, el modelo, el razonamiento, el contexto y las cuotas, y la barra de estado bajo el chat muestra solo lo que el panel no repite: trabajo en segundo plano, carpeta, rama y estado de Git. El historial muestra la conversación, con cada herramienta con sangría bajo el mensaje del asistente al que pertenece. “No reportado” significa exactamente que el cliente no entregó el dato. La interfaz no soporta pantallas ni comandos de Gemini o Antigravity.
 
