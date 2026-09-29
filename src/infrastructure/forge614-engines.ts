@@ -77,71 +77,98 @@ function toSelectableAgent(agent: EnginesAgent): AvailableEngine | undefined {
   return { id, label: typeof agent.label === "string" && agent.label ? agent.label : agent.id, executable: agent.executable };
 }
 
+/** Runs `detect` and returns the raw agent list, validating the versioned public contract. */
+async function runDetect(binary: string, run: DetectRun): Promise<EnginesAgent[]> {
+  const result = await run(binary, ["detect"]);
+  if (result.status !== 0) {
+    throw new ShellError("engines-unavailable");
+  }
+  try {
+    return validateReport(JSON.parse(result.stdout)).agents as EnginesAgent[];
+  } catch (error) {
+    if (error instanceof ShellError) throw error;
+    throw new ShellError("engines-invalid-detection");
+  }
+}
+
 /**
- * Reads the versioned public detection contract from the Engines dependency.
+ * Reads the versioned public detection contract from the Engines dependency, WITHOUT asking which
+ * agents are fully supported: only `detect`, filtered to the agents Shell can chat with. Meant for
+ * locating an executable (e.g. Claude's login), which must keep working with an older Engines.
  * Shell deliberately does not search PATH or maintain a second detector here.
+ */
+export async function detectInstalledEngines(options: {
+  home?: string;
+  env?: NodeJS.ProcessEnv;
+  run?: DetectRun;
+} = {}): Promise<AvailableEngine[]> {
+  const binary = enginesBinary(options.home ?? homedir(), options.env);
+  const agents = await runDetect(binary, options.run ?? defaultRun);
+  return agents.map(toSelectableAgent).filter((agent): agent is AvailableEngine => Boolean(agent));
+}
+
+/**
+ * Asks Engines (`capabilities --agent <id>`) whether one agent is fully supported. Engines decides,
+ * never Shell: `fullySupported === true` shows it, `false` leaves it out without error, and a
+ * missing or non-boolean field (Engines older than 1.14.0) is `engines-outdated`, asking the person
+ * to run `forge614-shell update`. Version numbers are never compared. A capabilities call that
+ * itself fails (non-zero exit or unreadable output) leaves the agent out rather than showing it.
+ */
+async function isFullySupported(binary: string, run: DetectRun, agentId: string): Promise<boolean> {
+  const result = await run(binary, ["capabilities", "--agent", agentId]);
+  if (result.status !== 0) return false;
+  let caps: unknown;
+  try {
+    caps = JSON.parse(result.stdout);
+  } catch {
+    return false;
+  }
+  const fullySupported = caps && typeof caps === "object" ? (caps as { fullySupported?: unknown }).fullySupported : undefined;
+  if (typeof fullySupported !== "boolean") throw new ShellError("engines-outdated");
+  return fullySupported;
+}
+
+/**
+ * The chat-selector list: installed agents that Shell has a chat adapter for (`supportedShellAdapters`,
+ * intersected, never replaced) AND that Engines reports as fully supported.
  */
 export async function discoverSelectableEngines(options: {
   home?: string;
   env?: NodeJS.ProcessEnv;
   run?: DetectRun;
 } = {}): Promise<AvailableEngine[]> {
-  const home = options.home ?? homedir();
-  const binary = enginesBinary(home, options.env);
-  const result = await (options.run ?? defaultRun)(binary, ["detect"]);
-  if (result.status !== 0) {
-    throw new ShellError("engines-unavailable");
+  const binary = enginesBinary(options.home ?? homedir(), options.env);
+  const run = options.run ?? defaultRun;
+  const engines = await detectInstalledEngines({ ...options, run });
+  const supported: AvailableEngine[] = [];
+  for (const engine of engines) {
+    const engineId = Object.keys(supportedShellAdapters).find(id => supportedShellAdapters[id] === engine.id);
+    if (engineId && await isFullySupported(binary, run, engineId)) supported.push(engine);
   }
-  let report: EnginesReport;
-  try {
-    report = validateReport(JSON.parse(result.stdout));
-  } catch (error) {
-    if (error instanceof ShellError) throw error;
-    throw new ShellError("engines-invalid-detection");
-  }
-  return (report.agents as EnginesAgent[]).map(toSelectableAgent).filter((agent): agent is AvailableEngine => Boolean(agent));
+  return supported;
 }
 
 /**
- * `detect` never reports MCP capability — that is a separate per-agent call. This function calls
- * `detect` for the installed agents, then `capabilities --agent <id>` for each one, keeping only
- * those Engines confirms with `supportsMcp: true`. An agent whose capabilities call itself fails
- * is excluded rather than shown — Engines' own refusal to answer is not treated as capable.
+ * `detect` never reports how well an agent is supported — that is a separate per-agent call. This
+ * function calls `detect` for the installed agents, then `capabilities --agent <id>` for each one,
+ * keeping only those Engines confirms with `fullySupported: true` (not `supportsMcp`, which some
+ * partially supported assistants also report). An agent whose capabilities call itself fails is
+ * excluded rather than shown; a response without the field is `engines-outdated`.
  */
 export async function discoverMcpCapableAgents(options: {
   home?: string;
   env?: NodeJS.ProcessEnv;
   run?: DetectRun;
 } = {}): Promise<McpCapableAgent[]> {
-  const home = options.home ?? homedir();
-  const binary = enginesBinary(home, options.env);
+  const binary = enginesBinary(options.home ?? homedir(), options.env);
   const run = options.run ?? defaultRun;
-  const detectResult = await run(binary, ["detect"]);
-  if (detectResult.status !== 0) {
-    throw new ShellError("engines-unavailable");
-  }
-  let report: EnginesReport;
-  try {
-    report = validateReport(JSON.parse(detectResult.stdout));
-  } catch (error) {
-    if (error instanceof ShellError) throw error;
-    throw new ShellError("engines-invalid-detection");
-  }
-  const installed = (report.agents as EnginesAgent[]).filter(
+  const installed = (await runDetect(binary, run)).filter(
     (agent): agent is EnginesAgent & { id: string; executable: string } =>
       agent.installed === true && typeof agent.id === "string" && Boolean(agent.id) && typeof agent.executable === "string" && Boolean(agent.executable),
   );
   const capable: McpCapableAgent[] = [];
   for (const agent of installed) {
-    const capsResult = await run(binary, ["capabilities", "--agent", agent.id]);
-    if (capsResult.status !== 0) continue;
-    let caps: unknown;
-    try {
-      caps = JSON.parse(capsResult.stdout);
-    } catch {
-      continue;
-    }
-    if (caps && typeof caps === "object" && (caps as { supportsMcp?: unknown }).supportsMcp === true) {
+    if (await isFullySupported(binary, run, agent.id)) {
       capable.push({ id: agent.id, label: typeof agent.label === "string" && agent.label ? agent.label : agent.id, executable: agent.executable });
     }
   }

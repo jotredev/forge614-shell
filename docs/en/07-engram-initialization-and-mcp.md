@@ -55,7 +55,7 @@ Shell never builds the MCP entry or the instructions content itself, and never r
 
 1. Shell calls `forge614-engines detect` and requires `schemaVersion: 1`.
 2. For every installed assistant, it calls `forge614-engines capabilities --agent <id>`.
-3. It offers only responses with `supportsMcp: true`. This list can include Cursor and does not depend on a chat adapter existing.
+3. It offers only assistants whose response has `fullySupported: true` (today Claude Code and Codex; Cursor is not offered). A response without a boolean `fullySupported` means an outdated Engines and Shell asks for `forge614-shell update`; if the call itself fails, that assistant is simply not listed. This list does not depend on a chat adapter existing.
 4. The person can select zero, one, or many assistants. Esc cancels memory setup; selecting zero writes nothing.
 5. For every selection, Shell requests a read-only plan covering both parts at once:
 
@@ -82,9 +82,9 @@ forge614-engines verify memory-integration --agent <id>
 10. It finally reports one outcome per assistant, computed only from Engines' own JSON: `configured — MCP server and memory instructions are installed and active`, `ready — <what may still happen the next time the assistant starts normally>`, `partially configured — <a real, named limitation of this assistant>`, `blocked — <Engines' own conflict detail>`, `could not be configured — <an honest description of what went wrong>`, or `skipped`.
 11. When this run actually wrote something, Shell closes with a reminder to close and reopen each configured assistant's session so it loads the new MCP server and memory instructions. A run that changed nothing does not print it.
 
-## Cursor is never presented as complete
+## Assistants without full support are not offered
 
-Cursor has no officially supported mechanism to auto-load global instructions. Its MCP server can be configured; its memory instructions cannot. Shell therefore reports Cursor as `partially configured` and states that reason, even when Engines calls that state the complete achievable one for this assistant. Shell never invents unofficial files or hooks to compensate, and never presents Cursor as a fully complete memory integration.
+An assistant Engines does not fully support (Cursor today, which has no officially supported way to auto-load global instructions) is never offered here, even when it reports MCP support. Shell still keeps a local defense: if Engines' verification ever reports an assistant's instructions as unsupported, Shell reports `partially configured` with the reason, even if the overall status says `complete`. Shell never invents unofficial files or hooks to compensate.
 
 ## The memory hook and its runtime evidence
 
@@ -95,7 +95,7 @@ Engines can confirm the hook file itself is correctly written, but it cannot cry
 - `runtime-observed` — a real session ran the hook recently (under 7 days) and Engram returned context. Only this state, combined with the MCP server and instructions both being in place, is reported as `configured`.
 - `pending-runtime-verification` — the hook is installed but no fresh evidence exists yet, whether because it has never run (`no-evidence`, the state of every freshly-configured assistant) or because it ran before and the evidence window lapsed (`evidence-expired`). Shell reports this as `ready`, worded the same honest way regardless of reason: nothing was lost and nothing failed — the MCP server and memory instructions remain exactly as configured, and the runtime check finishes confirming itself the next time the person uses that assistant normally. Shell never launches anything to force this and never asks for a rerun.
 - `needs-user-trust` — Codex specifically requires reviewing and trusting a new hook once, through its own `/hooks` command, before running it. Shell has no way to know whether that trust decision has already been made, and never claims otherwise. It reports this as `ready` too, but with wording that only describes a possibility, never a fact: "Codex memory integration is ready. When you next start Codex normally, Codex may ask you once to approve the Forge614 memory hook." Shell never says Codex "has not trusted" the hook, and never treats this as a reason to withhold success.
-- `unsupported` — this assistant (Cursor today) has no officially supported, stable session-start hook mechanism Engines can install.
+- `unsupported` — an assistant without an officially supported, stable session-start hook mechanism Engines can install.
 
 Runtime evidence — for any reason above — never turns a structurally correct install into a failure, and never requires Shell to open a native client. This is a deliberate product decision: `init --product engram` never launches Claude Code, Codex, or any other native client, and never treats the absence of runtime evidence as something the person must go fix by rerunning a command. Whether the hook has actually been exercised by a real session becomes visible the ordinary way — through Shell's own use of that assistant, or a future explicit status/diagnostic surface — never as a blocking step inside `init`.
 

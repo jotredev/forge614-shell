@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { discoverSelectableEngines } from "../../infrastructure/forge614-engines.ts";
+import { detectInstalledEngines } from "../../infrastructure/forge614-engines.ts";
+import type { DetectRun } from "../../infrastructure/forge614-engines.ts";
 import { ShellError } from "../../shell-error.ts";
 
 const exec = promisify(execFile);
@@ -19,8 +20,9 @@ export function requireSubscription(status: { loggedIn?: boolean; authMethod?: s
   if (status.authMethod !== "claude.ai") throw new ShellError("claude-subscription-required");
 }
 
-export async function findClaude(env: NodeJS.ProcessEnv): Promise<string> {
-  const engine = (await discoverSelectableEngines({ env })).find(engine => engine.id === "claude");
+/** Locates Claude's executable from Engines' `detect` alone — never `capabilities` — so login works even with an Engines older than 1.14.0. */
+export async function findClaude(env: NodeJS.ProcessEnv, options: { home?: string; run?: DetectRun } = {}): Promise<string> {
+  const engine = (await detectInstalledEngines({ env, ...options })).find(engine => engine.id === "claude");
   if (engine) return engine.executable;
   throw new ShellError("claude-not-found");
 }

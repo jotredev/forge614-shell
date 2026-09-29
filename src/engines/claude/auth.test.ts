@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { claudeEnvironment, requireSubscription, claudeLoginState } from "./auth.ts";
+import { claudeEnvironment, findClaude, requireSubscription, claudeLoginState } from "./auth.ts";
 
 test("cancelled Claude account checks cannot reconnect using buffered successful output", async () => {
   const control = new AbortController();
@@ -34,4 +34,22 @@ test("subscription preflight rejects signed-out and API accounts", () => {
   expect(() => requireSubscription({ loggedIn: false })).toThrow("login");
   expect(() => requireSubscription({ loggedIn: true, authMethod: "api_key" })).toThrow("subscription");
   expect(() => requireSubscription({ loggedIn: true, authMethod: "claude.ai" })).not.toThrow();
+});
+
+/**
+ * `findClaude` locates the executable from `detect` alone; it never asks for `capabilities`.
+ * Exists so Claude's login keeps working with an Engines older than 1.14.0 (no `fullySupported`) or one whose capabilities call fails.
+ */
+test("findClaude finds Claude from detect even when capabilities fails or lacks fullySupported", async () => {
+  const detect = JSON.stringify({ schemaVersion: 1, agents: [{ id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude" }] });
+  const calls: string[][] = [];
+  const failingCapabilities = async (_command: string, args: string[]) => {
+    calls.push(args);
+    return args[0] === "detect" ? { status: 0, stdout: detect, stderr: "" } : { status: 1, stdout: "{}", stderr: "boom" };
+  };
+  expect(await findClaude({}, { home: "/Users/tester", run: failingCapabilities })).toBe("/usr/local/bin/claude");
+  const legacyCapabilities = async (_command: string, args: string[]) =>
+    args[0] === "detect" ? { status: 0, stdout: detect, stderr: "" } : { status: 0, stdout: JSON.stringify({ schemaVersion: 1, id: "claude-code", supportsMcp: true }), stderr: "" };
+  expect(await findClaude({}, { home: "/Users/tester", run: legacyCapabilities })).toBe("/usr/local/bin/claude");
+  expect(calls.every(args => args[0] === "detect")).toBe(true);
 });

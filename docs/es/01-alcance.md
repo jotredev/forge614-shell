@@ -16,8 +16,8 @@ Forge614-Shell es el espacio de terminal con chat para programación asistida po
 - Shell no es un sandbox (entorno que impide por sí mismo cambios peligrosos); los permisos dependen del cliente seleccionado.
 - Shell no es un gestor de proyectos, pestañas o worktrees (copias de trabajo Git separadas). Cada instancia trabaja desde su propio directorio.
 - Shell no almacena credenciales de suscripción ni revoca cuentas externas. `/logout` solo desconecta la sesión de Shell.
-- Gemini y Antigravity no tienen soporte. Pi solo se conserva para automatización no interactiva heredada.
-- Cursor puede recibir la configuración MCP de Engram, pero no puede abrirse como chat de Shell.
+- Gemini y Antigravity no tienen soporte.
+- Shell muestra solo los asistentes que Forge614 Engines informa como de soporte completo — hoy Claude Code y Codex. Los asistentes que Engines no soporta por completo no se ofrecen, ni para chat ni para configurar Engram.
 
 ## Relación con el ecosistema
 

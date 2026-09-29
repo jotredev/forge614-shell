@@ -112,7 +112,15 @@ let report;
 try { report = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch { process.exit(1); }
 const expected = Number(process.argv[1]);
 if (report?.schemaVersion !== expected || !Array.isArray(report?.agents)) process.exit(1);
-' "$engines_schema_version"
+' "$engines_schema_version" || return 1
+  # Engines 1.14.0+ adds the boolean `fullySupported` to `capabilities`; an older one lacks it and is reinstalled to the latest.
+  local capabilities
+  capabilities="$("$engines_binary" capabilities --agent claude-code 2>/dev/null)" || return 1
+  printf '%s' "$capabilities" | node -e '
+let capabilities;
+try { capabilities = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch { process.exit(1); }
+if (typeof capabilities?.fullySupported !== "boolean") process.exit(1);
+'
 }
 
 ensure_engines() {

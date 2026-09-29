@@ -1,6 +1,7 @@
 import { getCatalog } from "../i18n/index.ts";
 import type { Locale } from "../i18n/index.ts";
 
+/** `pi` stays accepted silently for the legacy non-interactive route, but is deliberately absent from every visible text. */
 export function parseEngine(args: string[], locale: Locale = "en"): { engine: "claude" | "codex" | "pi" | undefined; args: string[] } {
   const t = getCatalog(locale).options;
   const remaining = [...args];

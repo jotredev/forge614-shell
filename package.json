@@ -2,7 +2,7 @@
   "name": "forge614-shell",
   "version": "1.11.0",
   "private": true,
-  "description": "A minimal Forge614 terminal workspace powered by Pi",
+  "description": "A minimal Forge614 terminal workspace for AI-assisted programming",
   "type": "module",
   "bin": { "forge614-shell": "dist/cli.js" },
   "files": ["dist", "extensions"],

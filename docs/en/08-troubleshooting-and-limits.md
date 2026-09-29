@@ -5,9 +5,10 @@ Like a car fault list, this document connects each symptom to the component that
 | Symptom | Meaning and action |
 | --- | --- |
 | Engines absent or schema incompatible | Reinstall Forge614 Shell to repair its dependency; Shell does not search for another executable itself. |
-| No chat assistants | Install and authenticate Claude Code or Codex; Cursor is not Shell chat. |
+| No chat assistants | Install and authenticate Claude Code or Codex; Shell lists only assistants Engines reports as fully supported. |
 | `init` without an interactive terminal | Run the command in a real terminal; the flow requires selection and confirmation. |
-| No MCP assistants | No installed assistant returned `supportsMcp: true`; Engram may still be initialized. |
+| No assistants for Engram setup | No installed assistant returned `fullySupported: true`; Engram may still be initialized. |
+| Engines needs to be updated | The installed Engines does not report `fullySupported` (older than 1.14.0). Run `forge614-shell update`. |
 | MCP plan blocked | Engines refused the change, for example because an entry has the same name. Read the displayed reason; Shell does not force files. |
 | `not configured` outcome | Planning or apply failed, or Engines returned `applied: false`. Other assistants may have completed correctly. |
 | Credentials or base URL in environment | The adapter rejects authentication rerouting. Use a clean terminal and official login. |
@@ -17,7 +18,7 @@ Like a car fault list, this document connects each symptom to the component that
 
 ## Known limits
 
-Shell needs manual tests with real accounts to validate external flows and platforms beyond macOS/Linux. There is no Windows installer, Cursor chat, worktree manager, local engine, or MCP-removal UI. `forge614-ai` does not own `forge614 init` yet.
+Shell needs manual tests with real accounts to validate external flows and platforms beyond macOS/Linux. There is no Windows installer, worktree manager, local engine, or MCP-removal UI. `forge614-ai` does not own `forge614 init` yet.
 
 ## Maintenance verification
 

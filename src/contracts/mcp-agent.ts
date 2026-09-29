@@ -1,4 +1,4 @@
-/** An assistant Forge614 Engines reports as installed and MCP-capable (`supportsMcp: true`). */
+/** An assistant Forge614 Engines reports as installed and fully supported (`fullySupported: true`). */
 export interface McpCapableAgent {
   readonly id: string;
   readonly label: string;
