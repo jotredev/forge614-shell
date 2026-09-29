@@ -103,7 +103,7 @@ function localDouble(overrides: Partial<CodexLocalTools> = {}) {
 }
 
 /** A Codex fixture with the native modes available, Codex's two collaboration modes, and a turn that stays open until the test completes it. */
-function codexUi(locale: "en" | "es" = "en", configure: (rpc: FixtureRpc) => void = () => {}, local = localDouble(), columns = 100) {
+function codexUi(locale: "en" | "es" = "en", configure: (rpc: FixtureRpc) => void = () => {}, local = localDouble(), columns = 100, memoryHook?: () => Promise<boolean>) {
   const terminal = new TestTerminal(); const rpc = new FixtureRpc();
   terminal.columns = columns;
   rpc.replies.set("initialize", {});
@@ -117,7 +117,7 @@ function codexUi(locale: "en" | "es" = "en", configure: (rpc: FixtureRpc) => voi
   rpc.replies.set("thread/settings/update", {});
   configure(rpc);
   let session!: CodexSession;
-  const ui = runNativeUI("codex", "/project", (emit, approve) => session = new CodexSession(rpc, "/project", emit, approve, undefined, undefined, locale), terminal, undefined, locale, local.tools);
+  const ui = runNativeUI("codex", "/project", (emit, approve) => session = new CodexSession(rpc, "/project", emit, approve, undefined, undefined, locale, memoryHook), terminal, undefined, locale, local.tools);
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
   const plain = () => stripVTControlCharacters(terminal.output);
   return { terminal, rpc, ui, enter, plain, session: () => session, local };
@@ -1311,3 +1311,24 @@ for (const [name, keys] of [["Esc", ["\x1b"]], ["the down arrow and Enter", ["\x
     } finally { enter("/f614:quit"); await ui; }
   });
 }
+
+/**
+ * Codex `/status` says where the memory comes from, so the person can check it without asking the model (the memory used to arrive twice: measured with a
+ * real account on 2026-09-29, build of 067e348, Codex 0.159.0). The assistant delivers it only when Engines reports the hook active AND the session's own
+ * `hooks/list` shows the sessionStart hook of Engines enabled and trusted; otherwise Shell pastes it. Exact words in es and en.
+ */
+test("Codex /status says who delivers the memory, in es and en", async () => {
+  const hooks = { data: [{ cwd: "/project", warnings: [], errors: [], hooks: [{ key: "k", eventName: "sessionStart", matcher: "^(startup|resume|clear|compact)$", handlerType: "command", command: "forge614-engines memory-hook-run --agent codex", async: false, enabled: true, trustStatus: "trusted", source: "user", isManaged: false }] }] };
+  const cases = [
+    ["en", true, "Memory: the assistant delivers it at startup"], ["en", false, "Memory: Shell pastes it"],
+    ["es", true, "Memoria: la entrega el asistente al arrancar"], ["es", false, "Memoria: la pega Shell"],
+  ] as const;
+  for (const [locale, delivers, line] of cases) {
+    const h = codexUi(locale, rpc => rpc.replies.set("hooks/list", hooks), undefined, 100, delivers ? async () => true : undefined);
+    try {
+      await tick(); h.terminal.output = ""; h.enter("/status"); await tick();
+      expect(h.plain(), `${locale} ${delivers}`).toContain(line);
+      expect(h.plain(), `${locale} ${delivers}`).toContain(getCatalog(locale).codexSession.folderLine({ path: "/project" }));
+    } finally { h.enter("/f614:quit"); await h.ui; }
+  }
+});

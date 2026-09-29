@@ -350,6 +350,10 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     toolCompleted: ({ duration }) => `Completado · ${duration}`,
     toolFailed: ({ duration }) => `Fallido · ${duration}`,
   },
+  memorySource: {
+    byAssistant: "Memoria: la entrega el asistente al arrancar",
+    byShell: "Memoria: la pega Shell",
+  },
   telemetry: {
     notReported: "no reportado",
     modelLine: ({ model, effort }) => `Modelo: ${model} | Razonamiento aplicado: ${effort}`,

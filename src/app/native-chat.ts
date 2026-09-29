@@ -5,6 +5,7 @@ import { runNativeUI } from "../ui/basic/native.ts";
 import { openLoginBrowser } from "../infrastructure/browser.ts";
 import { getStartupContext } from "../infrastructure/forge614-engram.ts";
 import { withStartupNotices } from "../infrastructure/engram-notices.ts";
+import { createMemoryHookProbe } from "../infrastructure/memory-hook.ts";
 import { getCatalog } from "../i18n/index.ts";
 import type { Locale } from "../i18n/index.ts";
 
@@ -34,6 +35,7 @@ export async function startNativeUI(id: NativeId, executable: string, args: stri
     const rpc = startNativeProcess(id, executable, cwd, process.env, text => emit({ type: "text", text }));
     // Engram's notices reach the person as transcript text; the session never knows about them.
     const startupContext = withStartupNotices(codexStartupContext, text => emit({ type: "text", text }), locale);
-    return new CodexSession(rpc, cwd, emit, approve, openLoginBrowser, startupContext, locale);
+    // Engines' startup hook already delivers the memory to Codex when `verify memory-integration` (and the session's `hooks/list`) says so.
+    return new CodexSession(rpc, cwd, emit, approve, openLoginBrowser, startupContext, locale, createMemoryHookProbe("codex", { env: process.env }));
   }, undefined, version, locale);
 }
