@@ -308,7 +308,10 @@ test("native chat waits for input and warns instead of quitting an active turn",
   terminal.input("/f614:no"); terminal.input("\r"); expect(await permission).toBe(false);
   terminal.input("/quit"); terminal.input("\r"); await tick();
   expect(closed).toBe(false); expect(terminal.output).toContain("Nothing was stopped");
-  terminal.input("/f614:quit"); terminal.input("\r"); await ui;
+  // Shell's own `/f614:quit` asks first while the turn runs; «Yes» stops it and leaves.
+  terminal.input("/f614:quit"); terminal.input("\r"); await tick();
+  expect(closed).toBe(false); expect(stripVTControlCharacters(terminal.output)).toContain("Quit anyway?");
+  terminal.input("\x1b[B"); terminal.input("\r"); await ui;
   expect(closed).toBe(true); expect(terminal.stopped).toBe(true);
 });
 
@@ -334,7 +337,7 @@ test("the working indicator names the running command for a native session, and 
     terminal.output = ""; activity = undefined;
     await new Promise(resolve => setTimeout(resolve, 600));
     expect(stripVTControlCharacters(terminal.output)).toMatch(/Working · \d+s/);
-  } finally { terminal.input("/f614:quit"); terminal.input("\r"); await ui; }
+  } finally { terminal.input("/f614:quit"); terminal.input("\r"); await tick(); terminal.input("\x1b[B"); terminal.input("\r"); await ui; } // the turn is still open: «Quit anyway?» → «Yes»
 });
 
 /** Doble de sesión con tres conversaciones del mismo título (como «Color favorito» ×3), entregadas de la más vieja a la más nueva a propósito, para comprobar que el selector las reordena y que se distinguen. Sin cuenta ni disco reales. */
@@ -1118,11 +1121,11 @@ const unknownStart = (locale: "en" | "es", name: string) => getCatalog(locale).c
 
 /**
  * In Codex `/exit` and `/quit` are the same command («exit Codex»), so with Codex both close Shell the same way: they refuse
- * while work is in progress and leave when idle. Leaving at once, stopping what runs, is Shell's own `/f614:quit`; the old
- * `/quit!` and `/exit!` no longer exist. It exists because 1.12.0 moved the forced exit out of the unprefixed names and Codex's
- * own `/quit` and `/exit` must keep working exactly as in Codex's terminal.
+ * while work is in progress and leave when idle. Stopping what runs and leaving is Shell's own `/f614:quit`, which asks first
+ * (see the «Quit anyway?» test); the old `/quit!` and `/exit!` no longer exist. It exists because 1.12.0 moved the forced exit
+ * out of the unprefixed names and Codex's own `/quit` and `/exit` must keep working exactly as in Codex's terminal.
  */
-test("/exit and /quit with Codex refuse while work runs and leave when idle; /f614:quit leaves at once; /quit! and /exit! are unknown", async () => {
+test("/exit and /quit with Codex refuse while work runs and leave when idle; /f614:quit asks first; /quit! and /exit! are unknown", async () => {
   const terminal = new TestTerminal(); let closed = false; let finishTurn: (() => void) | undefined;
   const session = {
     busy: false, models: [],
@@ -1148,11 +1151,14 @@ test("/exit and /quit with Codex refuse while work runs and leave when idle; /f6
     expect(stripVTControlCharacters(terminal.output), name).toContain("Nothing was stopped");
     expect(stripVTControlCharacters(terminal.output), name).not.toContain(getCatalog("en").codexChat.commandNotAllowed({ name }));
   }
-  // The refusal names the command that leaves anyway, with its prefix.
-  expect(refusal).toBe("Work or login is active. Use /f614:quit to stop it and exit. Nothing was stopped.");
+  // The refusal names the command that leaves (it asks before stopping anything), with its prefix.
+  expect(refusal).toBe("Work or login is active. Use /f614:quit to leave: it asks before stopping anything. Nothing was stopped.");
   terminal.input("\x03"); await tick();
-  expect(closed).toBe(false); // Ctrl+C is Codex's «exit» too: it refuses while work runs
-  terminal.input("/f614:quit"); terminal.input("\r"); await ui;
+  expect(closed).toBe(false); // Ctrl+C is `/f614:quit`: it asks, and nothing is stopped until the answer is «Yes»
+  terminal.input("\x1b"); await tick();
+  expect(closed).toBe(false);
+  terminal.input("/f614:quit"); terminal.input("\r"); await tick();
+  terminal.input("\x1b[B"); terminal.input("\r"); await ui;
   expect(closed).toBe(true); expect(terminal.stopped).toBe(true);
   // Idle: plain `/exit`, plain `/quit`, Ctrl+D and `/f614:quit` all leave.
   for (const keys of [["/exit", "\r"], ["/quit", "\r"], ["\x04"], ["/f614:quit", "\r"]]) {
@@ -1161,6 +1167,82 @@ test("/exit and /quit with Codex refuse while work runs and leave when idle; /f6
     const idleUi = runNativeUI("codex", "/project", () => idle, idleTerminal);
     await tick(); for (const key of keys) idleTerminal.input(key); await idleUi;
     expect(idleClosed, keys.join("")).toBe(true);
+  }
+});
+
+/**
+ * `/f614:quit` is Shell's way out with any assistant (owner, 2026-09-29: «ese quit debería ser para todos»), and Ctrl+C and Ctrl+D
+ * do the same. Idle they leave at once; while a turn runs they ask «Quit anyway? What is running will be stopped.» with «No»
+ * marked (stopping work cannot be undone), so Enter and Esc keep everything and only «Yes» stops and leaves. It exists because
+ * the real-account test of 1.12.0 showed the forced exit had no obvious place: the owner typed `/quit` and the menu did not list it.
+ */
+test("with Codex /f614:quit, Ctrl+C and Ctrl+D leave when idle and ask first while work runs, with No marked", async () => {
+  const question = { en: "Quit anyway? What is running will be stopped.", es: "¿Salir de todos modos? Se detendrá lo que está en curso." };
+  const words = { en: { yes: "Yes", no: "No", yesKey: "y" }, es: { yes: "Sí", no: "No", yesKey: "s" } };
+  const ways: [string, string[]][] = [["/f614:quit", ["/f614:quit", "\r"]], ["Ctrl+C", ["\x03"]], ["Ctrl+D", ["\x04"]]];
+  for (const locale of ["en", "es"] as const) {
+    for (const [way, keys] of ways) {
+      const name = `${locale} ${way}`;
+      const make = () => {
+        const terminal = new TestTerminal(); let closed = false; let finishTurn: (() => void) | undefined;
+        const session = {
+          busy: false, models: [],
+          async initialize() {}, async login() {}, async cancel() {}, reset() {}, async resume(_id: string) {},
+          async listSessions() { return []; }, async setModel(_id: string) {}, async setEffort(_effort: string) {},
+          status() { return ["native status"]; },
+          async send(_text: string) { session.busy = true; await new Promise<void>(resolve => { finishTurn = resolve; }); session.busy = false; },
+          close() { closed = true; finishTurn?.(); },
+        };
+        const ui = runNativeUI("codex", "/project", () => session, terminal, undefined, locale);
+        return { terminal, ui, closed: () => closed, plain: () => stripVTControlCharacters(terminal.output) };
+      };
+      // Idle: it leaves at once and never asks.
+      const idle = make(); await tick();
+      idle.terminal.output = ""; for (const key of keys) idle.terminal.input(key); await idle.ui;
+      expect(idle.closed(), name).toBe(true);
+      expect(idle.plain(), name).not.toContain(question[locale]);
+      // While a turn runs: it asks, with «No» marked.
+      const busy = make(); await tick();
+      busy.terminal.input("hello"); busy.terminal.input("\r"); await tick();
+      busy.terminal.output = ""; for (const key of keys) busy.terminal.input(key); await tick();
+      expect(busy.plain(), name).toContain(question[locale]);
+      expect(busy.plain(), name).toContain(`› ${words[locale].no}`);
+      expect(busy.plain(), name).not.toContain(`› ${words[locale].yes}`);
+      // Enter takes the marked «No»: nothing is stopped.
+      busy.terminal.input("\r"); await tick();
+      expect(busy.closed(), name).toBe(false);
+      // Esc is «No» too.
+      for (const key of keys) busy.terminal.input(key); await tick();
+      busy.terminal.input("\x1b"); await tick();
+      expect(busy.closed(), name).toBe(false);
+      // «Yes» (the arrow, then Enter; the row's first letter works too) stops the work and leaves.
+      for (const key of keys) busy.terminal.input(key); await tick();
+      busy.terminal.input(way === "Ctrl+D" ? words[locale].yesKey : "\x1b[B"); if (way !== "Ctrl+D") busy.terminal.input("\r");
+      await busy.ui;
+      expect(busy.closed(), name).toBe(true);
+    }
+  }
+});
+
+/**
+ * Codex's `/status` shows the reset moment of each limit in local time and in Shell's language, and no machine date. It exists
+ * because the real-account test of 1.12.0 showed «codex primary: 14% usado · se reinicia 2026-10-03T23:22:22.000Z (último reporte)».
+ * The reset is built with the local constructor, so the expected text does not depend on the time zone of the machine.
+ */
+test("with Codex /status shows the reset moment in local time, in es and en, and no ISO date", async () => {
+  const reset = Math.floor(new Date(2026, 9, 3, 17, 22, 22).getTime() / 1000);
+  const expected = {
+    en: "codex primary: 14% used · resets Oct 3, 5:22 PM (last report)",
+    es: "codex primary: 14% usado · se reinicia el 3 oct, 5:22 p.m. (último reporte)",
+  };
+  for (const locale of ["en", "es"] as const) {
+    const h = codexUi(locale, rpc => rpc.replies.set("account/rateLimits/read", { rateLimits: { primary: { usedPercent: 14, resetsAt: reset } } }), undefined, 220);
+    try {
+      await tick(); await tick();
+      h.terminal.output = ""; h.enter("/status"); await tick();
+      expect(h.plain(), locale).toContain(expected[locale]);
+      expect(h.plain(), locale).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
+    } finally { h.enter("/f614:quit"); await h.ui; }
   }
 });
 

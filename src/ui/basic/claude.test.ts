@@ -262,7 +262,8 @@ else {
     terminal.input("\x1b");
     await tick();
   } finally {
-    enter("/f614:quit"); await ui; process.chdir(previousCwd); await rm(root, { recursive: true, force: true });
+    enter("/f614:quit"); await tick(); terminal.input("\x1b[B"); terminal.input("\r"); // the turn is still open: «¿Salir de todos modos?» → «Sí»
+    await ui; process.chdir(previousCwd); await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
   }
 });
@@ -309,12 +310,13 @@ else {
 /**
  * A Claude Code screen over a fake `claude` that is signed in, reports `commands` as the assistant's own list, never answers a
  * prompt (so a turn stays open until it is stopped) and writes what it receives to a marker file: one `control` line per control
- * request and one `prompt:` line per chat prompt. No real account or network is involved. `finish` leaves the screen and cleans up.
+ * request and one `prompt:` line per chat prompt. With `rateLimit`, each prompt is also answered with that `rate_limit_event`
+ * (the turn still stays open). No real account or network is involved. `finish` leaves the screen and cleans up.
  */
-async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = []) {
+async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120) {
   const root = await mkdtemp(join(tmpdir(), "forge614-prefix-ui-"));
   const executable = join(root, "claude"); const marker = join(root, "calls");
-  const terminal = new TestTerminal();
+  const terminal = new TestTerminal(); terminal.columns = columns;
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
   const plain = () => stripVTControlCharacters(terminal.output);
   const previousForgeHome = process.env.FORGE614_HOME;
@@ -326,16 +328,22 @@ else {
   require('readline').createInterface({input:process.stdin}).on('line',line=>{
     const msg=JSON.parse(line);
     if(msg.type==='control_request') { fs.appendFileSync(${JSON.stringify(marker)},'control\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:${JSON.stringify(commands)},agents:[],output_style:'default',available_output_styles:[]}}})); }
-    if(msg.type==='user') fs.appendFileSync(${JSON.stringify(marker)},'prompt:'+JSON.stringify(msg.message.content)+'\\n');
+    if(msg.type==='user') { fs.appendFileSync(${JSON.stringify(marker)},'prompt:'+JSON.stringify(msg.message.content)+'\\n'); for (const info of ${JSON.stringify(rateLimit ?? [])}) console.log(JSON.stringify({type:'rate_limit_event',rate_limit_info:info,uuid:'00000000-0000-4000-8000-000000000001',session_id:'s'})); }
   });
 }`, { mode: 0o755 });
-  const ui = startClaudeUI([], executable, terminal);
+  const ui = startClaudeUI([], executable, terminal, undefined, locale);
   await tick();
   for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
   const calls = () => existsSync(marker) ? readFileSync(marker, "utf8").split("\n").filter(Boolean) : [];
-  /** Leaves through `/f614:quit`, or, with `byCtrlC`, through Esc and Ctrl+C (for a test that leaves text in the box), and puts the environment back. */
+  /**
+   * Leaves through `/f614:quit`, or, with `byCtrlC`, through Esc and Ctrl+C (for a test that leaves text in the box), and puts the environment back.
+   * When a turn is still open the screen asks «Quit anyway?»: this cleanup answers «Yes», so a test that leaves work running can still end.
+   */
   const finish = async (byCtrlC = false) => {
+    terminal.output = "";
     if (byCtrlC) { terminal.input("\x1b"); terminal.input("\x03"); } else enter("/f614:quit");
+    await tick();
+    if (plain().includes("› No")) { terminal.input("\x1b[B"); terminal.input("\r"); }
     await ui; await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
   };
@@ -411,16 +419,16 @@ test.skipIf(process.platform === "win32")("Claude UI: /status and /help are Clau
 });
 
 /**
- * `/exit` and its alias `/quit` are Claude Code's own: they refuse while a turn runs (naming `/f614:quit`, which stops it and
- * leaves) and Ctrl+C does the same; `/f614:quit` leaves at once. The old `/quit!` is gone (see the unknown-names test).
+ * `/exit` and its alias `/quit` are Claude Code's own: they leave when idle and refuse while a turn runs, naming `/f614:quit`,
+ * which asks before stopping anything. The old `/quit!` is gone (see the unknown-names test).
  */
-test.skipIf(process.platform === "win32")("Claude UI: /exit, /quit and Ctrl+C refuse while a turn runs and /f614:quit leaves at once", async () => {
+test.skipIf(process.platform === "win32")("Claude UI: /exit and /quit refuse while a turn runs and name /f614:quit, which asks first", async () => {
   const h = await claudeUi();
   h.enter("work please"); await tick();
   for (let i = 0; i < 30 && !h.plain().includes(getCatalog("en").chat.statusWorking); i++) await tick();
-  const refusal = "Work or authentication is active. Use /f614:quit to stop it and exit, or keep working. Nothing was stopped.";
+  const refusal = "Work or authentication is active. Use /f614:quit to leave: it asks before stopping anything. Nothing was stopped.";
   expect(getCatalog("en").claudeChat.workOrAuthActive).toBe(refusal);
-  for (const send of [() => h.enter("/exit"), () => h.enter("/quit"), () => h.terminal.input("\x03")]) {
+  for (const send of [() => h.enter("/exit"), () => h.enter("/quit")]) {
     h.terminal.output = ""; send(); await tick();
     expect(h.plain()).toContain("Nothing was stopped");
   }
@@ -429,6 +437,88 @@ test.skipIf(process.platform === "win32")("Claude UI: /exit, /quit and Ctrl+C re
   await h.finish();
   expect(left).toBe(true);
 });
+
+/**
+ * `/f614:quit` is Shell's way out with any assistant (owner, 2026-09-29: «ese quit debería ser para todos»), and Ctrl+C and Ctrl+D
+ * do the same. Idle they leave at once; while a turn runs they ask «Quit anyway? What is running will be stopped.» with «No»
+ * marked (stopping work cannot be undone), so Enter and Esc keep everything and only «Yes» stops and leaves. It exists because
+ * the real-account test of 1.12.0 showed that with Claude Code the owner typed `/quit`, which its menu does not list, and could not
+ * see what leaving did. The `/` menu offers `/f614:quit` under FORGE614 with Claude Code.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: /f614:quit, Ctrl+C and Ctrl+D leave when idle and ask first while a turn runs, with No marked", async () => {
+  const question = { en: "Quit anyway? What is running will be stopped.", es: "¿Salir de todos modos? Se detendrá lo que está en curso." };
+  const words = { en: { yes: "Yes", no: "No", yesKey: "y" }, es: { yes: "Sí", no: "No", yesKey: "s" } };
+  const ways: [string, string[]][] = [["/f614:quit", ["/f614:quit", "\r"]], ["Ctrl+C", ["\x03"]], ["Ctrl+D", ["\x04"]]];
+  for (const locale of ["en", "es"] as const) {
+    const menu = await claudeUi([], locale);
+    try {
+      menu.terminal.output = ""; menu.terminal.input("/f614:q"); await tick();
+      expect(menu.plain(), locale).toContain("FORGE614 ");
+      expect(menu.plain(), locale).toContain("/f614:quit");
+      expect(menu.plain(), locale).toContain(locale === "en" ? "Exit Shell" : "Salir de Shell");
+    } finally { await menu.finish(true); }
+    for (const [way, keys] of ways) {
+      const name = `${locale} ${way}`;
+      // Idle: it leaves at once and never asks.
+      const idle = await claudeUi([], locale);
+      idle.terminal.output = ""; for (const key of keys) idle.terminal.input(key); await idle.ui;
+      expect(idle.plain(), name).not.toContain(question[locale]);
+      await idle.finish(true);
+      // While a turn runs: it asks, with «No» marked.
+      const busy = await claudeUi([], locale);
+      let left = false; void busy.ui.then(() => { left = true; });
+      busy.enter("work please");
+      for (let i = 0; i < 30 && !busy.calls().some(line => line.startsWith("prompt:")); i++) await tick();
+      busy.terminal.output = ""; for (const key of keys) busy.terminal.input(key); await tick();
+      expect(busy.plain(), name).toContain(question[locale]);
+      expect(busy.plain(), name).toContain(`› ${words[locale].no}`);
+      expect(busy.plain(), name).not.toContain(`› ${words[locale].yes}`);
+      // Enter takes the marked «No»: nothing is stopped.
+      busy.terminal.input("\r"); await tick();
+      expect(left, name).toBe(false);
+      // Esc is «No» too.
+      for (const key of keys) busy.terminal.input(key); await tick();
+      busy.terminal.input("\x1b"); await tick();
+      expect(left, name).toBe(false);
+      // «Yes» (the arrow, then Enter; the row's first letter works too) stops the turn and leaves.
+      for (const key of keys) busy.terminal.input(key); await tick();
+      busy.terminal.input(way === "Ctrl+D" ? words[locale].yesKey : "\x1b[B"); if (way !== "Ctrl+D") busy.terminal.input("\r");
+      await busy.ui;
+      expect(left, name).toBe(true);
+      await busy.finish(true);
+    }
+  }
+}, 90_000);
+
+/**
+ * `/f614:status` with Claude Code names the limits like the sidebar and says their status in plain words, with the reset in local
+ * time, in es and en; no provider key («five_hour», «seven_day», «allowed») and no machine date. It exists because the real-account
+ * test of 1.12.0 showed «five_hour (último reporte): no reportado | allowed | se reinicia: …» to the owner. The fake `claude` answers the
+ * prompt with two rate-limit events, so the screen shows real reported values, not only the «not reported» defaults.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: /f614:status shows plain limit names, a translated status and a readable reset, in es and en", async () => {
+  const reset = Math.floor(new Date(2026, 9, 3, 17, 22, 0).getTime() / 1000);
+  const events = [
+    { status: "allowed", rateLimitType: "five_hour", utilization: 0.31, resetsAt: reset },
+    { status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.9, resetsAt: reset },
+  ];
+  const expected = {
+    en: ["5-hour limit (last report): 31% used | allowed | resets Oct 3, 5:22 PM", "Weekly limit (last report): 90% used | allowed, near the limit | resets Oct 3, 5:22 PM"],
+    es: ["Límite de 5 horas (último reporte): 31% usado | permitido | se reinicia el 3 oct, 5:22 p.m.", "Límite semanal (último reporte): 90% usado | permitido, cerca del límite | se reinicia el 3 oct, 5:22 p.m."],
+  };
+  for (const locale of ["en", "es"] as const) {
+    const h = await claudeUi([], locale, events, 220);
+    try {
+      h.enter("work please");
+      for (let i = 0; i < 30 && !h.calls().some(line => line.startsWith("prompt:")); i++) await tick();
+      await tick(); await tick();
+      h.terminal.output = ""; h.enter("/f614:status"); await tick(); await tick();
+      for (const line of expected[locale]) expect(h.plain().replace(/\s*\n\s*/g, " "), `${locale} ${line}`).toContain(line);
+      expect(h.plain(), locale).not.toMatch(/five_hour|seven_day|allowed_warning|\d{4}-\d{2}-\d{2}T/);
+      if (locale === "es") expect(h.plain()).not.toContain("allowed");
+    } finally { await h.finish(); }
+  }
+}, 30_000);
 
 /**
  * The `/` menu with Claude Code: what Claude Code has goes under CLAUDE CODE with no Shell name in it (its own `/login`,

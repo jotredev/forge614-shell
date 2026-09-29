@@ -1,5 +1,6 @@
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
+import { formatMoment, limitName, quotaStatusText } from "../../i18n/status-text.ts";
 
 export interface Quota {
   status?: string;
@@ -52,6 +53,10 @@ export function updateTelemetry(state: Telemetry, event: Record<string, any>): T
   return next;
 }
 
+/**
+ * The lines of `/f614:status`. Each limit shows with the sidebar's plain name, its status in words and its reset in local time
+ * (`formatMoment`): never the provider's key (`five_hour`), its raw status (`allowed`) or a machine date.
+ */
 export function telemetryLines(state: Telemetry, locale: Locale = "en"): string[] {
   const t = getCatalog(locale).telemetry;
   const unknown = t.notReported;
@@ -66,8 +71,8 @@ export function telemetryLines(state: Telemetry, locale: Locale = "en"): string[
     ...(["five_hour", "seven_day", ...Object.keys(state.quotas).filter(key => key !== "five_hour" && key !== "seven_day")].map(key => {
       const quota = state.quotas[key];
       const used = quota?.utilization === undefined ? unknown : t.percentUsed({ percent: Math.round(quota.utilization * 100) });
-      const resets = quota?.resetsAt ? new Date(quota.resetsAt * 1000).toLocaleString() : unknown;
-      return t.quotaLine({ key, used, status: quota?.status ?? unknown, resets }) + (quota?.isUsingOverage ? t.extraUsageActive : "");
+      const resets = quota?.resetsAt ? t.resetsAt({ moment: formatMoment(quota.resetsAt * 1000, locale) }) : t.resetsUnknown;
+      return t.quotaLine({ name: limitName(key, locale), used, status: quotaStatusText(quota?.status, locale), resets }) + (quota?.isUsingOverage ? t.extraUsageActive : "");
     })),
   ];
 }
