@@ -1,5 +1,5 @@
 import type { RpcConnection } from "../../infrastructure/rpc.ts";
-import type { Approve, Emit, NativeModel, NativeSession, NativeSessionInfo, NativeVisualState, NativeWorkMode, WorkModeChange } from "../types.ts";
+import type { Approve, Emit, NativeAccountUsage, NativeBackgroundTerminal, NativeGoal, NativeHook, NativeMcpServer, NativeModel, NativeSession, NativeSessionInfo, NativeSkill, NativeVisualState, NativeWorkMode, WorkModeChange } from "../types.ts";
 import { buildCodexWorkModes, sandboxPolicyFor } from "./work-modes.ts";
 import type { CodexWorkMode } from "./work-modes.ts";
 import { openLoginBrowser } from "../../infrastructure/browser.ts";
@@ -19,6 +19,29 @@ import type { Locale } from "../../i18n/index.ts";
  */
 function neutralizeDelimiter(text: string): string {
   return text.replace(/<\/?\s*forge614-engram-memory\s*>/gi, "[contenido filtrado]");
+}
+
+/**
+ * The `$name` mentions in a message, in order of first appearance and without repeats. A mention starts at the
+ * beginning, after a space or after «(» so `price$5` and `a$b` are not mentions; it runs over the characters a
+ * skill name may hold (letters, digits, `_`, `:`, `.`, `-`). Each one is offered as written and, when it ends in
+ * sentence punctuation («$name.», «$plug:name:»), also without it. Whether it is a real skill is decided by the
+ * catalog, not here.
+ */
+function mentionedNames(text: string): string[] {
+  const names: string[] = [];
+  for (const match of text.matchAll(/(?:^|[\s(])\$([A-Za-z0-9_:.-]+)/g)) {
+    for (const name of [match[1]!, match[1]!.replace(/[.:-]+$/, "")]) if (name && !names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+/** A goal as Codex sends it (`v2/ThreadGoal.ts`), reduced to what Shell shows; a budget of `null` (none) is left out. */
+function toNativeGoal(goal: any): NativeGoal {
+  return {
+    objective: goal.objective, status: goal.status, tokensUsed: goal.tokensUsed, timeUsedSeconds: goal.timeUsedSeconds,
+    ...(typeof goal.tokenBudget === "number" ? { tokenBudget: goal.tokenBudget } : {}),
+  };
 }
 
 function wrapStartupContext(text: string): string {
@@ -58,6 +81,8 @@ export class CodexSession implements NativeSession {
   /** The mode of the last thread/turn request Codex accepted (undefined = the default it opened with); where a rejected mode goes back to. */
   private acceptedMode?: CodexWorkMode;
   private pendingStartupContext?: string;
+  /** The skills Codex listed the last time (`skills/list`), used to recognize `$name` when a message is sent; undefined until it has been read. */
+  private skillCatalog?: NativeSkill[];
 
   private readonly locale: Locale;
 
@@ -83,7 +108,9 @@ export class CodexSession implements NativeSession {
     return getCatalog(this.locale).codexSession;
   }
   async initialize(): Promise<void> {
-    await this.rpc.request("initialize", { clientInfo: { name: "forge614_shell", title: "Forge614-Shell", version: "0.1.0" }, capabilities: {} });
+    // `experimentalApi` (InitializeCapabilities) is what lets the app-server accept its experimental methods:
+    // `/stop` and `/ps` use `thread/backgroundTerminals/clean` and `/list`, which exist only there.
+    await this.rpc.request("initialize", { clientInfo: { name: "forge614_shell", title: "Forge614-Shell", version: "0.1.0" }, capabilities: { experimentalApi: true } });
     this.rpc.notify("initialized");
     await this.readAccount();
     await this.readWorkModes();
@@ -197,7 +224,14 @@ export class CodexSession implements NativeSession {
   private idle(): void { if (this.busy) throw new ShellError("codex-turn-busy"); }
   status(): string[] {
     if (this.disconnected) return [this.t.disconnectedStatus];
-    return [this.auth, this.t.modelEffortLine({ model: this.model ?? this.t.engineDefault, effort: this.effort ?? this.t.engineDefault }), this.tokens, this.quotas, this.t.costNotReported];
+    return [
+      this.auth,
+      this.t.modelEffortLine({ model: this.model ?? this.t.engineDefault, effort: this.effort ?? this.t.engineDefault }),
+      this.t.folderLine({ path: this.cwd }),
+      this.t.workModeLine({ mode: this.selectedMode?.label ?? this.t.engineDefault }),
+      this.t.conversationLine({ id: this.sessionId ?? this.t.conversationNotStarted }),
+      this.tokens, this.quotas, this.t.costNotReported,
+    ];
   }
   visual(): NativeVisualState {
     if (this.disconnected || !this.connected) return { account: "disconnected", provider: "Codex" };
@@ -267,7 +301,9 @@ export class CodexSession implements NativeSession {
       const input = [
         ...(this.pendingStartupContext ? [{ type: "text", text: this.pendingStartupContext }] : []),
         { type: "text", text },
+        ...await this.skillItems(text),
       ];
+      if (this.aborted.signal.aborted) return;
       this.pendingStartupContext = undefined;
       const result = await this.requestWithMode(mode, "turn/start", { threadId: this.sessionId, input, model: this.model, effort: this.effort, approvalsReviewer: "user", ...(mode ? { approvalPolicy: mode.approvalPolicy, sandboxPolicy: sandboxPolicyFor(mode.sandbox) } : { approvalPolicy: "untrusted" }) });
       this.turnId = result.turn.id;
@@ -332,6 +368,164 @@ export class CodexSession implements NativeSession {
       await finished;
       await this.loadStartupContext();
     } finally { this.busy = false; this.turnId = undefined; this.finishTurn = undefined; this.aborted.abort(); }
+  }
+  /**
+   * `$name` is a real skill for Codex only as a `{ type: "skill", name, path }` input item (`v2/UserInput.ts`);
+   * as plain text it is just a word. Every mention that is in Codex's own catalog (`skills/list`) becomes such
+   * an item, right after the message text — which stays exactly as written, as Codex's own screen sends it.
+   * A `$word` that is no skill stays text only. The catalog is read once, and only when a message has a mention.
+   */
+  private async skillItems(text: string): Promise<{ type: "skill"; name: string; path: string }[]> {
+    const names = mentionedNames(text);
+    if (!names.length) return [];
+    const catalog = this.skillCatalog ?? await this.skills().catch(() => [] as NativeSkill[]);
+    return names.flatMap(name => {
+      const skill = catalog.find(item => item.name === name);
+      return skill ? [{ type: "skill" as const, name: skill.name, path: skill.path }] : [];
+    });
+  }
+  /** The skills Codex lists for this folder (`skills/list`) — its official catalog, plugins included — without the ones it has switched off. Also refreshes what `$name` is recognized against. */
+  async skills(): Promise<NativeSkill[]> {
+    const response = await this.rpc.request("skills/list", { cwds: [this.cwd] });
+    const seen = new Set<string>();
+    const skills: NativeSkill[] = [];
+    for (const entry of response.data ?? []) for (const skill of entry.skills ?? []) {
+      if (skill.enabled === false || seen.has(skill.path)) continue;
+      seen.add(skill.path);
+      skills.push({ name: skill.name, description: skill.description ?? "", path: skill.path });
+    }
+    this.skillCatalog = skills;
+    return skills;
+  }
+  /** The open conversation's id, or a `ShellError` when there is none: the commands that act on a thread never call Codex with an empty id. */
+  private requireThread(): string {
+    if (!this.sessionId) throw new ShellError("codex-command-needs-conversation");
+    return this.sessionId;
+  }
+  /** The conversation's id, opening it first (`thread/start`) when none is loaded; needs the ChatGPT login like sending a message does. */
+  private async ensureThread(): Promise<string> {
+    if (this.sessionId && this.loaded) return this.sessionId;
+    if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
+    if (!this.busy) this.aborted = new AbortController();
+    if (!await this.readAccount()) throw new ShellError("codex-requires-login-no-fallback");
+    await this.openThread(this.selectedMode);
+    return this.sessionId!;
+  }
+  /** Leaves the session with no conversation open, as after `reset()`, and drops what was pending for the old one. */
+  private forgetThread(): void {
+    this.sessionId = undefined; this.loaded = false; this.tokens = this.t.tokensNotReported; this.context = undefined; this.pendingStartupContext = undefined;
+  }
+  /** `/clear`: starts the new conversation at once (`thread/start`); if Codex cannot, the current one stays as it was. */
+  async clearThread(): Promise<void> {
+    this.idle();
+    if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
+    const previous = { sessionId: this.sessionId, loaded: this.loaded, tokens: this.tokens, context: this.context, pending: this.pendingStartupContext };
+    this.forgetThread();
+    try { await this.ensureThread(); }
+    catch (error) {
+      this.sessionId = previous.sessionId; this.loaded = previous.loaded; this.tokens = previous.tokens; this.context = previous.context; this.pendingStartupContext = previous.pending;
+      throw error;
+    }
+  }
+  /** `/rename`: `thread/name/set` (`v2/ThreadSetNameParams.ts`). */
+  async renameThread(name: string): Promise<void> {
+    await this.rpc.request("thread/name/set", { threadId: this.requireThread(), name });
+  }
+  /** `/archive`: `thread/archive`; the session is left with no conversation open. */
+  async archiveThread(): Promise<void> {
+    this.idle();
+    await this.rpc.request("thread/archive", { threadId: this.requireThread() });
+    this.forgetThread();
+  }
+  /** `/delete`: `thread/delete`, forever; the session is left with no conversation open. The screen asks first. */
+  async deleteThread(): Promise<void> {
+    this.idle();
+    await this.rpc.request("thread/delete", { threadId: this.requireThread() });
+    this.forgetThread();
+  }
+  /** `/goal` with nothing after it: `thread/goal/get`; a conversation not started has no goal and Codex is not asked. */
+  async getGoal(): Promise<NativeGoal | null> {
+    if (!this.sessionId) return null;
+    const { goal } = await this.rpc.request("thread/goal/get", { threadId: this.sessionId });
+    return goal ? toNativeGoal(goal) : null;
+  }
+  /** `/goal <objective>`: `thread/goal/set`, after opening the conversation when there is none yet. */
+  async setGoal(objective: string): Promise<NativeGoal> {
+    const threadId = await this.ensureThread();
+    const { goal } = await this.rpc.request("thread/goal/set", { threadId, objective });
+    return toNativeGoal(goal);
+  }
+  /** `/goal clear`: `thread/goal/clear`; false when there is no conversation or Codex had no goal to clear. */
+  async clearGoal(): Promise<boolean> {
+    if (!this.sessionId) return false;
+    const { cleared } = await this.rpc.request("thread/goal/clear", { threadId: this.sessionId });
+    return cleared === true;
+  }
+  /**
+   * `/mcp` and `/mcp verbose`: `mcpServerStatus/list` (`v2/ListMcpServerStatusParams.ts`) — `toolsAndAuthOnly`
+   * for the short list, `full` for the detailed one — every page. With a conversation loaded its id goes
+   * along, so Codex reuses that conversation's connections.
+   */
+  async mcpServers(verbose: boolean): Promise<NativeMcpServer[]> {
+    const servers: NativeMcpServer[] = [];
+    let cursor: string | undefined;
+    do {
+      const response = await this.rpc.request("mcpServerStatus/list", {
+        detail: verbose ? "full" : "toolsAndAuthOnly",
+        ...(this.loaded && this.sessionId ? { threadId: this.sessionId } : {}),
+        ...(cursor ? { cursor } : {}),
+      });
+      for (const server of response.data ?? []) servers.push({
+        name: server.name, status: server.runtimeStatus ?? "unknown", auth: server.authStatus ?? "unknown",
+        tools: Object.entries(server.tools ?? {}).map(([key, tool]: [string, any]) => ({ name: tool?.name ?? key, ...(tool?.description ? { description: String(tool.description) } : {}) })),
+        resources: Array.isArray(server.resources) ? server.resources.length : 0,
+        ...(server.toolsError ? { toolsError: String(server.toolsError) } : {}),
+        ...(server.serverInfo?.version ? { version: String(server.serverInfo.version) } : {}),
+        ...(server.httpOrigin ? { origin: String(server.httpOrigin) } : {}),
+      });
+      cursor = response.nextCursor ?? undefined;
+    } while (cursor);
+    return servers;
+  }
+  /** `/hooks`: `hooks/list` for this folder (`v2/HooksListParams.ts`) — view only; managing them is not connected. */
+  async hooks(): Promise<NativeHook[]> {
+    const response = await this.rpc.request("hooks/list", { cwds: [this.cwd] });
+    return (response.data ?? []).flatMap((entry: any) => (entry.hooks ?? []).map((hook: any): NativeHook => {
+      const detail = hook.handlerType === "command" ? hook.command : hook.handlerType === "mcpTool" ? `${hook.server}: ${hook.tool}` : undefined;
+      return {
+        event: hook.eventName, handler: hook.handlerType, enabled: Boolean(hook.enabled), trust: hook.trustStatus, source: hook.source,
+        ...(detail ? { detail: String(detail) } : {}),
+        ...(hook.matcher ? { matcher: String(hook.matcher) } : {}),
+      };
+    }));
+  }
+  /** `/usage`: `account/usage/read` (`v2/GetAccountTokenUsageResponse.ts`, `AccountTokenUsageSummary.ts`); a figure Codex sends as `null` is left out. */
+  async accountUsage(): Promise<NativeAccountUsage> {
+    const { summary } = await this.rpc.request("account/usage/read");
+    const usage: NativeAccountUsage = {};
+    for (const [key, value] of [
+      ["lifetimeTokens", summary?.lifetimeTokens], ["peakDailyTokens", summary?.peakDailyTokens], ["longestTurnSeconds", summary?.longestRunningTurnSec],
+      ["currentStreakDays", summary?.currentStreakDays], ["longestStreakDays", summary?.longestStreakDays],
+    ] as const) if (value !== null && value !== undefined) usage[key] = String(value);
+    return usage;
+  }
+  /** `/ps`: `thread/backgroundTerminals/list` (experimental; every page); a conversation not loaded has none and Codex is not asked. */
+  async backgroundTerminals(): Promise<NativeBackgroundTerminal[]> {
+    if (!this.loaded || !this.sessionId) return [];
+    const terminals: NativeBackgroundTerminal[] = [];
+    let cursor: string | undefined;
+    do {
+      const response = await this.rpc.request("thread/backgroundTerminals/list", { threadId: this.sessionId, ...(cursor ? { cursor } : {}) });
+      for (const item of response.data ?? []) terminals.push({ command: item.command, cwd: item.cwd, ...(typeof item.osPid === "number" ? { pid: item.osPid } : {}) });
+      cursor = response.nextCursor ?? undefined;
+    } while (cursor);
+    return terminals;
+  }
+  /** `/stop`: `thread/backgroundTerminals/clean` (experimental) — Codex's «stop all background terminals»; false when no conversation is loaded, so there is nothing to stop. */
+  async stopBackgroundTerminals(): Promise<boolean> {
+    if (!this.loaded || !this.sessionId) return false;
+    await this.rpc.request("thread/backgroundTerminals/clean", { threadId: this.sessionId });
+    return true;
   }
   async cancel(): Promise<void> {
     this.aborted.abort();

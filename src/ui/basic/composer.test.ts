@@ -81,3 +81,18 @@ test("no picker row is wider than the screen", () => {
     for (const line of composer.render(width)) expect({ width, columns: visibleWidth(line) <= width }).toEqual({ width, columns: true });
   }
 });
+
+/** Names that hold «:», «-», digits or «.» — `/f614:stop`, `/setup-default-sandbox`, a plugin skill `$plug:helper.v2` — must keep autocompleting while they are typed; before, the menu vanished at the first such character. */
+test("the / and $ menus keep suggesting through digits, hyphens, colons and dots", () => {
+  const composer = new ForgeComposer(fakeTui, "en");
+  composer.setCommandGroups([{ title: "X", items: [{ value: "/f614:stop", label: "Cancel the answer" }, { value: "/setup-default-sandbox", label: "set up sandbox" }] }]);
+  composer.setSkillChoices([{ value: "$plug:helper.v2", label: "Plugin skill" }]);
+  type(composer, "/f614:s");
+  expect(screen(composer)).toContain("Cancel the answer");
+  for (let i = 0; i < 7; i++) composer.handleInput("\x7f");
+  type(composer, "/setup-d");
+  expect(screen(composer)).toContain("set up sandbox");
+  for (let i = 0; i < 8; i++) composer.handleInput("\x7f");
+  type(composer, "$plug:h");
+  expect(screen(composer)).toContain("Plugin skill");
+});

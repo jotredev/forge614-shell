@@ -22,6 +22,7 @@ export type ShellErrorCode =
   | "codex-mode-unknown"
   | "codex-mode-rejected"
   | "codex-compact-no-conversation"
+  | "codex-command-needs-conversation"
   | "codex-refresh-requires-login"
   | "codex-login-not-managed"
   | "codex-turn-busy"
@@ -474,6 +475,59 @@ export interface Catalog {
     questionnaireUnsupported: string;
     engineErrorFallback: string;
     sessionTokensLine: (params: { input: string; cached: string; output: string; lastContext: string; window: string }) => string;
+    /** The three lines `/status` adds to match Codex's own: folder, work mode and conversation. */
+    folderLine: (params: { path: string }) => string;
+    workModeLine: (params: { mode: string }) => string;
+    conversationLine: (params: { id: string }) => string;
+    conversationNotStarted: string;
+  };
+  /**
+   * What the person reads after Codex's own commands that Shell has connected (`/rename`, `/goal`, `/mcp`,
+   * `/hooks`, `/usage`, `/pwd`, `/ps`, `/stop`, `/skills`, `/archive`, `/delete`, `/clear`). The commands'
+   * names and descriptions are Codex's and are not translated; only Shell's own short messages are.
+   */
+  codexCommands: {
+    renameUsage: string;
+    renamed: (params: { name: string }) => string;
+    archived: string;
+    deletePrompt: string;
+    deleteKeep: string;
+    deleteConfirm: string;
+    deleteKept: string;
+    deleted: string;
+    cleared: string;
+    goalNone: string;
+    goalLine: (params: { objective: string; status: string; used: string; budget: string; time: string }) => string;
+    goalSet: (params: { objective: string }) => string;
+    goalCleared: string;
+    goalNothingToClear: string;
+    mcpNone: string;
+    mcpHeader: string;
+    mcpServerLine: (params: { name: string; status: string; count: string }) => string;
+    mcpDetailLine: (params: { version: string; auth: string; origin: string; resources: string }) => string;
+    mcpToolsError: (params: { error: string }) => string;
+    hooksNone: string;
+    hooksHeader: string;
+    hookLine: (params: { event: string; handler: string; detail: string; state: string }) => string;
+    hookState: (params: { enabled: boolean; trust: string }) => string;
+    usageNone: string;
+    usageHeader: string;
+    usageLine: (params: { label: string; value: string }) => string;
+    usageLifetimeTokens: string;
+    usagePeakDailyTokens: string;
+    usageLongestTurn: string;
+    usageCurrentStreak: string;
+    usageLongestStreak: string;
+    usageResetNote: string;
+    pwd: (params: { path: string }) => string;
+    psNone: string;
+    psHeader: string;
+    psLine: (params: { command: string; folder: string; pid: string }) => string;
+    stopNone: string;
+    stopped: string;
+    skillsNone: string;
+    skillsHeader: string;
+    skillLine: (params: { name: string; description: string }) => string;
   };
   codexChat: {
     compacted: string;

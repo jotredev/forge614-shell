@@ -15,10 +15,29 @@ The Basic interface is the only available visual interface. The startup picker a
 | `/model`, `/effort` | Shows or adjusts options reported by the client. |
 | `/compact` | Codex: asks Codex's own engine to compact the conversation (`thread/compact/start`) and reports when it is done; Engram's memory is sent again with your next message, the same way it is when a thread is opened. Claude Code: passes the command through to Claude Code. Any other `/command` that Shell cannot pass on to Codex is answered with «Codex doesn't allow /x from Shell yet», not with «Unknown command». |
 | `Shift+Tab` | Cycles the work mode at any moment, also mid-turn or with a permission pending. Claude Code takes the change at once. Codex reads the mode with each turn, so Shell accepts the change and says in one line that it applies from the next turn. |
-| `/status` | Shows client-reported state. |
-| `/stop`, `/quit` | Interrupts the active turn or exits. |
+| `/status` | Shows client-reported state. With Codex it also lists the folder, the work mode and the conversation, like Codex's own `/status`. |
+| `/f614:stop` | Shell's own, in Claude Code and in Codex: cancels the answer in progress. It used to be `/stop`, which now belongs to Codex. |
+| `/quit` | Exits Shell. |
 | `/refresh` | Requests the quotas that Codex or Claude report again; it sends no chat prompt. |
-| `$` | Opens Codex skill discovery (reusable instructions). |
+| `$name` | Codex: the `$` autocomplete lists Codex's own catalog of skills (reusable instructions) from `skills/list`, plugins included and switched-off ones left out. Each recognized `$name` in a message is sent to Codex as a real skill (`{ type: "skill", name, path }`) next to the message text, which stays as written; a `$word` that is no skill stays text only. |
+
+Codex's own commands, connected through its app-server (each shows one short message; Codex's names and descriptions are never translated):
+
+| Command | What it does |
+| --- | --- |
+| `/rename <name>` | Renames the conversation (`thread/name/set`). |
+| `/clear` | Starts a new conversation at once (`thread/start`) and clears the view. |
+| `/archive` | Archives the conversation (`thread/archive`) and leaves you in a new one. |
+| `/delete` | Asks «Yes / No» first (Enter on «No», or Esc, changes nothing), then deletes the conversation for good (`thread/delete`). |
+| `/goal`, `/goal <goal>`, `/goal clear` | Shows, sets or clears the goal for a long task (`thread/goal/get`, `set`, `clear`). |
+| `/mcp`, `/mcp verbose` | Lists the configured MCP servers with their tools; verbose adds version, sign-in state, address and each tool's description (`mcpServerStatus/list`). |
+| `/hooks` | Shows the lifecycle hooks (`hooks/list`); view only, managing them is not connected. |
+| `/usage` | Shows the account's token usage (`account/usage/read`); using a usage-limit reset is not connected yet. |
+| `/skills` | Lists the skills Codex offers for this folder (`skills/list`). |
+| `/pwd` | Shows the working folder; it calls nothing. |
+| `/ps`, `/stop` | Codex's «list background terminals» and «stop all background terminals» (`thread/backgroundTerminals/list` and `/clean`). Those two methods exist only in Codex's experimental protocol, so Shell declares `experimentalApi` when it connects. |
+
+With Codex, the `/` menu (and `/commands`) lists Codex's commands with Codex's own description, in Codex's order, and only the ones Codex shows on macOS; Shell's own (`/login`, `/refresh`, `/commands`, `/f614:stop`) sit apart under FORGE614. Commands that can run while Codex works (`/rename`, `/goal`, `/mcp`, `/hooks`, `/usage`, `/skills`, `/pwd`, `/ps`, `/stop`) do so; the others wait for the turn to end. A Codex command that Shell has not connected yet is answered with «Codex doesn't allow /x from Shell yet»; a name that is not Codex's is «Unknown command».
 
 The sidebar shows the session, model, reasoning, context, and quotas, and the status bar below the chat shows only what the sidebar does not repeat: background work, folder, branch, and Git state. The history shows the conversation, with each tool call indented under the assistant message it belongs to. “Not reported” means exactly that the client did not provide the value. The interface has no Gemini or Antigravity screens or commands.
 
