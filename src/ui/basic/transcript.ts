@@ -7,6 +7,13 @@ import type { Locale } from "../../i18n/index.ts";
 
 const MAX_DIFF_LINES_SHOWN = 60;
 
+/**
+ * Columns a routine tool line is pushed in from the chat's left edge. Assistant headers and text
+ * start at column 2 (the markdown padding), so 4 puts the grey line clearly inside the message it
+ * belongs to, and the `└` preview one step further in.
+ */
+export const TOOL_INDENT = 4;
+
 
 export function chatMessage(role: "user" | "assistant" | "system", content: string, locale: Locale = "en"): string {
   const t = getCatalog(locale).chatRoles;
@@ -29,6 +36,8 @@ export class ActivityCard implements Component {
     private detail: string = "",
     private readonly full = false,
     private diffLines?: DiffLine[],
+    /** Left indent of a routine (non-`full`) line. The chat uses the default; the narrow sidebar passes 0. */
+    private readonly indent = TOOL_INDENT,
   ) {}
 
   update(status: string, detail?: string): void {
@@ -63,9 +72,10 @@ export class ActivityCard implements Component {
 
   render(width: number): string[] {
     if (!this.full) {
-      const line = fit(muted(`• ${this.summary()}`), width);
+      const pad = " ".repeat(Math.min(this.indent, Math.max(0, width - 1)));
+      const line = fit(muted(`${pad}• ${this.summary()}`), width);
       const preview = this.detail.split("\n")[0]?.trim();
-      return preview ? ["", line, fit(muted(`  └ ${preview}`), width)] : ["", line];
+      return preview ? ["", line, fit(muted(`${pad}  └ ${preview}`), width)] : ["", line];
     }
     const outer = Math.min(2, Math.max(0, width - 1));
     const cardWidth = Math.max(1, width - outer * 2);

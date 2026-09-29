@@ -3,6 +3,8 @@ import { stripVTControlCharacters } from "node:util";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { REASONING_DEFAULT_LABEL } from "./metrics.ts";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import type { ShellSnapshot } from "./shell-state.ts";
 
 test("the default-reasoning fallback text fits the sidebar's narrow column without getting cut off", () => {
   const state = new ShellState("Claude Code");
@@ -12,19 +14,21 @@ test("the default-reasoning fallback text fits the sidebar's narrow column witho
   expect(output).not.toContain("…");
 });
 
-test("token/cost figures sit right under plan usage, not down by RAM, and the cost wording explains itself without getting cut off", () => {
+test("token/cost figures sit right under plan usage, not down by RAM, and are explained in plain words without getting cut off", () => {
   const state = new ShellState("Claude Code");
-  state.connect({ inputTokens: 908, outputTokens: 1263, estimateUSD: 0.6645, resources: { shellRssBytes: 1_000_000 } });
+  state.connect({ inputTokens: 2996, outputTokens: 700, estimateUSD: 0.6723, resources: { shellRssBytes: 1_000_000 } });
   const output = stripVTControlCharacters(new ShellSidebar(() => state.snapshot()).render(36).join("\n"));
 
   expect(output).not.toContain("…");
-  expect(output).toContain("908 in");
-  expect(output).toContain("1263 out");
-  expect(output).toContain("$0.6645");
-  expect(output).toContain("Reference only, not billed");
+  expect(output).toContain("This message");
+  expect(output).toContain("read 2,996 tokens");
+  expect(output).toContain("wrote 700");
+  expect(output).toContain("If you paid per use");
+  expect(output).toContain("≈ $0.67");
+  expect(output).toContain("your plan doesn't bill it");
   const planUsageAt = output.indexOf("PLAN USAGE");
   const resourcesAt = output.indexOf("RESOURCES");
-  const tokensAt = output.indexOf("908 in");
+  const tokensAt = output.indexOf("read 2,996 tokens");
   expect(planUsageAt).toBeGreaterThan(-1); expect(resourcesAt).toBeGreaterThan(-1);
   expect(tokensAt).toBeGreaterThan(planUsageAt);
   expect(tokensAt).toBeLessThan(resourcesAt);
@@ -50,7 +54,7 @@ test("connected sidebar keeps unknown telemetry explicit and shows real session 
   const output = stripVTControlCharacters(new ShellSidebar(() => state.snapshot()).render(45).join("\n"));
   expect(output).toContain("test@example.com"); expect(output).toContain("native-session");
   expect(output).toContain("Shell uptime"); expect(output).toContain("CONTEXT");
-  expect(output).toContain("USAGE"); expect(output).toContain("Measurement unavailable");
+  expect(output).toContain("USAGE"); expect(output).toContain("after the next message");
   expect(output).not.toContain("0%");
 });
 
@@ -205,4 +209,86 @@ test("an activity's detail is truncated to 2000 characters, matching claude.ts's
   const expanded = sidebar.render(60).join("\n");
   expect(expanded).not.toContain("OVERFLOW MARKER");
   expect(expanded).toContain("a".repeat(20));
+});
+
+/** Rows of the CONTEXT and PLAN USAGE sections only: they are the sidebar's explanatory text, the part that used to be cut off with "…". Data values (session id, email, model) are the person's own and may legitimately be long, so they stay out of this slice. */
+function explanatorySections(lines: string[]): string[] {
+  const plain = lines.map(stripVTControlCharacters);
+  const start = plain.findIndex(line => /CONTEXT/.test(line));
+  const end = plain.findIndex(line => /RESOURCES|RECURSOS/.test(line));
+  return plain.slice(start, end === -1 ? undefined : end);
+}
+
+const snapshotStates: Record<string, () => ShellSnapshot> = {
+  "new session, nothing measured": () => ({ account: "connected", provider: "Claude Code" }),
+  "resumed session, nothing measured": () => ({ account: "connected", provider: "Claude Code", sessionId: "resumed-1" }),
+  "with measured data": () => ({
+    account: "connected", provider: "Claude Code", sessionId: "s-1",
+    context: { used: 170_600, window: 1_000_000 },
+    usage: [{ label: "seven_day", usedPercent: 74, reset: "22h" }],
+    inputTokens: 2996, outputTokens: 700, estimateUSD: 0.6723,
+  }),
+};
+
+/** Guards the owner's complaint that «Disponible después de la prime…» and the cost note were cut off: at every width the sidebar can really have (32–42 columns of pane minus 5 of chrome), in both languages, with and without data, no context or plan-usage row overflows or ends in "…". */
+test("context and plan-usage rows never overflow or end in an ellipsis at any real sidebar width, in both languages, with and without data", () => {
+  for (const locale of ["en", "es"] as const) {
+    for (const [name, make] of Object.entries(snapshotStates)) {
+      for (let width = 27; width <= 37; width++) {
+        const rows = explanatorySections(new ShellSidebar(make, undefined, undefined, locale).render(width));
+        expect(rows.length).toBeGreaterThan(0);
+        for (const row of rows) {
+          expect({ locale, name, width, row, fits: visibleWidth(row) <= width }).toEqual({ locale, name, width, row, fits: true });
+          expect({ locale, name, width, row, ellipsis: row.includes("…") }).toEqual({ locale, name, width, row, ellipsis: false });
+        }
+      }
+    }
+  }
+});
+
+/** The owner asked for a short reason instead of «Medición no disponible» when there is no context figure yet: a new conversation says when it will appear; a resumed one without a measurement says the same in its own words. */
+test("without a context figure the sidebar says when it will appear, differently for a new and a resumed session", () => {
+  const text = (locale: "en" | "es", name: string) => explanatorySections(new ShellSidebar(snapshotStates[name]!, undefined, undefined, locale).render(36)).join("\n");
+  expect(text("es", "new session, nothing measured")).toContain("tras el 1.er mensaje");
+  expect(text("en", "new session, nothing measured")).toContain("after 1st message");
+  expect(text("es", "resumed session, nothing measured")).toContain("tras el próximo mensaje");
+  expect(text("en", "resumed session, nothing measured")).toContain("after the next message");
+  expect(text("es", "new session, nothing measured")).not.toContain("Medición no disponible");
+});
+
+/** Plan usage explains the last message and the pay-per-use estimate in everyday words, split over short rows, with each language's own number and currency format (2 996 / $0,67 in Spanish, 2,996 / $0.67 in English). */
+test("last-message tokens and the pay-per-use estimate read as plain sentences in Spanish and English", () => {
+  const es = explanatorySections(new ShellSidebar(snapshotStates["with measured data"]!, undefined, undefined, "es").render(36)).join("\n");
+  expect(es).toContain("Este mensaje\nleyó 2 996 tokens\nescribió 700");
+  expect(es).toContain("Si pagaras por uso\n≈ $0,67\ntu plan no lo cobra");
+  const en = explanatorySections(new ShellSidebar(snapshotStates["with measured data"]!, undefined, undefined, "en").render(36)).join("\n");
+  expect(en).toContain("This message\nread 2,996 tokens\nwrote 700");
+  expect(en).toContain("If you paid per use\n≈ $0.67\nyour plan doesn't bill it");
+});
+
+/** A cost under one cent must not read as a false «$0.00»: it says it is under a cent instead. */
+test("a tiny estimated cost says it is under one cent instead of showing zero", () => {
+  const snapshot = () => ({ account: "connected" as const, provider: "Claude Code", estimateUSD: 0.002 });
+  expect(explanatorySections(new ShellSidebar(snapshot, undefined, undefined, "en").render(36)).join("\n")).toContain("under $0.01");
+  expect(explanatorySections(new ShellSidebar(snapshot, undefined, undefined, "es").render(36)).join("\n")).toContain("menos de $0,01");
+});
+
+/** Drag-selecting inside the chat used to highlight the sidebar too, because the sidebar let press/drag/release fall through to the screen-level selection. Like the composer, it now consumes those three left-button gestures. */
+test("the sidebar consumes press, drag and release of the left button so a chat selection cannot spill into it", () => {
+  const sidebar = new ShellSidebar(() => ({ account: "connected", provider: "Claude Code" }));
+  sidebar.render(36);
+  for (const type of ["press", "drag", "release"] as const) {
+    expect(sidebar.handleMouse({ type, button: "left", x: 4, y: 3, width: 36, height: 30 } as any)).toMatchObject({ handled: true });
+  }
+});
+
+/** The mouse patch must stay narrow: a click on a background-activity row still expands it, and the sidebar's own background rows keep their bullet at column 0 (the chat-only indent must not leak into this narrow column). */
+test("background-activity rows keep their bullet at the left edge of the sidebar", () => {
+  const sidebar = new ShellSidebar(() => ({
+    account: "connected", provider: "Claude",
+    backgroundActivitySupported: true,
+    backgroundActivity: [{ id: "t1", kind: "agent", label: "Investigar X", state: "running", startedAt: Date.now() - 5000 }],
+  }));
+  const row = sidebar.render(36).map(stripVTControlCharacters).find(line => line.includes("Investigar X"));
+  expect(row).toStartWith("• Investigar X");
 });

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { usageTitle, resetLabel, progressBar, contextRing, isDisplayableUsage, effortLabel, effortDescription, REASONING_DEFAULT_LABEL, compactNumber, usageColor } from "./metrics.ts";
+import { usageTitle, resetLabel, progressBar, contextRing, isDisplayableUsage, effortLabel, effortDescription, REASONING_DEFAULT_LABEL, compactNumber, usageColor, formatCount, formatUsd } from "./metrics.ts";
 import { stripVTControlCharacters } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
@@ -52,4 +52,14 @@ test("internal Nimbus Quill usage is never exposed as a user quota", () => {
   expect(isDisplayableUsage("five_hour")).toBe(true);
   expect(isDisplayableUsage("seven_day")).toBe(true);
   expect(isDisplayableUsage("extra_usage")).toBe(true);
+});
+
+/** Numbers in the sidebar follow each language's own convention: Spanish groups thousands with a space and uses a decimal comma, English uses a comma and a decimal point. */
+test("token counts and dollar amounts use each language's own separators", () => {
+  expect(formatCount(2996, "es")).toBe("2 996");
+  expect(formatCount(2996, "en")).toBe("2,996");
+  expect(formatCount(1234567, "es")).toBe("1 234 567");
+  expect(formatCount(700, "es")).toBe("700");
+  expect(formatUsd(0.6723, "es")).toBe("$0,67");
+  expect(formatUsd(0.6723, "en")).toBe("$0.67");
 });

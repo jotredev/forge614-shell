@@ -6,7 +6,7 @@ import { formatMemory } from "../../infrastructure/runtime-resources.ts";
 import { ActivityCard } from "./transcript.ts";
 
 import { accent as mint, warning as amber, muted, border, success } from "./theme.ts";
-import { compactNumber, contextRing, isDisplayableUsage, progressBar, resetLabel, usageTitle } from "./metrics.ts";
+import { compactNumber, contextRing, formatCount, formatUsd, isDisplayableUsage, progressBar, resetLabel, usageTitle } from "./metrics.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -37,7 +37,13 @@ export class ShellSidebar implements Component {
     catch { this.refreshMessage = t.refreshFailed; }
     finally { this.refreshing = false; this.repaint(); }
   }
+  /**
+   * Consumes the left button's press/drag/release, exactly like the composer, so dragging a
+   * selection in the chat can never spill into this column. Clicks still reach the activity rows.
+   * (Keeping a selection still while the screen scrolls depends on pi-tui and is not handled here.)
+   */
   handleMouse(event: TuiMouseEvent) {
+    if (event.button === "left" && (event.type === "press" || event.type === "drag" || event.type === "release")) return { handled: true };
     const activityId = this.activityRows.get(event.y);
     if (activityId !== undefined && event.type === "click" && event.button === "left" && event.x >= 0) {
       if (this.expandedActivityIds.has(activityId)) this.expandedActivityIds.delete(activityId);
@@ -60,6 +66,8 @@ export class ShellSidebar implements Component {
     this.refreshRow = -1;
     const snapshot = this.getSnapshot();
     const line = (text = "") => cut(text, width);
+    // Explanatory text wraps instead of being cut with "…": a reason the person cannot read is worse than a second row.
+    const note = (text: string) => wrapTextWithAnsi(muted(text), Math.max(1, width));
     const heading = (title: string) => [line(mint(`// ${title}`)), border("─".repeat(Math.max(0, width)))];
     if (snapshot.account !== "connected") {
       const label = snapshot.account === "checking" ? t.checking : snapshot.account === "unknown" ? t.unverified : t.disconnected;
@@ -79,7 +87,7 @@ export class ShellSidebar implements Component {
       const used = percent(snapshot.context.used, snapshot.context.window);
       const details = [t.conversationLabel, t.percentUsed({ percent: used }), t.percentFree({ percent: Math.max(0, 100 - used) })];
       lines.push("", ...heading(t.headingContext), ...contextRing(used).map((ring, i) => line(ring + "  " + muted(details[i - 1] ?? ""))), line(`${compactNumber(snapshot.context.used)} / ${compactNumber(snapshot.context.window)} tokens`));
-    } else lines.push("", ...heading(t.headingContext), line(muted(snapshot.sessionId ? t.measurementUnavailable : t.availableAfterFirstResponse)));
+    } else lines.push("", ...heading(t.headingContext), ...note(snapshot.sessionId ? t.contextAfterNextMessage : t.contextAfterFirstMessage));
     const usage = snapshot.usage?.filter(item => isDisplayableUsage(item.label)) ?? [];
     if (usage.length) {
       lines.push("", ...heading(t.headingPlanUsage), ...usage.flatMap(usage => [
@@ -88,15 +96,20 @@ export class ShellSidebar implements Component {
         ...(usage.reset ? [line(muted(resetLabel(usage.reset, undefined, this.locale)))] : []),
         "",
       ]));
-    } else lines.push("", ...heading(t.headingPlanUsage), line(muted(t.usageUnavailable)));
-    // Token/cost figures for the last turn live right under PLAN USAGE — they're consumption info
-    // too, not a system resource like RAM below.
+    } else lines.push("", ...heading(t.headingPlanUsage), ...note(t.usageUnavailable));
+    // The last message's tokens and the pay-per-use estimate live right under PLAN USAGE — they're
+    // consumption info too, not a system resource like RAM below. Each is a short title followed by
+    // plain-language rows, so nothing has to fit on one line.
     if (snapshot.inputTokens !== undefined || snapshot.outputTokens !== undefined) {
-      lines.push(line(`${muted(t.fieldLastTurn)}  ${snapshot.inputTokens ?? "?"} ${t.tokensIn} · ${snapshot.outputTokens ?? "?"} ${t.tokensOut}`));
+      lines.push(line(t.lastMessageTitle));
+      if (snapshot.inputTokens !== undefined) lines.push(...note(t.lastMessageRead({ tokens: formatCount(snapshot.inputTokens, this.locale) })));
+      if (snapshot.outputTokens !== undefined) lines.push(...note(t.lastMessageWrote({ tokens: formatCount(snapshot.outputTokens, this.locale) })));
     }
     if (snapshot.estimateUSD !== undefined) {
-      lines.push(line(`${muted(t.fieldEstimatedCost)}  $${snapshot.estimateUSD.toFixed(4)}`));
-      lines.push(line(muted(t.referenceOnlyNotBilled)));
+      if (snapshot.inputTokens !== undefined || snapshot.outputTokens !== undefined) lines.push("");
+      lines.push(line(t.payPerUseTitle));
+      lines.push(...note(snapshot.estimateUSD < 0.01 ? t.payPerUseUnderOneCent : t.payPerUseAmount({ amount: formatUsd(snapshot.estimateUSD, this.locale) })));
+      lines.push(...note(t.planDoesNotBill));
     }
     if (snapshot.resources) {
       lines.push("", ...heading(t.headingResources), line(`${muted(t.fieldShellRam)}  ${formatMemory(snapshot.resources.shellRssBytes)}`));
@@ -116,7 +129,7 @@ export class ShellSidebar implements Component {
           const elapsed = elapsedMs < 60_000 ? ba.elapsedSeconds({ seconds: Math.max(0, Math.floor(elapsedMs / 1000)) }) : ba.elapsedMinutes({ minutes: Math.max(0, Math.floor(elapsedMs / 60_000)) });
           const stateLabel = activity.state === "running" ? ba.running : activity.state === "done" ? ba.done : ba.failed;
           const expanded = this.expandedActivityIds.has(activity.id);
-          const card = new ActivityCard(activity.label, `${stateLabel} · ${elapsed}`, (activity.detail ?? "").slice(0, 2000), expanded);
+          const card = new ActivityCard(activity.label, `${stateLabel} · ${elapsed}`, (activity.detail ?? "").slice(0, 2000), expanded, undefined, 0);
           const cardLines = card.render(width);
           // Collapsed cards render ["", summary, preview?] — the title sits at index 1.
           // Expanded cards render ["", padding, "▾ title", ...body, padding, ""] — the title sits at index 2.

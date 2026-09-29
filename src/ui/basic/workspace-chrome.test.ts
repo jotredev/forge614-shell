@@ -266,23 +266,25 @@ test("chat renders markdown rather than displaying raw emphasis markers", () => 
   expect(lines).not.toContain("`session.ts`");
 });
 
-test("status bar condenses only known session details into one workspace line", () => {
+/** The bottom bar must not repeat what the sidebar already shows (owner's points 11 and 20): agent, model, reasoning level and «ctx N%» are gone, and what does not repeat (folder, branch, Git state, background count) stays. */
+test("status bar shows no agent, model, reasoning or context figure — only folder, branch, Git state and background work", () => {
+  const running = [{ id: "t1", kind: "agent" as const, label: "x", state: "running" as const, startedAt: Date.now() }];
   const bar = new ShellStatusBar(() => ({
     account: "connected",
     provider: "Claude Code",
     model: "claude-opus-5",
     reasoning: "medium",
     context: { used: 18_000, window: 128_000 },
-  }));
+    backgroundActivity: running,
+  }), "/Users/forge/project", () => ({ path: "/Users/forge/project", git: true, branch: "main", changedFiles: 0 }), "/Users/forge");
 
   const lines = plain(bar.render(100));
   expect(lines).toHaveLength(2);
   expect(lines[0]).toStartWith("  ");
   expect(lines[1]).toBe("");
   expect(lines[0]).toContain("F614");
-  expect(lines[0]).toContain("Claude Code");
-  expect(lines[0]).toContain("claude-opus-5");
-  expect(lines[0]).toContain("ctx 14%");
+  for (const repeated of ["Claude Code", "claude-opus-5", "medium", "ctx", "14%"]) expect(lines[0]).not.toContain(repeated);
+  for (const kept of ["1 background", "~/project", "main", "Clean"]) expect(lines[0]).toContain(kept);
 });
 
 test("status bar shows compact project identity below the chat", () => {
@@ -324,7 +326,7 @@ test("status bar pins the Shell version to the footer's right edge", () => {
 
   const line = plain(bar.render(100))[0]!;
   expect(line).toEndWith("v1.0.0");
-  expect(line).toContain("Claude Code");
+  expect(line).toContain("~/project");
 });
 
 test("spinnerFrame exposes the same animated dot the composer status uses", () => {
@@ -340,4 +342,11 @@ test("status bar shows a running-count segment with the animated dot only while 
 
   const idle = new ShellStatusBar(() => ({ account: "connected", provider: "Claude", backgroundActivity: [] }), "/proj");
   expect(idle.render(80).join("\n")).not.toContain("background");
+});
+
+/** A disconnected account is a warning, not a repeat of sidebar data: it must still reach a person whose terminal is too narrow for the sidebar. */
+test("status bar still tells the person when the account is disconnected", () => {
+  const bar = new ShellStatusBar(() => ({ account: "disconnected", provider: "Claude Code" }));
+  expect(plain(bar.render(80))[0]).toContain("Disconnected");
+  expect(plain(bar.render(80))[0]).toContain("/login");
 });
