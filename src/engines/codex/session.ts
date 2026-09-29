@@ -1,5 +1,7 @@
 import type { RpcConnection } from "../../infrastructure/rpc.ts";
-import type { Approve, Emit, NativeModel, NativeSession, NativeSessionInfo, NativeVisualState, NativeWorkMode } from "../types.ts";
+import type { Approve, Emit, NativeModel, NativeSession, NativeSessionInfo, NativeVisualState, NativeWorkMode, WorkModeChange } from "../types.ts";
+import { buildCodexWorkModes, sandboxPolicyFor } from "./work-modes.ts";
+import type { CodexWorkMode } from "./work-modes.ts";
 import { openLoginBrowser } from "../../infrastructure/browser.ts";
 import { confirmedLogout } from "../logout.ts";
 import { engramToolLabel } from "../mcp-labels.ts";
@@ -51,8 +53,10 @@ export class CodexSession implements NativeSession {
   private streamed = new Set<string>();
   /** Commands started and not yet completed, by item id, in start order — what `currentActivity()` reports. */
   private runningCommands = new Map<string, string>();
-  private modes: NativeWorkMode[] = [];
-  private selectedMode?: { approvalPolicy: string; sandboxPolicy: { type: string } };
+  private modes: CodexWorkMode[] = [];
+  private selectedMode?: CodexWorkMode;
+  /** The mode of the last thread/turn request Codex accepted (undefined = the default it opened with); where a rejected mode goes back to. */
+  private acceptedMode?: CodexWorkMode;
   private pendingStartupContext?: string;
 
   private readonly locale: Locale;
@@ -93,14 +97,11 @@ export class CodexSession implements NativeSession {
     } while (cursor);
     await this.readQuotas();
   }
+  /** Builds the mode list from what Codex allows (`configRequirements/read`); if it cannot be read, Codex's own presets are offered unrestricted (see `buildCodexWorkModes`). */
   private async readWorkModes(): Promise<void> {
-    try {
-      const result = await this.rpc.request("configRequirements/read", {});
-      const requirements = result.requirements;
-      const policies: string[] = requirements?.allowedApprovalPolicies ?? ["onRequest", "unlessTrusted"];
-      const sandboxes: string[] = requirements?.allowedSandboxModes ?? ["readOnly", "workspaceWrite"];
-      this.modes = policies.flatMap(policy => sandboxes.map(sandbox => ({ id: `${policy}:${sandbox}`, label: `${policy} · ${sandbox}` })));
-    } catch { this.modes = []; }
+    let requirements: unknown = null;
+    try { requirements = (await this.rpc.request("configRequirements/read", {})).requirements; } catch { /* no restrictions known */ }
+    this.modes = buildCodexWorkModes(requirements as Parameters<typeof buildCodexWorkModes>[0]);
   }
   workModes(): NativeWorkMode[] { return this.modes; }
   /** The command Codex is running now (its `item/started` `command`), collapsed to one line; undefined when none runs. */
@@ -109,12 +110,17 @@ export class CodexSession implements NativeSession {
     const last = commands[commands.length - 1];
     return last?.replace(/\s+/g, " ").trim() || undefined;
   }
-  workMode(): string | undefined { return this.selectedMode ? `${this.selectedMode.approvalPolicy}:${this.selectedMode.sandboxPolicy.type}` : undefined; }
-  async setWorkMode(id: string): Promise<void> {
-    this.idle();
-    const [approvalPolicy, sandbox] = id.split(":");
-    if (!approvalPolicy || !sandbox || !this.modes.some(mode => mode.id === id)) throw new ShellError("codex-mode-unknown");
-    this.selectedMode = { approvalPolicy, sandboxPolicy: { type: sandbox } };
+  workMode(): string | undefined { return this.selectedMode?.id; }
+  /**
+   * Accepts a mode from the adapter's own list at any moment. Codex reads the mode with each `turn/start`,
+   * so a change made while a turn (or a compaction) runs cannot reach that turn: it is kept and reported as
+   * `next-turn`, and the caller says so. Nothing here throws because something is running.
+   */
+  async setWorkMode(id: string): Promise<WorkModeChange> {
+    const mode = this.modes.find(item => item.id === id);
+    if (!mode) throw new ShellError("codex-mode-unknown");
+    this.selectedMode = mode;
+    return this.busy ? "next-turn" : "applied";
   }
   private async readAccount(): Promise<boolean> {
     const response = await this.rpc.request("account/read", { refreshToken: false });
@@ -249,25 +255,12 @@ export class CodexSession implements NativeSession {
     this.idle(); if (!text.trim()) return;
     if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
     this.busy = true; this.aborted = new AbortController(); this.streamed.clear(); this.items.clear(); this.runningCommands.clear();
+    // The mode this turn is sent with; a change made while it runs is for the next one (see `setWorkMode`).
+    const mode = this.selectedMode;
     try {
       if (!await this.readAccount()) throw new ShellError("codex-requires-login-no-fallback");
       if (this.aborted.signal.aborted) return;
-      if (!this.loaded) {
-        const config = this.selectedMode
-          ? { cwd: this.cwd, model: this.model, modelProvider: "openai", ...this.selectedMode }
-          : { cwd: this.cwd, model: this.model, modelProvider: "openai", approvalPolicy: "untrusted", approvalsReviewer: "user", sandbox: "workspace-write" };
-        const result = await this.rpc.request(this.sessionId ? "thread/resume" : "thread/start", { ...config, ...(this.sessionId ? { threadId: this.sessionId } : {}) });
-        if (result.modelProvider !== "openai") throw new ShellError("codex-unexpected-provider");
-        this.sessionId = result.thread.id; this.loaded = true; this.model = result.model; this.effort ??= result.reasoningEffort;
-        if (this.getStartupContextFn) {
-          try {
-            const context = await this.getStartupContextFn(this.cwd, {});
-            this.pendingStartupContext = context.available ? wrapStartupContext(context.text) : undefined;
-          } catch {
-            this.pendingStartupContext = undefined;
-          }
-        }
-      }
+      await this.openThread(mode);
       if (this.aborted.signal.aborted) return;
       const finished = new Promise<void>((resolve, reject) => { this.finishTurn = error => error ? reject(error) : resolve(); });
       void finished.catch(() => {});
@@ -276,10 +269,68 @@ export class CodexSession implements NativeSession {
         { type: "text", text },
       ];
       this.pendingStartupContext = undefined;
-      const result = await this.rpc.request("turn/start", { threadId: this.sessionId, input, model: this.model, effort: this.effort, ...(this.selectedMode ? { approvalPolicy: this.selectedMode.approvalPolicy, sandboxPolicy: this.selectedMode.sandboxPolicy } : { approvalPolicy: "untrusted", approvalsReviewer: "user" }) });
+      const result = await this.requestWithMode(mode, "turn/start", { threadId: this.sessionId, input, model: this.model, effort: this.effort, approvalsReviewer: "user", ...(mode ? { approvalPolicy: mode.approvalPolicy, sandboxPolicy: sandboxPolicyFor(mode.sandbox) } : { approvalPolicy: "untrusted" }) });
       this.turnId = result.turn.id;
       if (this.aborted.signal.aborted) await this.rpc.request("turn/interrupt", { threadId: this.sessionId, turnId: this.turnId });
       await finished;
+    } finally { this.busy = false; this.turnId = undefined; this.finishTurn = undefined; this.aborted.abort(); }
+  }
+  /**
+   * Sends a request that carries the work mode. If Codex rejects it while the mode is one it has not
+   * accepted yet, that mode is the likely cause: the previous accepted mode comes back and the person hears
+   * so in plain words (`codex-mode-rejected`) instead of Codex's raw text. A closed connection or a
+   * cancelled turn is not a mode problem and passes through untouched.
+   */
+  private async requestWithMode(mode: CodexWorkMode | undefined, method: string, params: any): Promise<any> {
+    try {
+      const result = await this.rpc.request(method, params);
+      this.acceptedMode = mode;
+      return result;
+    } catch (error) {
+      if (mode !== this.acceptedMode && !this.aborted.signal.aborted) {
+        if (this.selectedMode === mode) this.selectedMode = this.acceptedMode;
+        throw new ShellError("codex-mode-rejected");
+      }
+      throw error;
+    }
+  }
+  /** Starts (or resumes) the Codex thread once, with the given mode, and loads Engram's startup memory to send in front of the next message. A thread already open is left as it is. */
+  private async openThread(mode: CodexWorkMode | undefined): Promise<void> {
+    if (this.loaded) return;
+    const config = { cwd: this.cwd, model: this.model, modelProvider: "openai", approvalsReviewer: "user", ...(mode ? { approvalPolicy: mode.approvalPolicy, sandbox: mode.sandbox } : { approvalPolicy: "untrusted", sandbox: "workspace-write" }) };
+    const result = await this.requestWithMode(mode, this.sessionId ? "thread/resume" : "thread/start", { ...config, ...(this.sessionId ? { threadId: this.sessionId } : {}) });
+    if (result.modelProvider !== "openai") throw new ShellError("codex-unexpected-provider");
+    this.sessionId = result.thread.id; this.loaded = true; this.model = result.model; this.effort ??= result.reasoningEffort;
+    await this.loadStartupContext();
+  }
+  /** Fetches Engram's digest (with its notices) and keeps it, wrapped as data, to go in front of the next message; a failure or no digest leaves nothing pending. */
+  private async loadStartupContext(): Promise<void> {
+    if (!this.getStartupContextFn) return;
+    try {
+      const context = await this.getStartupContextFn(this.cwd, {});
+      this.pendingStartupContext = context.available ? wrapStartupContext(context.text) : undefined;
+    } catch {
+      this.pendingStartupContext = undefined;
+    }
+  }
+  /**
+   * `/compact`: asks Codex's own engine to compact the thread (`thread/compact/start`) and holds the
+   * session busy until the compaction turn ends, like any turn. Compacting drops the conversation the
+   * startup memory was sent with, so the memory is fetched again and goes in front of the next message —
+   * the same way it goes in when a thread is opened.
+   */
+  async compact(): Promise<void> {
+    this.idle();
+    if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
+    if (!this.sessionId) throw new ShellError("codex-compact-no-conversation");
+    this.busy = true; this.aborted = new AbortController();
+    try {
+      await this.openThread(this.selectedMode);
+      const finished = new Promise<void>((resolve, reject) => { this.finishTurn = error => error ? reject(error) : resolve(); });
+      void finished.catch(() => {});
+      await this.rpc.request("thread/compact/start", { threadId: this.sessionId });
+      await finished;
+      await this.loadStartupContext();
     } finally { this.busy = false; this.turnId = undefined; this.finishTurn = undefined; this.aborted.abort(); }
   }
   async cancel(): Promise<void> {

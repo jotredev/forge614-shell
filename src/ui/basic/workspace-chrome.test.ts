@@ -237,16 +237,25 @@ test("a running elapsed-time counter still reads as the busy color, and the dot 
   expect(readyLine).not.toContain("12s");
 });
 
-test("native work modes use clear English labels and the matching semantic colors", () => {
-  expect(stripVTControlCharacters(workModePresentation("bypassPermissions").text)).toContain("bypass permissions on");
-  expect(stripVTControlCharacters(workModePresentation("auto").text)).toContain("auto mode on");
-  expect(stripVTControlCharacters(workModePresentation("default").text)).toContain("manual mode on");
-  expect(stripVTControlCharacters(workModePresentation("acceptEdits").text)).toContain("accept edits on");
-  expect(stripVTControlCharacters(workModePresentation("plan").text)).toContain("plan mode on");
-  expect(workModePresentation("bypassPermissions").text).toContain("255;102;136");
-  expect(workModePresentation("auto").text).toContain("237;183;88");
-  expect(stripVTControlCharacters(workModePresentation("onRequest:readOnly").text)).toContain("manual mode on");
-  expect(stripVTControlCharacters(workModePresentation("unlessTrusted:workspaceWrite").text)).toContain("auto mode on");
+/**
+ * Idea 26: the composer draws whatever mode the adapter hands it (its own native name, colored by the
+ * adapter's tone) and knows no mode ids; a brand-new assistant's mode needs no change here.
+ */
+test("the composer shows the adapter's own mode name colored by its tone, and knows no mode ids", () => {
+  const strip = (mode: Parameters<typeof workModePresentation>[0]) => stripVTControlCharacters(workModePresentation(mode).text);
+  expect(strip({ id: "x1", label: "Bypass permissions", tone: "danger" })).toContain("Bypass permissions");
+  expect(workModePresentation({ id: "x1", label: "Bypass permissions", tone: "danger" }).text).toContain("255;102;136");
+  expect(strip({ id: "x2", label: "Auto mode", tone: "auto" })).toContain("Auto mode");
+  expect(workModePresentation({ id: "x2", label: "Auto mode", tone: "auto" }).text).toContain("237;183;88");
+  expect(strip({ id: "x3", label: "Default", tone: "manual" })).toContain("Default");
+  expect(strip({ id: "x4", label: "Accept edits", tone: "acceptEdits" })).toContain("Accept edits");
+  expect(strip({ id: "x5", label: "Plan mode", tone: "plan" })).toContain("Plan mode");
+  expect(strip({ id: "x6", label: "Read Only", tone: "readOnly" })).toContain("Read Only");
+  const unknown = workModePresentation({ id: "some-future-id", label: "Brand new mode" });
+  expect(stripVTControlCharacters(unknown.text)).toContain("Brand new mode");
+  expect(stripVTControlCharacters(unknown.text + unknown.help)).not.toContain("some-future-id");
+  expect(stripVTControlCharacters(workModePresentation({ id: "x1", label: "Default", tone: "manual" }, "es").help)).toContain("Shift+Tab");
+  expect(stripVTControlCharacters(workModePresentation(undefined).text)).toContain("engine mode");
 });
 
 test("composer preserves pasted newlines and fits narrow and wide viewports", () => {

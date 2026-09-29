@@ -13,7 +13,8 @@ import { createComposer } from "./composer.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { readRuntimeResources } from "../../infrastructure/runtime-resources.ts";
-import { loadEnginePreference, saveEnginePreference } from "../../infrastructure/shell-preferences.ts";
+import { loadEnginePreference, saveEngineMode, saveEnginePreference } from "../../infrastructure/shell-preferences.ts";
+import { cycleWorkMode, restoreWorkMode } from "../../engines/work-mode.ts";
 import { getStartupContext } from "../../infrastructure/forge614-engram.ts";
 import { withStartupNotices } from "../../infrastructure/engram-notices.ts";
 import { ShellStatusBar } from "./status-bar.ts";
@@ -133,6 +134,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         const saved = loadEnginePreference("claude", { env: process.env });
         if (saved?.model && session.models.some(model => model.value === saved.model)) session.model = saved.model;
         if (saved?.effort) session.effort = saved.effort as EffortLevel;
+        // The last work mode comes back without asking; one Claude Code no longer lists leaves its default.
+        await restoreWorkMode(session, saved?.mode);
       }
       syncCommandGroups();
     }
@@ -193,7 +196,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     sidebar.invalidate();
     const working = turnStartedAt !== undefined ? workingStatus(t.statusWorking, toolTracker.currentActivity(), (Date.now() - turnStartedAt) / 1000) : t.statusWorking;
     input.setStatus(commandBusy || session.busy ? working : shellState.snapshot().account === "connected" ? t.statusReady : shellState.snapshot().account === "checking" ? tc.statusCheckingAccount : t.statusConnectWithLogin);
-    input.setWorkModeHint(session.workMode());
+    input.setWorkModeHint(session.workModes().find(mode => mode.id === session.workMode()));
     statusBar.invalidate();
     tui.requestRender();
   };
@@ -466,10 +469,14 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   };
   tui.addInputListener(data => {
     if (matchesKey(data, "shift+tab")) {
-      const modes = session.workModes();
-      const index = modes.findIndex(mode => mode.id === session.workMode());
-      const next = modes[(index + 1) % modes.length]!;
-      void session.setWorkMode(next.id).then(refresh).catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) })));
+      // Available at any moment — mid-turn or with a permission pending. Claude's live query takes the
+      // new mode at once; the mode is saved so it comes back next time, and refresh() runs also on a refusal
+      // so the hint shows the mode that stayed.
+      void cycleWorkMode(session).then(result => {
+        if (!result) return;
+        saveEngineMode("claude", result.mode.id, { env: process.env });
+        if (result.change === "next-turn") write(t.workModeNextTurn({ mode: result.mode.label }));
+      }).catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))).finally(refresh);
       return { consume: true };
     }
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) {

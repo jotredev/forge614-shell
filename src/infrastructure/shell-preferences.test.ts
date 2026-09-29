@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadEnginePreference, loadLocale, saveEnginePreference, saveLocale } from "./shell-preferences.ts";
+import { loadEnginePreference, loadLastEngine, loadLocale, saveEngineMode, saveEnginePreference, saveLastEngine, saveLocale } from "./shell-preferences.ts";
 
 function tempHome(): string {
   return mkdtempSync(join(tmpdir(), "forge614-shell-prefs-"));
@@ -167,5 +167,67 @@ test("saveLocale never throws even when the target directory cannot be created, 
     let result: boolean | undefined;
     expect(() => { result = saveLocale("es", { env: { FORGE614_HOME: join(blockedHome, "nested") } }); }).not.toThrow();
     expect(result).toBe(false);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+/** Idea 7: Shell remembers which assistant was used last, to mark it in the startup picker. */
+test("the last used engine round-trips, and nothing is remembered before the first save", () => {
+  const home = tempHome();
+  try {
+    expect(loadLastEngine({ home })).toBeUndefined();
+    saveLastEngine("codex", { home });
+    expect(loadLastEngine({ home })).toBe("codex");
+    saveLastEngine("claude", { home });
+    expect(loadLastEngine({ home })).toBe("claude");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+/** A hand-edited or future file must never make Shell mark or start an engine it does not know. */
+test("an unknown last engine value in the file is treated as none", () => {
+  const home = tempHome();
+  writePreferencesFile(home, JSON.stringify({ lastEngine: "someday-agent", claude: { model: "sonnet" } }));
+  try {
+    expect(loadLastEngine({ home })).toBeUndefined();
+    expect(loadEnginePreference("claude", { home })).toEqual({ model: "sonnet" });
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+/** Idea 7: each assistant keeps its own last work mode, whatever it is — «full access / never ask» included. */
+test("each engine remembers its own last work mode, including the full-access one", () => {
+  const home = tempHome();
+  try {
+    saveEngineMode("claude", "bypassPermissions", { home });
+    saveEngineMode("codex", "never:danger-full-access", { home });
+    expect(loadEnginePreference("claude", { home })).toEqual({ mode: "bypassPermissions" });
+    expect(loadEnginePreference("codex", { home })).toEqual({ mode: "never:danger-full-access" });
+    saveEngineMode("claude", "default", { home });
+    expect(loadEnginePreference("claude", { home })?.mode).toBe("default");
+    expect(loadEnginePreference("codex", { home })?.mode).toBe("never:danger-full-access");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+/** Model/reasoning and mode are saved at different moments; saving one must never wipe the other. */
+test("saving the model never erases the saved mode, and saving the mode never erases the model", () => {
+  const home = tempHome();
+  try {
+    saveEngineMode("codex", "on-request:workspace-write", { home });
+    saveEnginePreference("codex", { model: "gpt-5.6-terra", effort: "high" }, { home });
+    expect(loadEnginePreference("codex", { home })).toEqual({ model: "gpt-5.6-terra", effort: "high", mode: "on-request:workspace-write" });
+    saveEngineMode("codex", "never:danger-full-access", { home });
+    expect(loadEnginePreference("codex", { home })).toEqual({ model: "gpt-5.6-terra", effort: "high", mode: "never:danger-full-access" });
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+/** The last engine and the mode are extra fields in the same file; the language choice must survive them. */
+test("saving the last engine and the mode keeps the saved language and model choices", () => {
+  const home = tempHome();
+  try {
+    saveLocale("es", { home });
+    saveEnginePreference("claude", { model: "sonnet" }, { home });
+    saveLastEngine("claude", { home });
+    saveEngineMode("claude", "plan", { home });
+    expect(loadLocale({ home })).toBe("es");
+    expect(loadEnginePreference("claude", { home })).toEqual({ model: "sonnet", mode: "plan" });
+    expect(loadLastEngine({ home })).toBe("claude");
   } finally { rmSync(home, { recursive: true, force: true }); }
 });

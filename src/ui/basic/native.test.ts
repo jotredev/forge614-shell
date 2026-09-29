@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Terminal } from "@earendil-works/pi-tui";
@@ -57,17 +57,135 @@ test("model picker applies arrow selection, cancels unchanged and never sends a 
   } finally { enter("/quit!"); await ui; }
 });
 
-test("Shift+Tab cycles only a native work mode reported by Codex", async () => {
+/** Idea 26: Shift+Tab only reaches a mode Codex itself allows (here a single restriction, in the protocol's own values) and the composer shows Codex's name for it, not Shell's «manual/auto». */
+test("Shift+Tab cycles only a native work mode reported by Codex, shown with the name Codex uses", async () => {
   const terminal = new TestTerminal(); const rpc = new FixtureRpc();
   rpc.replies.set("initialize", {});
   rpc.replies.set("account/read", { account: { type: "chatgpt" }, requiresOpenaiAuth: true });
-  rpc.replies.set("configRequirements/read", { requirements: { allowedApprovalPolicies: ["onRequest"], allowedSandboxModes: ["readOnly"] } });
+  rpc.replies.set("configRequirements/read", { requirements: { allowedApprovalPolicies: ["on-request"], allowedSandboxModes: ["read-only"] } });
   rpc.replies.set("model/list", { data: [], nextCursor: null });
   const ui = runNativeUI("codex", "/project", (emit, approve) => new CodexSession(rpc, "/project", emit, approve), terminal);
   try {
     await tick(); terminal.input("\x1b[Z"); await tick();
-    expect(stripVTControlCharacters(terminal.output)).toContain("manual mode on · read only");
+    expect(stripVTControlCharacters(terminal.output)).toContain("Read Only");
   } finally { terminal.input("/quit!"); terminal.input("\r"); await ui; }
+});
+
+/** A Codex fixture with the three native modes available and a turn that stays open until the test completes it. */
+function codexUi() {
+  const terminal = new TestTerminal(); const rpc = new FixtureRpc();
+  rpc.replies.set("initialize", {});
+  rpc.replies.set("account/read", { account: { type: "chatgpt" }, requiresOpenaiAuth: true });
+  rpc.replies.set("configRequirements/read", { requirements: null });
+  rpc.replies.set("model/list", { data: [], nextCursor: null });
+  rpc.replies.set("thread/start", { thread: { id: "t" }, model: "m", modelProvider: "openai" });
+  rpc.replies.set("turn/start", { turn: { id: "u", status: "inProgress" } });
+  rpc.replies.set("thread/compact/start", {});
+  let session!: CodexSession;
+  const ui = runNativeUI("codex", "/project", (emit, approve) => session = new CodexSession(rpc, "/project", emit, approve), terminal);
+  const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+  const plain = () => stripVTControlCharacters(terminal.output);
+  return { terminal, rpc, ui, enter, plain, session: () => session };
+}
+const savedPreferences = () => JSON.parse(readFileSync(join(forgeHome, "shell", "preferences.json"), "utf8"));
+
+/** Idea 1: Shift+Tab mid-turn never says «Finish or /stop»; the mode changes and one line says it applies from the next turn. */
+test("Shift+Tab during a Codex turn changes the mode and says it applies from the next turn", async () => {
+  const { terminal, rpc, ui, enter, plain, session } = codexUi();
+  try {
+    await tick(); enter("work please"); await tick();
+    expect(session().busy).toBe(true);
+    terminal.input("\x1b[Z"); await tick();
+    expect(session().workMode()).toBe("on-request:read-only");
+    expect(plain()).toContain(getCatalog("en").chat.workModeNextTurn({ mode: "Read Only" }));
+    expect(plain()).not.toContain("Finish or /stop");
+    rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+    await tick();
+  } finally { enter("/quit!"); await ui; }
+});
+
+/** Idea 1: with a permission question still open, Shift+Tab is not swallowed by it. */
+test("Shift+Tab works while a Codex permission question is pending", async () => {
+  const { terminal, rpc, ui, enter, session } = codexUi();
+  try {
+    await tick(); enter("run something"); await tick();
+    const answer = rpc.onRequest("item/commandExecution/requestApproval", { threadId: "t", turnId: "u", itemId: "i", command: "touch x" });
+    await tick();
+    terminal.input("\x1b[Z"); await tick();
+    expect(session().workMode()).toBe("on-request:read-only");
+    enter("/no"); expect(await answer).toEqual({ decision: "decline" });
+    rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+    await tick();
+  } finally { enter("/quit!"); await ui; }
+});
+
+/** Idea 23: `/compact` reaches Codex's own compaction and the person is told when it is done. */
+test("/compact with Codex calls thread/compact/start and reports the result", async () => {
+  const { rpc, ui, enter, plain } = codexUi();
+  try {
+    await tick(); enter("hello"); await tick();
+    rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+    await tick(); enter("/compact"); await tick();
+    expect(rpc.calls.find(call => call.method === "thread/compact/start")?.params).toEqual({ threadId: "t" });
+    rpc.onNotification("turn/started", { threadId: "t", turn: { id: "c1" } });
+    rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "c1", status: "completed" } });
+    await tick();
+    expect(plain()).toContain(getCatalog("en").codexChat.compacted);
+    expect(plain()).not.toContain("Unknown command");
+  } finally { enter("/quit!"); await ui; }
+});
+
+/** Idea 23: a native command Shell cannot pass to Codex gets an honest one-line answer instead of «Unknown command». */
+test("a command Shell cannot pass to Codex says so honestly, in English and in Spanish", async () => {
+  for (const locale of ["en", "es"] as const) {
+    const terminal = new TestTerminal(); const rpc = new FixtureRpc();
+    rpc.replies.set("initialize", {});
+    rpc.replies.set("account/read", { account: { type: "chatgpt" }, requiresOpenaiAuth: true });
+    rpc.replies.set("configRequirements/read", { requirements: null });
+    rpc.replies.set("model/list", { data: [], nextCursor: null });
+    const ui = runNativeUI("codex", "/project", (emit, approve) => new CodexSession(rpc, "/project", emit, approve, undefined, undefined, locale), terminal, undefined, locale);
+    try {
+      await tick(); terminal.input("/diff"); terminal.input("\r"); await tick();
+      const text = stripVTControlCharacters(terminal.output);
+      expect(text).toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/diff" }));
+      expect(text).not.toContain(getCatalog(locale).chat.unknownCommand({ name: "/diff" }));
+    } finally { terminal.input("/quit!"); terminal.input("\r"); await ui; }
+  }
+});
+
+/** Idea 7: the mode chosen with Shift+Tab is written next to the model, so it survives closing Shell. */
+test("Shift+Tab saves the Codex mode, including full access, in Shell's preferences", async () => {
+  const { terminal, ui, enter } = codexUi();
+  try {
+    await tick(); terminal.input("\x1b[Z"); await tick();
+    expect(savedPreferences().codex.mode).toBe("on-request:read-only");
+    for (let i = 0; i < 2; i++) { terminal.input("\x1b[Z"); await tick(); }
+    expect(savedPreferences().codex.mode).toBe("never:danger-full-access");
+  } finally { enter("/quit!"); await ui; }
+});
+
+/** Idea 7: opening Shell again puts the saved mode back without asking, even the full-access one. */
+test("Codex reopens in the saved work mode without asking", async () => {
+  mkdirSync(join(forgeHome, "shell"), { recursive: true });
+  writeFileSync(join(forgeHome, "shell", "preferences.json"), JSON.stringify({ codex: { mode: "never:danger-full-access" } }));
+  const { ui, enter, session } = codexUi();
+  try {
+    await tick();
+    expect(session().workMode()).toBe("never:danger-full-access");
+  } finally { enter("/quit!"); await ui; }
+});
+
+/** Idea 7: a saved mode Codex no longer has (it changed version) leaves Codex on its default, with no error on screen. */
+test("a saved Codex mode that no longer exists falls back to the default without an error", async () => {
+  mkdirSync(join(forgeHome, "shell"), { recursive: true });
+  writeFileSync(join(forgeHome, "shell", "preferences.json"), JSON.stringify({ codex: { mode: "unlessTrusted:workspaceWrite" } }));
+  const { ui, enter, session, plain } = codexUi();
+  try {
+    await tick();
+    expect(session().workMode()).toBeUndefined();
+    expect(plain()).not.toContain("Error");
+    expect(plain()).not.toContain("Choose a mode");
+  } finally { enter("/quit!"); await ui; }
 });
 
 test("local logout waits for consent and never calls native account logout", async () => {

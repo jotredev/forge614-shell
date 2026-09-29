@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { stripVTControlCharacters } from "node:util";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { startClaudeUI } from "./claude.ts";
@@ -76,6 +78,45 @@ if(process.argv[2]==='auth') {
     for (let i = 0; i < 30 && !terminal.output.includes("Connected to Claude in Shell"); i++) await tick();
     expect(await readFile(marker, "utf8")).toBe("auth status --json\nauth status --json\n");
     expect(terminal.output).toContain("Connected to Claude in Shell");
+  } finally {
+    enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
+    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+  }
+});
+
+/**
+ * Idea 7 and idea 1 on the Claude screen: the work mode saved last time is put back on opening (here
+ * «Plan mode», not the default), Shift+Tab keeps cycling the SDK's modes without any «Finish or /stop»
+ * error, and every change is written to Shell's preferences. Uses a fake `claude` executable, so no
+ * real account or network is involved.
+ */
+test.skipIf(process.platform === "win32")("Claude UI restores the saved work mode on opening and saves every Shift+Tab change", async () => {
+  const root = await mkdtemp(join(tmpdir(), "forge614-mode-ui-"));
+  const executable = join(root, "claude");
+  const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
+  const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+  const previousForgeHome = process.env.FORGE614_HOME;
+  process.env.FORGE614_HOME = join(root, "forge614-home");
+  const preferences = () => JSON.parse(readFileSync(join(root, "forge614-home", "shell", "preferences.json"), "utf8"));
+  try {
+    mkdirSync(join(root, "forge614-home", "shell"), { recursive: true });
+    writeFileSync(join(root, "forge614-home", "shell", "preferences.json"), JSON.stringify({ claude: { mode: "plan" } }));
+    await writeFile(executable, `#!${process.execPath}
+if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
+else {
+  require('readline').createInterface({input:process.stdin}).on('line',line=>{
+    const msg=JSON.parse(line);
+    if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
+  });
+}`, { mode: 0o755 });
+    ui = startClaudeUI([], executable, terminal); await tick();
+    for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
+    // «Plan» is the name Claude Code itself gives the mode; the restored mode is on screen before any key is pressed.
+    expect(stripVTControlCharacters(terminal.output)).toContain("Ⅱ Plan");
+    terminal.input("\x1b[Z"); await tick();
+    expect(preferences().claude.mode).toBe("dontAsk");
+    expect(stripVTControlCharacters(terminal.output)).toContain("Don't Ask");
+    expect(stripVTControlCharacters(terminal.output)).not.toContain("Finish or /stop");
   } finally {
     enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;

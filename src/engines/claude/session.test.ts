@@ -66,6 +66,108 @@ test("Claude applies its selected native permission mode to the next turn", asyn
   expect(session.workMode?.()).toBe("plan");
 });
 
+/**
+ * A fake live SDK query that stays open until `release()`, and records what `setPermissionMode` is
+ * asked. `running` resolves once the query is iterating, i.e. mid-turn.
+ */
+function liveQuery(setPermissionMode: (mode: string) => Promise<void>) {
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  let started!: () => void; const running = new Promise<void>(resolve => { started = resolve; });
+  const connect = (() => ({
+    supportedModels: async () => [],
+    async *[Symbol.asyncIterator]() { started(); await gate; yield { type: "result", subtype: "success", session_id: "s", is_error: false }; },
+    getContextUsage: async () => ({ totalTokens: 1, rawMaxTokens: 0 }),
+    setPermissionMode,
+    close: () => {},
+  })) as any;
+  return { connect, running, release };
+}
+
+/**
+ * The modes are the SDK's own `PermissionMode` values (`sdk.d.ts` of @anthropic-ai/claude-agent-sdk
+ * 0.3.274), named with the `title` Claude Code itself gives each one in its mode table (read from the
+ * `claude` binary that ships with that SDK): Manual, Accept edits, Plan, Don't Ask, Auto, Bypass Permissions.
+ */
+test("Claude offers the SDK permission modes with Claude Code's own names", () => {
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {} });
+  expect(session.workModes().map(mode => mode.id)).toEqual(["default", "acceptEdits", "plan", "dontAsk", "auto", "bypassPermissions"]);
+  expect(session.workModes().map(mode => mode.label)).toEqual(["Manual", "Accept edits", "Plan", "Don't Ask", "Auto", "Bypass Permissions"]);
+  expect(session.workModes().every(mode => typeof mode.tone === "string")).toBe(true);
+});
+
+/** Idea 1: while a turn runs, the SDK's live query is told the new mode at once (`Query.setPermissionMode`), and Shell no longer throws «Finish or /stop…». */
+test("changing the Claude mode mid-turn calls the live query's setPermissionMode and is applied at once", async () => {
+  const asked: string[] = [];
+  const { connect, running, release } = liveQuery(async mode => { asked.push(mode); });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect });
+  const turn = session.send("long job", () => {}, async () => false);
+  await running;
+  expect(session.busy).toBe(true);
+  expect(await session.setWorkMode("acceptEdits")).toBe("applied");
+  expect(asked).toEqual(["acceptEdits"]);
+  expect(session.workMode()).toBe("acceptEdits");
+  release(); await turn;
+});
+
+/** Row 26: if Claude Code refuses the live change, the person hears it plainly and the previous mode stays. */
+test("a live mode change that Claude Code refuses is reported plainly and the previous mode stays", async () => {
+  const { connect, running, release } = liveQuery(async () => { throw new Error("refused"); });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect });
+  const turn = session.send("long job", () => {}, async () => false);
+  await running;
+  let caught: unknown;
+  try { await session.setWorkMode("plan"); } catch (error) { caught = error; }
+  expect((caught as ShellError).code).toBe("claude-mode-rejected");
+  expect(describeError(caught, "en")).toContain("Claude Code did not accept that work mode");
+  expect(describeError(caught, "es")).toContain("Claude Code no aceptó ese modo de trabajo");
+  expect(session.workMode()).toBe("default");
+  release(); await turn;
+});
+
+/** With no live query to tell (the options are already fixed), the change is accepted, reported as next-turn, and the following turn opens in the new mode. */
+test("a mode change with no live query to tell is accepted for the next turn", async () => {
+  const seen: string[] = [];
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: input => {
+    seen.push(input.options.permissionMode as string);
+    return (async function* () { await gate; yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
+  } });
+  const first = session.send("one", () => {}, async () => false);
+  await new Promise(resolve => setImmediate(resolve));
+  expect(session.busy).toBe(true);
+  expect(await session.setWorkMode("plan")).toBe("next-turn");
+  release(); await first;
+  await session.send("two", () => {}, async () => false);
+  expect(seen).toEqual(["default", "plan"]);
+});
+
+/** A change made while the turn is still preparing (before its options exist) simply becomes that turn's mode. */
+test("a mode change while the turn is still preparing becomes that turn's mode", async () => {
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  let received: any;
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: () => gate, run: input => {
+    received = input;
+    return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
+  } });
+  const turn = session.send("hello", () => {}, async () => false);
+  await new Promise(resolve => setImmediate(resolve));
+  expect(await session.setWorkMode("plan")).toBe("applied");
+  release(); await turn;
+  expect(received.options.permissionMode).toBe("plan");
+});
+
+/** Switching to «bypass permissions» live is only possible if the query was opened allowing it; that flag only makes the mode reachable, the mode itself is still `permissionMode`. */
+test("every Claude query is opened allowing bypass to be reached live, without starting in it", async () => {
+  let received: any;
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: input => {
+    received = input;
+    return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
+  } });
+  await session.send("hello", () => {}, async () => false);
+  expect(received.options.permissionMode).toBe("default");
+  expect(received.options.allowDangerouslySkipPermissions).toBe(true);
+});
+
 test("failed authentication never reaches the model and releases busy state", async () => {
   let called = false;
   const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => { throw new Error("Please login"); }, run: () => {

@@ -40,6 +40,17 @@ test("every startup waits for Basic then separately waits for an AI selection", 
   }
 });
 
+/** Idea 7: the last used assistant given to the startup flow reaches the engine picker (marked, Enter accepts it) and the two explicit steps stay. */
+test("the startup flow passes the last used engine to the engine picker", async () => {
+  const both = [engines[0]!, { id: "codex" as const, label: "Codex", executable: "/bin/codex" }];
+  const terminal = new TestTerminal();
+  const result = chooseStartup(both, terminal, undefined, "en", "codex");
+  await tick(); terminal.input("\r"); await tick();
+  expect(terminal.output).toContain("last used");
+  terminal.input("\r");
+  expect(await result).toEqual(both[1]);
+});
+
 test("Full cannot start a chat or advance to the engine picker", async () => {
   const terminal = new TestTerminal(); let settled = false;
   const result = chooseStartup(engines, terminal).then(value => { settled = true; return value; });

@@ -3,6 +3,7 @@ import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { accent as cyan, danger, muted, fit, paint, success, warning } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
+import type { NativeWorkMode } from "../../engines/types.ts";
 
 function defaultForgeCommands(locale: Locale): ComposerChoice[] {
   const t = getCatalog(locale).chat;
@@ -35,26 +36,26 @@ const purple = paint("176;132;255");
 const planning = paint("52;170;166");
 export type WorkModePresentation = { text: string; help: string };
 
-/** Copy only translates native mode identifiers; it never changes their behavior. */
-export function workModePresentation(mode?: string, locale: Locale = "en"): WorkModePresentation {
+/**
+ * Draws the work mode an adapter hands over: the assistant's own name for it (`label`), colored and
+ * explained by the adapter's `tone`. It knows no mode ids or names of any assistant, so a mode an
+ * assistant adds tomorrow needs no change here; without a mode it shows the engine's own default.
+ */
+export function workModePresentation(mode?: NativeWorkMode, locale: Locale = "en"): WorkModePresentation {
   const t = getCatalog(locale).workMode;
+  if (!mode) return { text: muted(t.engineMode), help: muted(t.shiftTabToCycle) };
   const withCycle = (text: string) => `${text} · ${t.shiftTabToCycle}`;
-  switch (mode) {
-    case "bypassPermissions": return { text: danger(t.bypassPermissionsOn), help: muted(withCycle(t.bypassPermissionsHelp)) };
-    case "auto": return { text: warning(t.autoModeOn), help: muted(withCycle(t.autoModeHelp)) };
-    case "default": return { text: muted(t.manualModeOn), help: muted(withCycle(t.manualModeHelp)) };
-    case "acceptEdits": return { text: purple(t.acceptEditsOn), help: muted(withCycle(t.acceptEditsHelp)) };
-    case "plan": return { text: planning(t.planModeOn), help: muted(withCycle(t.planModeHelp)) };
-    case "dontAsk": return { text: warning(t.dontAskModeOn), help: muted(withCycle(t.dontAskModeHelp)) };
-    default: {
-      const [approval, sandbox] = mode?.split(":") ?? [];
-      if (approval === "onRequest" || approval === "unlessTrusted") {
-        const sandboxText = sandbox === "readOnly" ? t.readOnly : sandbox === "workspaceWrite" ? t.workspaceWrite : sandbox;
-        if (approval === "onRequest") return { text: muted(t.manualModeOnWithSandbox({ sandbox: sandboxText ?? "" })), help: muted(withCycle(t.manualModeApprovalHelp)) };
-        return { text: warning(t.autoModeOnWithSandbox({ sandbox: sandboxText ?? "" })), help: muted(withCycle(t.trustedWorkspaceHelp)) };
-      }
-      return { text: muted(t.engineMode), help: muted(t.shiftTabToCycle) };
-    }
+  const drawn = (glyph: string, color: (text: string) => string, help?: string): WorkModePresentation =>
+    ({ text: color(`${glyph} ${mode.label}`), help: muted(help ? withCycle(help) : t.shiftTabToCycle) });
+  switch (mode.tone) {
+    case "danger": return drawn("▶▶", danger, t.bypassPermissionsHelp);
+    case "auto": return drawn("▶▶", warning, t.autoModeHelp);
+    case "acceptEdits": return drawn("▶▶", purple, t.acceptEditsHelp);
+    case "manual": return drawn("Ⅱ", muted, t.manualModeHelp);
+    case "readOnly": return drawn("Ⅱ", muted, t.readOnlyModeHelp);
+    case "plan": return drawn("Ⅱ", planning, t.planModeHelp);
+    case "strict": return drawn("Ⅱ", warning, t.dontAskModeHelp);
+    default: return drawn("Ⅱ", muted);
   }
 }
 
@@ -95,7 +96,7 @@ function statusDot(status: string): string {
 /** A focused editor rendered as Forge614's primary writing surface. */
 export class ForgeComposer extends Editor {
   private status: string;
-  private workModeHint?: string;
+  private workModeHint?: NativeWorkMode;
   private selectedChoice = 0;
   private currentValue?: string;
   private dismissed = "";
@@ -190,7 +191,8 @@ export class ForgeComposer extends Editor {
   }
   setValue(value: string): void { this.setText(value); }
   setStatus(status: string): void { this.status = status; }
-  setWorkModeHint(mode?: string): void { this.workModeHint = mode; this.repaint(); }
+  /** The work mode to show under the input, as its adapter lists it; none shows the engine's own default. */
+  setWorkModeHint(mode?: NativeWorkMode): void { this.workModeHint = mode; this.repaint(); }
   handleMouse(event: TuiMouseEvent) {
     // Own editor gestures so screen-level selection cannot highlight the
     // zero-width cursor marker (or the entire padded input row).

@@ -37,10 +37,12 @@ async function chooseVisual(terminal: Terminal, version: string | undefined, loc
   finally { process.removeListener("SIGTERM", terminate); tui.stop({ preserveScreen: true }); }
 }
 
-// No stored defaults: each interactive launch has two explicit selections.
+// Each interactive launch still has two explicit selections; the assistant used last time is only marked
+// and highlighted in the second one (Enter accepts it), never chosen for the person.
 export async function chooseStartup(
   engines: AvailableEngine[], terminal: Terminal = new ProcessTerminal(), version?: string, locale: Locale = "en",
+  lastEngine?: AvailableEngine["id"],
 ): Promise<AvailableEngine | undefined> {
   if (!await chooseVisual(terminal, version, locale)) return undefined;
-  return chooseEngine(engines, terminal, version, locale);
+  return chooseEngine(engines, terminal, version, locale, lastEngine);
 }
