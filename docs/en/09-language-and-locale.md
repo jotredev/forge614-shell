@@ -12,11 +12,11 @@ Shell supports two interface languages — Spanish (`es`) and English (`en`) —
   "locale": "es",
   "lastEngine": "codex",
   "claude": { "model": "sonnet", "effort": "medium", "mode": "plan" },
-  "codex": { "model": "gpt-5.6-terra", "effort": "high", "mode": "on-request:workspace-write" }
+  "codex": { "model": "gpt-5.6-terra", "effort": "high", "mode": "on-request:workspace-write", "collaborationMode": "plan" }
 }
 ```
 
-`lastEngine` is the assistant used last time and `mode` is each assistant's last work mode, as that assistant's adapter names it. An older file that only has `claude`/`codex` keys still reads correctly — it is simply treated as having no language preference yet. Corrupt JSON, an unrecognized `format`, or an unsupported `locale` value are all treated the same way: no crash, no preference. Writes are atomic (a temp file in the same directory, then a rename), so a crash mid-write never leaves partial JSON.
+`lastEngine` is the assistant used last time, `mode` is each assistant's last work mode, as that assistant's adapter names it, and `collaborationMode` is Codex's last collaboration mode (`plan` or `default`). An older file that only has `claude`/`codex` keys still reads correctly — it is simply treated as having no language preference yet. Corrupt JSON, an unrecognized `format`, or an unsupported `locale` value are all treated the same way: no crash, no preference. Writes are atomic (a temp file in the same directory, then a rename), so a crash mid-write never leaves partial JSON.
 
 ## Resolution order
 

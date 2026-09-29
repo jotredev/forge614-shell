@@ -10,7 +10,33 @@ export type WorkModeTone = "manual" | "readOnly" | "acceptEdits" | "plan" | "str
  * assistant; `label` is the name the assistant shows for it. Each adapter builds its list from its own
  * assistant (SDK type or app-server protocol) — Shell never keeps a hand-written list of another one's modes.
  */
-export interface NativeWorkMode { id: string; label: string; tone?: WorkModeTone }
+export interface NativeWorkMode {
+  id: string; label: string; tone?: WorkModeTone;
+  /** The assistant's own one-line description, when its picker shows one. */
+  description?: string;
+  /** The assistant asks before applying this mode (Codex's «Enable full access?»). */
+  confirm?: boolean;
+}
+/**
+ * A collaboration mode as the assistant names it (Codex: Default and Plan, from `collaborationMode/list`). It is
+ * separate from the permission modes: the assistant decides what Shift+Tab switches. `indicator` is what the
+ * assistant's own footer shows while the mode is on (Codex: «Plan mode»); a mode without one shows nothing.
+ */
+export interface NativeCollaborationMode { id: string; label: string; indicator?: string }
+/** A review target exactly as Codex's protocol names it (`v2/ReviewTarget.ts`). */
+export type NativeReviewTarget =
+  | { type: "uncommittedChanges" }
+  | { type: "baseBranch"; branch: string }
+  | { type: "commit"; sha: string; title: string | null }
+  | { type: "custom"; instructions: string };
+/** An app or connector the assistant lists (`/apps`), reduced to what its list shows; a description or link it does not send is left out. */
+export interface NativeApp { id: string; name: string; description?: string; installUrl?: string; installed: boolean; enabled: boolean }
+/** One experimental feature as the assistant lists it: its config key, stage, name and description when it is in beta, and whether it is on. */
+export interface NativeFeature { name: string; stage: string; displayName?: string; description?: string; enabled: boolean; defaultEnabled: boolean }
+/** The memory settings the assistant uses: whether the feature is on, and its two switches. */
+export interface NativeMemorySettings { featureEnabled: boolean; useMemories: boolean; generateMemories: boolean }
+/** How a config write went: `okOverridden` means it was saved but a higher-priority setting still wins (`message` says which, when reported). */
+export interface NativeConfigWrite { status: "ok" | "okOverridden"; message?: string }
 /**
  * What happened to a work-mode change: `applied` took effect at once (or nothing was running, so the next
  * turn simply uses it); `next-turn` was accepted while a turn ran but the assistant only reads the mode
@@ -58,7 +84,8 @@ export interface NativeAccountUsage { lifetimeTokens?: string; peakDailyTokens?:
 export interface NativeBackgroundTerminal { command: string; cwd: string; pid?: number }
 /** The goal set for a long task: its `status` is the assistant's own word for it. */
 export interface NativeGoal { objective: string; status: string; tokenBudget?: number; tokensUsed: number; timeUsedSeconds: number }
-export interface NativeEvent { type: "text" | "delta" | "status" | "reset"; text: string; id?: string }
+/** `planReady`: a turn finished in plan mode with a proposed plan (its Markdown is `text`), so the screen can offer to implement it. */
+export interface NativeEvent { type: "text" | "delta" | "status" | "reset" | "planReady"; text: string; id?: string }
 export type Emit = (event: NativeEvent) => void;
 export type Approve = (description: string, signal: AbortSignal) => Promise<boolean>;
 export interface NativeSession {
@@ -80,6 +107,13 @@ export interface NativeSession {
   workMode?(): string | undefined;
   /** Changes the work mode at any moment — also mid-turn or with a permission pending — and says whether it applies now or from the next turn. */
   setWorkMode?(id: string): Promise<WorkModeChange>;
+  /** The mode that stands in for a remembered one the assistant no longer offers. */
+  fallbackWorkMode?(): string | undefined;
+  /** The assistant's collaboration modes, in its own order (empty when it lists none). */
+  collaborationModes?(): NativeCollaborationMode[];
+  collaborationMode?(): string | undefined;
+  /** Changes the collaboration mode at any moment and says whether it applies now or from the next turn. */
+  setCollaborationMode?(id: string): Promise<WorkModeChange>;
   /** Asks the assistant's own engine to compact the conversation and resolves when it is done. Absent when the assistant has no such request. */
   compact?(): Promise<void>;
   // The assistant's own commands that act on the conversation or on the account. Each one is present only
@@ -106,6 +140,26 @@ export interface NativeSession {
   stopBackgroundTerminals?(): Promise<boolean>;
   /** The skills available in this folder, as the assistant lists them. */
   skills?(): Promise<NativeSkill[]>;
+  /** The last answer the assistant completed, as Markdown; undefined before the first one. */
+  lastResponse?(): string | undefined;
+  /** Runs the assistant's own code review on `target` as a turn, resolving when it ends. */
+  startReview?(target: NativeReviewTarget): Promise<void>;
+  /** Copies the conversation into a new one (named `name` when given) and continues in the copy. */
+  forkThread?(name?: string): Promise<void>;
+  apps?(): Promise<NativeApp[]>;
+  experimentalFeatures?(): Promise<NativeFeature[]>;
+  /** Saves one feature switch and reads the list back; `overridden` when what is configured now differs from the choice. */
+  setExperimentalFeature?(name: string, enabled: boolean): Promise<{ features: NativeFeature[]; overridden: boolean }>;
+  memorySettings?(): Promise<NativeMemorySettings>;
+  saveMemorySettings?(useMemories: boolean, generateMemories: boolean): Promise<NativeConfigWrite>;
+  /** Turns the memory feature on for new conversations. */
+  enableMemories?(): Promise<NativeConfigWrite>;
+  /** Deletes the assistant's local memories for good; the screen asks first. */
+  resetMemories?(): Promise<void>;
+  /** The whole conversation in the assistant's own Markdown export format. */
+  exportTranscript?(): Promise<string>;
+  /** Files in the session folder matching `query`, as paths relative to it. */
+  searchFiles?(query: string): Promise<string[]>;
   backgroundActivity?(): BackgroundActivity[];
   /** A short phrase of what the engine is doing right now (the command it is running), for the «Working» indicator; undefined when nothing specific runs. */
   currentActivity?(): string | undefined;

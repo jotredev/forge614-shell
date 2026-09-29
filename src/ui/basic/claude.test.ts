@@ -117,6 +117,9 @@ else {
     expect(preferences().claude.mode).toBe("dontAsk");
     expect(stripVTControlCharacters(terminal.output)).toContain("Don't Ask");
     expect(stripVTControlCharacters(terminal.output)).not.toContain("Finish or /stop");
+    // Shift+Tab is Claude Code's own here and did not change with Codex's Plan switch: it still cycles the permission modes.
+    expect(stripVTControlCharacters(terminal.output)).toContain(getCatalog("en").workMode.shiftTabToCycle);
+    expect(stripVTControlCharacters(terminal.output)).not.toContain("Shift+Tab: Plan");
   } finally {
     enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;

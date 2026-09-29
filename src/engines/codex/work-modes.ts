@@ -1,13 +1,16 @@
 import type { NativeWorkMode, WorkModeTone } from "../types.ts";
 
 /**
- * A Codex work mode: what Shell shows (`label`, `tone`), the id it remembers (`approval:sandbox`), and the
- * two protocol values it sends — `approvalPolicy` and `sandbox`, both exactly as the app-server names
- * them (`thread/start` takes `sandbox` as is; `turn/start` takes it as a `sandboxPolicy`, see `sandboxPolicyFor`).
+ * A Codex work mode: what Shell shows (`label`, `description`, `tone`), the id it remembers
+ * (`approval:sandbox`, plus `:auto_review` for «Approve for me»), and the protocol values it sends —
+ * `approvalPolicy`, `sandbox` and `approvalsReviewer`, all exactly as the app-server names them
+ * (`thread/start` takes `sandbox` as is; `turn/start` takes it as a `sandboxPolicy`, see `sandboxPolicyFor`).
  */
 export interface CodexWorkMode extends NativeWorkMode {
   approvalPolicy: string;
   sandbox: string;
+  /** Who reviews approval requests (`v2/ApprovalsReviewer.ts`): the person, or Codex's automatic reviewer. */
+  approvalsReviewer: "user" | "auto_review";
 }
 
 /**
@@ -25,16 +28,25 @@ const SANDBOX_POLICY_TYPE: Record<string, string> = {
 /** Codex's plain `AskForApproval` strings (`v2/AskForApproval.ts`); its object form `{ granular }` is not a mode Codex's own picker offers. */
 const APPROVAL_POLICIES = ["untrusted", "on-request", "never"];
 
+/** The names and descriptions Codex's menu shows (from the i18n catalog's `codexNative`, identical in every language). */
+export interface CodexPermissionNames {
+  askForApproval: string; askForApprovalDescription: string;
+  approveForMe: string; approveForMeDescription: string;
+  fullAccess: string; fullAccessDescription: string;
+}
+
 /**
- * The three permission presets Codex's own picker shows, with the names it shows and the protocol values
- * each one stands for. The names are Codex's (strings of codex-cli 0.159.0's picker: «Read Only»,
- * «Default», «Full Access»); the protocol has no request that returns them, so they live here — but every
- * value is the protocol's, never a retired one. Codex's restrictions (`configRequirements/read`) narrow this list.
+ * The permission choices Codex's own menu shows on macOS (`chatwidget/permission_popups.rs`
+ * `open_legacy_permissions_popup`, codex-cli 0.159.0), in its order: «Ask for approval» (the `auto` preset with
+ * the person as reviewer), «Approve for me» (the same preset with Codex's automatic reviewer, only when Codex's
+ * `guardian_approval` feature is on) and «Full Access» (asked first). «Read Only» exists only on Windows
+ * (`include_read_only = cfg!(windows)`) and is never offered here. The protocol has no request that returns these
+ * names, so they come from the catalog; every value sent is the protocol's.
  */
-const PRESETS: { name: string; approvalPolicy: string; sandbox: string; tone: WorkModeTone }[] = [
-  { name: "Read Only", approvalPolicy: "on-request", sandbox: "read-only", tone: "readOnly" },
-  { name: "Default", approvalPolicy: "on-request", sandbox: "workspace-write", tone: "manual" },
-  { name: "Full Access", approvalPolicy: "never", sandbox: "danger-full-access", tone: "danger" },
+const PRESETS: { key: "ask" | "approve" | "full"; approvalPolicy: string; sandbox: string; approvalsReviewer: "user" | "auto_review"; tone: WorkModeTone; guardian?: boolean; confirm?: boolean }[] = [
+  { key: "ask", approvalPolicy: "on-request", sandbox: "workspace-write", approvalsReviewer: "user", tone: "manual" },
+  { key: "approve", approvalPolicy: "on-request", sandbox: "workspace-write", approvalsReviewer: "auto_review", tone: "auto", guardian: true },
+  { key: "full", approvalPolicy: "never", sandbox: "danger-full-access", approvalsReviewer: "user", tone: "danger", confirm: true },
 ];
 
 /** Keeps only plain strings from a list Codex reported; `null`/absent means «no restriction». Object forms (`{ granular }`) are dropped. */
@@ -46,22 +58,37 @@ function toneFor(sandbox: string): WorkModeTone {
   return sandbox === "danger-full-access" ? "danger" : sandbox === "read-only" ? "readOnly" : "manual";
 }
 
+/** The id Shell remembers for a mode: `approval:sandbox`, plus `:auto_review` when Codex reviews the approvals. */
+function modeId(approvalPolicy: string, sandbox: string, approvalsReviewer: string): string {
+  return approvalsReviewer === "user" ? `${approvalPolicy}:${sandbox}` : `${approvalPolicy}:${sandbox}:${approvalsReviewer}`;
+}
+
 /**
  * The modes Shell offers for Codex, from what Codex allows. `requirements` is the `requirements` field of
- * `configRequirements/read` (`null`/absent when nothing restricts, or when the call is not available):
- * then all three presets are offered. When Codex restricts the approval policies and/or sandboxes, only the
- * presets it still permits are offered; and if the restriction excludes every preset, exactly what Codex
- * allows is offered instead, named with the protocol's own values.
+ * `configRequirements/read` (`null`/absent when nothing restricts, or when the call is not available);
+ * `guardianApproval` is whether Codex reports its `guardian_approval` feature on (`experimentalFeature/list`),
+ * which is what makes its menu show «Approve for me». When Codex restricts the approval policies, sandboxes or
+ * reviewers, only the presets it still permits are offered; and if the restriction excludes every preset, exactly
+ * what Codex allows is offered instead, named with the protocol's own values.
  */
-export function buildCodexWorkModes(requirements: { allowedApprovalPolicies?: unknown; allowedSandboxModes?: unknown } | null | undefined): CodexWorkMode[] {
+export function buildCodexWorkModes(
+  requirements: { allowedApprovalPolicies?: unknown; allowedSandboxModes?: unknown; allowedApprovalsReviewers?: unknown } | null | undefined,
+  options: { guardianApproval: boolean; names: CodexPermissionNames },
+): CodexWorkMode[] {
   const policies = allowedStrings(requirements?.allowedApprovalPolicies);
   const sandboxes = allowedStrings(requirements?.allowedSandboxModes)?.filter(sandbox => Object.hasOwn(SANDBOX_POLICY_TYPE, sandbox)) ?? null;
-  const allowed = (approvalPolicy: string, sandbox: string) => (!policies || policies.includes(approvalPolicy)) && (!sandboxes || sandboxes.includes(sandbox));
-  const make = (label: string, approvalPolicy: string, sandbox: string, tone: WorkModeTone): CodexWorkMode => ({ id: `${approvalPolicy}:${sandbox}`, label, tone, approvalPolicy, sandbox });
-  const presets = PRESETS.filter(preset => allowed(preset.approvalPolicy, preset.sandbox));
-  if (presets.length) return presets.map(preset => make(preset.name, preset.approvalPolicy, preset.sandbox, preset.tone));
-  return (policies ?? APPROVAL_POLICIES).flatMap(approvalPolicy =>
-    (sandboxes ?? Object.keys(SANDBOX_POLICY_TYPE)).map(sandbox => make(`${approvalPolicy} · ${sandbox}`, approvalPolicy, sandbox, toneFor(sandbox))));
+  const reviewers = allowedStrings(requirements?.allowedApprovalsReviewers);
+  const allowed = (approvalPolicy: string, sandbox: string, reviewer: string) =>
+    (!policies || policies.includes(approvalPolicy)) && (!sandboxes || sandboxes.includes(sandbox)) && (!reviewers || reviewers.includes(reviewer));
+  const { names } = options;
+  const text = { ask: [names.askForApproval, names.askForApprovalDescription], approve: [names.approveForMe, names.approveForMeDescription], full: [names.fullAccess, names.fullAccessDescription] } as const;
+  const presets = PRESETS.filter(preset => (!preset.guardian || options.guardianApproval) && allowed(preset.approvalPolicy, preset.sandbox, preset.approvalsReviewer));
+  if (presets.length) return presets.map(preset => ({
+    id: modeId(preset.approvalPolicy, preset.sandbox, preset.approvalsReviewer), label: text[preset.key][0], description: text[preset.key][1], tone: preset.tone,
+    approvalPolicy: preset.approvalPolicy, sandbox: preset.sandbox, approvalsReviewer: preset.approvalsReviewer, ...(preset.confirm ? { confirm: true } : {}),
+  }));
+  return (policies ?? APPROVAL_POLICIES).flatMap(approvalPolicy => (sandboxes ?? Object.keys(SANDBOX_POLICY_TYPE)).map((sandbox): CodexWorkMode =>
+    ({ id: modeId(approvalPolicy, sandbox, "user"), label: `${approvalPolicy} · ${sandbox}`, tone: toneFor(sandbox), approvalPolicy, sandbox, approvalsReviewer: "user" })));
 }
 
 /** The `sandboxPolicy` a `turn/start` takes for a `SandboxMode` value, e.g. `"read-only"` → `{ type: "readOnly" }`. */

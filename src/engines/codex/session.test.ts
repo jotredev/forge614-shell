@@ -158,13 +158,13 @@ test("Codex applies only a mode allowed by its native app-server requirements", 
   const rpc = turnFixture({ allowedApprovalPolicies: ["on-request"], allowedSandboxModes: ["read-only", "workspace-write"] });
   const session = new CodexSession(rpc, "/project", () => {}, async () => false);
   await session.initialize();
-  expect(session.workModes().map(mode => mode.id)).toEqual(["on-request:read-only", "on-request:workspace-write"]);
-  await session.setWorkMode("on-request:read-only");
+  expect(session.workModes().map(mode => mode.id)).toEqual(["on-request:workspace-write"]);
+  await session.setWorkMode("on-request:workspace-write");
   await session.setWorkMode("never:danger-full-access").then(() => { throw new Error("must not accept a mode Codex did not allow"); }, error => expect(error).toBeInstanceOf(ShellError));
   const pending = session.send("inspect");
   await new Promise(resolve => setImmediate(resolve));
-  expect(rpc.calls.find(call => call.method === "thread/start")?.params).toMatchObject({ approvalPolicy: "on-request", sandbox: "read-only" });
-  expect(rpc.calls.find(call => call.method === "turn/start")?.params).toMatchObject({ approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly" } });
+  expect(rpc.calls.find(call => call.method === "thread/start")?.params).toMatchObject({ approvalPolicy: "on-request", sandbox: "workspace-write" });
+  expect(rpc.calls.find(call => call.method === "turn/start")?.params).toMatchObject({ approvalPolicy: "on-request", sandboxPolicy: { type: "workspaceWrite" } });
   rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
   await pending;
 });
@@ -195,18 +195,18 @@ test("every work mode Codex offers sends only values the app-server protocol acc
   expect(JSON.stringify(rpc.calls)).not.toMatch(/unlessTrusted|onRequest|readOnly:|workspaceWrite:/);
 });
 
-/** The names the person sees are the ones Codex itself shows (Read Only / Default / Full Access), not Shell's «manual/auto». */
+/** The names the person sees are the ones Codex's own macOS menu shows (Ask for approval / Full Access), not Shell's «manual/auto» nor the Windows-only Read Only. */
 test("the Codex mode list comes from the adapter with the names Codex shows, also when the requirements call fails", async () => {
   const withNull = turnFixture(null);
   const first = new CodexSession(withNull, "/project", () => {}, async () => false);
   await first.initialize();
-  expect(first.workModes().map(mode => mode.label)).toEqual(["Read Only", "Default", "Full Access"]);
-  expect(first.workModes().map(mode => mode.id)).toEqual(["on-request:read-only", "on-request:workspace-write", "never:danger-full-access"]);
+  expect(first.workModes().map(mode => mode.label)).toEqual(["Ask for approval", "Full Access"]);
+  expect(first.workModes().map(mode => mode.id)).toEqual(["on-request:workspace-write", "never:danger-full-access"]);
 
   const failing = codexFixture(); // no `configRequirements/read` reply: the fixture throws, like an app-server without it
   const second = new CodexSession(failing, "/project", () => {}, async () => false);
   await second.initialize();
-  expect(second.workModes().map(mode => mode.label)).toEqual(["Read Only", "Default", "Full Access"]);
+  expect(second.workModes().map(mode => mode.label)).toEqual(["Ask for approval", "Full Access"]);
 });
 
 /** When Codex restricts the modes to something that is not one of its presets, Shell offers exactly what Codex allows, named with the protocol's own values. */
@@ -236,7 +236,7 @@ test("changing the Codex mode mid-turn is accepted, reported as next-turn, and l
   expect(rpc.calls.find(call => call.method === "turn/start")?.params).toMatchObject({ approvalPolicy: "on-request" });
   rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
   await pending;
-  expect(await session.setWorkMode("on-request:read-only")).toBe("applied");
+  expect(await session.setWorkMode("on-request:workspace-write")).toBe("applied");
   await session.setWorkMode("never:danger-full-access");
   await runTurn(rpc, session, "second");
   expect(rpc.calls.filter(call => call.method === "turn/start").at(-1)?.params).toMatchObject({ approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } });
@@ -900,8 +900,8 @@ test("send() without a $skill does not call skills/list, and a disabled skill st
 test("status() also reports the folder, the work mode and the conversation", async () => {
   const { session } = await conversationFixture();
   expect(session.status()).toEqual(expect.arrayContaining(["Folder: /project", "Work mode: engine default", "Conversation: t"]));
-  await session.setWorkMode("on-request:read-only");
-  expect(session.status()).toContain("Work mode: Read Only");
+  await session.setWorkMode("on-request:workspace-write");
+  expect(session.status()).toContain("Work mode: Ask for approval");
 });
 
 /** Before the first message there is no conversation to name, and Shell says so instead of showing an empty id. */
@@ -910,4 +910,335 @@ test("status() says the conversation has not started before the first message", 
   const session = new CodexSession(rpc, "/project", () => {}, async () => false);
   await session.initialize();
   expect(session.status()).toContain("Conversation: not started yet");
+});
+
+/**
+ * Codex native commands, part 2, plus the permission names and the collaboration mode (Plan). Methods and
+ * parameters are copied from the protocol generated with `codex app-server generate-ts` (and `--experimental`)
+ * for codex-cli 0.159.0 — the file each one comes from is cited in its test — and the screen behavior from
+ * https://raw.githubusercontent.com/openai/codex/rust-v0.159.0/codex-rs/tui/src/. `FixtureRpc` stands in for the
+ * app-server, so no account is involved.
+ */
+
+/** `experimentalFeature/list` (`v2/ExperimentalFeatureListResponse.ts`) with the feature that decides «Approve for me» (`guardian_approval`, `features/src/lib.rs`). */
+const featureList = (guardian: boolean, extra: object[] = []) => ({ data: [
+  { name: "guardian_approval", stage: "stable", displayName: null, description: null, announcement: null, enabled: guardian, defaultEnabled: true },
+  ...extra,
+], nextCursor: null });
+
+/**
+ * The permission menu Codex shows on macOS (`chatwidget/permission_popups.rs:36` hides Read Only outside Windows;
+ * labels from `chatwidget.rs:457-458` and `utils/approval-presets`; descriptions from
+ * `chatwidget/permissions_menu.rs:7` `permission_preset_description` and `AUTO_REVIEW_DESCRIPTION`). «Approve for me»
+ * appears only when Codex's `guardian_approval` feature is on, which the protocol reports in `experimentalFeature/list`.
+ */
+test("the permission modes are Codex's macOS menu, with Approve for me only when guardian_approval is on", async () => {
+  const off = turnFixture(null);
+  off.replies.set("experimentalFeature/list", featureList(false));
+  const without = new CodexSession(off, "/project", () => {}, async () => false);
+  await without.initialize();
+  expect(without.workModes().map(mode => [mode.id, mode.label, mode.description])).toEqual([
+    ["on-request:workspace-write", "Ask for approval", "Read and edit workspace files and run commands, with approval required for internet access or edits outside the workspace"],
+    ["never:danger-full-access", "Full Access", "Use with caution: Codex can edit files outside this workspace and access the internet without approval"],
+  ]);
+  const on = turnFixture(null);
+  on.replies.set("experimentalFeature/list", featureList(true));
+  const withGuardian = new CodexSession(on, "/project", () => {}, async () => false);
+  await withGuardian.initialize();
+  expect(withGuardian.workModes().map(mode => [mode.id, mode.label, mode.description])).toEqual([
+    ["on-request:workspace-write", "Ask for approval", "Read and edit workspace files and run commands, with approval required for internet access or edits outside the workspace"],
+    ["on-request:workspace-write:auto_review", "Approve for me", "Only ask for actions detected as potentially unsafe"],
+    ["never:danger-full-access", "Full Access", "Use with caution: Codex can edit files outside this workspace and access the internet without approval"],
+  ]);
+  expect(JSON.stringify(withGuardian.workModes())).not.toContain("Read Only");
+  expect(on.calls.find(call => call.method === "experimentalFeature/list")?.params).toEqual({ limit: 100 });
+});
+
+/** A reviewer Codex's requirements do not allow (`allowedApprovalsReviewers`, `v2/ConfigRequirements.ts`) is never offered, even with the feature on. */
+test("Approve for me is left out when Codex's requirements do not allow the auto_review reviewer", async () => {
+  const rpc = turnFixture({ allowedApprovalsReviewers: ["user"] });
+  rpc.replies.set("experimentalFeature/list", featureList(true));
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  expect(session.workModes().map(mode => mode.label)).toEqual(["Ask for approval", "Full Access"]);
+});
+
+/** «Approve for me» is the `auto` preset with the `auto_review` reviewer (`v2/ApprovalsReviewer.ts`): the thread and every turn carry it. */
+test("Approve for me sends the auto_review reviewer with on-request and workspace-write", async () => {
+  const rpc = turnFixture(null);
+  rpc.replies.set("experimentalFeature/list", featureList(true));
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  await session.setWorkMode("on-request:workspace-write:auto_review");
+  await runTurn(rpc, session, "hello");
+  expect(rpc.calls.find(call => call.method === "thread/start")?.params).toMatchObject({ approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" });
+  expect(rpc.calls.find(call => call.method === "turn/start")?.params).toMatchObject({ approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandboxPolicy: { type: "workspaceWrite" } });
+});
+
+/** A remembered mode that no longer exists (Read Only) comes back as «Ask for approval»: the adapter names that replacement. */
+test("fallbackWorkMode() is Ask for approval", async () => {
+  const session = new CodexSession(turnFixture(null), "/project", () => {}, async () => false);
+  await session.initialize();
+  expect(session.fallbackWorkMode()).toBe("on-request:workspace-write");
+});
+
+/** `collaborationMode/list` (`v2/CollaborationModeListResponse.ts`, `CollaborationModeMask.ts`) in Codex's order: Plan, then Default. */
+const collaborationList = { data: [
+  { name: "Plan", mode: "plan", model: null, reasoning_effort: "medium" },
+  { name: "Default", mode: "default", model: null, reasoning_effort: null },
+] };
+
+/** A fixture that lists the two collaboration modes, with the reasoning effort set to «high» so Plan's own «medium» shows. */
+async function collaborationFixture() {
+  const rpc = turnFixture(null);
+  rpc.replies.set("collaborationMode/list", collaborationList);
+  rpc.replies.set("thread/settings/update", {});
+  const events: any[] = [];
+  const session = new CodexSession(rpc, "/project", event => events.push(event), async () => false);
+  await session.initialize();
+  await session.setEffort("high");
+  return { rpc, session, events };
+}
+
+/**
+ * Codex starts in Default and sends the active mode with every turn (`TurnStartParams.collaborationMode`,
+ * `CollaborationMode.ts` / `Settings.ts`), applying the mask like `CollaborationMode::apply_mask`
+ * (`protocol/src/config_types.rs`): the mask's effort wins, the model stays, and `developer_instructions: null`
+ * asks for Codex's built-in instructions.
+ */
+test("collaboration modes come from collaborationMode/list and every turn carries the active one", async () => {
+  const { rpc, session } = await collaborationFixture();
+  expect(rpc.calls.find(call => call.method === "collaborationMode/list")?.params).toEqual({});
+  expect(session.collaborationModes()).toEqual([{ id: "plan", label: "Plan", indicator: "Plan mode" }, { id: "default", label: "Default" }]);
+  expect(session.collaborationMode()).toBe("default");
+  await runTurn(rpc, session, "first");
+  expect(rpc.calls.find(call => call.method === "turn/start")?.params.collaborationMode).toEqual({ mode: "default", settings: { model: "test-model", reasoning_effort: "high", developer_instructions: null } });
+  expect(await session.setCollaborationMode("plan")).toBe("applied");
+  expect(rpc.calls.filter(call => call.method === "thread/settings/update")).toEqual([{ method: "thread/settings/update", params: {
+    threadId: "t", collaborationMode: { mode: "plan", settings: { model: "test-model", reasoning_effort: "medium", developer_instructions: null } },
+  } }]);
+  await runTurn(rpc, session, "second");
+  expect(rpc.calls.filter(call => call.method === "turn/start").at(-1)?.params.collaborationMode).toEqual({ mode: "plan", settings: { model: "test-model", reasoning_effort: "medium", developer_instructions: null } });
+});
+
+/** Mid-turn the change is accepted and reported for the next turn; nothing reaches Codex until then. Without the list there is no mode and turns carry none. */
+test("a collaboration change mid-turn applies from the next turn, and without collaborationMode/list turns carry none", async () => {
+  const { rpc, session } = await collaborationFixture();
+  const pending = session.send("long job");
+  await new Promise(resolve => setImmediate(resolve));
+  expect(await session.setCollaborationMode("plan")).toBe("next-turn");
+  expect(rpc.calls.some(call => call.method === "thread/settings/update")).toBe(false);
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await pending;
+  const plain = turnFixture(null);
+  const without = new CodexSession(plain, "/project", () => {}, async () => false);
+  await without.initialize();
+  expect(without.collaborationModes()).toEqual([]);
+  expect(without.collaborationMode()).toBeUndefined();
+  await runTurn(plain, without, "hello");
+  expect(plain.calls.find(call => call.method === "turn/start")?.params).not.toHaveProperty("collaborationMode");
+});
+
+/** `chatwidget/turn_runtime.rs` `maybe_prompt_plan_implementation`: only a turn finished in Plan mode that produced a `plan` item (`v2/ThreadItem.ts`) offers to implement it. */
+test("a plan item in Plan mode is announced when its turn completes, and never in Default", async () => {
+  const { rpc, session, events } = await collaborationFixture();
+  await session.setCollaborationMode("plan");
+  const pending = session.send("plan it");
+  await new Promise(resolve => setImmediate(resolve));
+  rpc.onNotification("item/completed", { threadId: "t", turnId: "u", item: { type: "plan", id: "p", text: "1. Write the test\n2. Make it pass" } });
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await pending;
+  expect(events.filter(event => event.type === "planReady")).toEqual([{ type: "planReady", text: "1. Write the test\n2. Make it pass" }]);
+  await session.setCollaborationMode("default");
+  const again = session.send("go on");
+  await new Promise(resolve => setImmediate(resolve));
+  rpc.onNotification("item/completed", { threadId: "t", turnId: "u", item: { type: "plan", id: "p2", text: "other" } });
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await again;
+  expect(events.filter(event => event.type === "planReady")).toHaveLength(1);
+});
+
+/** `/model` is `available_during_task` in Codex (`slash_command.rs`): the choice is accepted mid-turn and the next `turn/start` carries it; the saved list can be read too. */
+test("model, effort and the session list can be used while a turn runs", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.replies.set("thread/list", { data: [], nextCursor: null });
+  const pending = session.send("long job");
+  await new Promise(resolve => setImmediate(resolve));
+  await session.setModel("test-model");
+  await session.setEffort("high");
+  expect(await session.listSessions()).toEqual([]);
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await pending;
+  await runTurn(rpc, session, "next");
+  expect(rpc.calls.filter(call => call.method === "turn/start").at(-1)?.params).toMatchObject({ model: "test-model", effort: "high" });
+});
+
+/** `/resume` is also `available_during_task`: like Codex, the view moves to the chosen conversation and stops following the running turn, which Shell no longer waits for. */
+test("resume during a turn moves to the chosen conversation and releases the running one", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  const pending = session.send("long job");
+  await new Promise(resolve => setImmediate(resolve));
+  rpc.replies.set("thread/read", { thread: { id: "old", cwd: "/project", status: { type: "idle" }, turns: [] } });
+  await session.resume("old");
+  await pending;
+  expect(session.sessionId).toBe("old");
+  expect(session.busy).toBe(false);
+});
+
+/**
+ * `/review` → `review/start` with `{ threadId, target, delivery: "inline" }` (`v2/ReviewStartParams.ts`,
+ * `ReviewTarget.ts`, `ReviewDelivery.ts`; `app_server_session.rs:1592`). It runs as a turn; Codex's banners
+ * (`chatwidget.rs:1264,1276`) frame what the review returns (`exitedReviewMode.review`).
+ */
+test("startReview() sends review/start with the target and shows the review Codex returns", async () => {
+  const rpc = turnFixture(null); const events: any[] = [];
+  const session = new CodexSession(rpc, "/project", event => events.push(event), async () => false);
+  await session.initialize();
+  await runTurn(rpc, session, "hello");
+  rpc.replies.set("review/start", { turn: { id: "r", status: "inProgress" }, reviewThreadId: "t" });
+  const review = session.startReview({ type: "uncommittedChanges" });
+  await new Promise(resolve => setImmediate(resolve));
+  expect(rpc.calls.filter(call => call.method === "review/start")).toEqual([{ method: "review/start", params: { threadId: "t", target: { type: "uncommittedChanges" }, delivery: "inline" } }]);
+  expect(session.busy).toBe(true);
+  rpc.onNotification("item/started", { threadId: "t", turnId: "r", item: { type: "enteredReviewMode", id: "e", review: "current changes" } });
+  rpc.onNotification("item/completed", { threadId: "t", turnId: "r", item: { type: "exitedReviewMode", id: "x", review: "No issues found." } });
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "r", status: "completed" } });
+  await review;
+  expect(events.filter(event => event.type === "text").map(event => event.text).slice(-3)).toEqual([">> Code review started: current changes <<", "No issues found.", "<< Code review finished >>"]);
+  expect(session.busy).toBe(false);
+});
+
+/** `/fork [name]` → `thread/fork` (`v2/ThreadForkParams.ts`) with the thread's settings, then `thread/name/set` for the name (`app/event_dispatch.rs:497`); Shell moves to the copy. */
+test("forkThread() forks with thread/fork, names the copy and moves to it", async () => {
+  const rpc = turnFixture(null); const events: any[] = [];
+  const session = new CodexSession(rpc, "/project", event => events.push(event), async () => false);
+  await session.initialize();
+  await runTurn(rpc, session, "hello");
+  rpc.replies.set("thread/fork", { thread: { id: "f", turns: [{ items: [{ type: "agentMessage", text: "earlier reply" }] }] }, model: "test-model", modelProvider: "openai" });
+  rpc.replies.set("thread/name/set", {});
+  await session.forkThread("Try another way");
+  expect(rpc.calls.filter(call => call.method === "thread/fork")).toEqual([{ method: "thread/fork", params: {
+    threadId: "t", cwd: "/project", model: "test-model", modelProvider: "openai", approvalPolicy: "untrusted", approvalsReviewer: "user", sandbox: "workspace-write",
+  } }]);
+  expect(rpc.calls.filter(call => call.method === "thread/name/set")).toEqual([{ method: "thread/name/set", params: { threadId: "f", name: "Try another way" } }]);
+  expect(session.sessionId).toBe("f");
+  expect(events.some(event => event.text === "earlier reply")).toBe(true);
+  const next = session.send("continue");
+  await new Promise(resolve => setImmediate(resolve));
+  expect(rpc.calls.filter(call => call.method === "turn/start").at(-1)?.params.threadId).toBe("f");
+  rpc.onNotification("turn/completed", { threadId: "f", turn: { id: "u", status: "completed" } });
+  await next;
+});
+
+/** `/apps` → `app/list` (`v2/AppsListParams.ts`, `AppInfo.ts`) as `chatwidget/connectors.rs` asks it: a fresh list, scoped to the open thread. */
+test("apps() reads app/list and keeps what the list shows", async () => {
+  const { rpc, session } = await conversationFixture();
+  rpc.replies.set("app/list", { data: [
+    { id: "gh", name: "GitHub", description: " Code hosting ", installUrl: "https://chatgpt.com/apps/github/gh", isAccessible: true, isEnabled: false },
+    { id: "cal", name: "Calendar", description: null, installUrl: null, isAccessible: false, isEnabled: true },
+  ], nextCursor: null });
+  expect(await session.apps()).toEqual([
+    { id: "gh", name: "GitHub", description: "Code hosting", installUrl: "https://chatgpt.com/apps/github/gh", installed: true, enabled: false },
+    { id: "cal", name: "Calendar", installed: false, enabled: true },
+  ]);
+  expect(rpc.calls.find(call => call.method === "app/list")?.params).toEqual({ threadId: "t", forceRefetch: true });
+});
+
+/**
+ * `/experimental` (`experimental_features.rs`): list every page (limit 100), then save one change with
+ * `config/batchWrite` (`v2/ConfigBatchWriteParams.ts`, key quoted as one TOML segment, `null` when off and off by
+ * default) and read the list again to report what Codex now has configured.
+ */
+test("experimental features are listed page by page and a toggle is written with config/batchWrite and read back", async () => {
+  const rpc = turnFixture(null);
+  const beta = (enabled: boolean) => ({ name: "fast_mode", stage: "beta", displayName: "Fast mode", description: "Answer faster", announcement: null, enabled, defaultEnabled: false });
+  let enabled = false;
+  rpc.handler = async (method, params) => {
+    if (method === "experimentalFeature/list") return params.cursor ? { data: [beta(enabled)], nextCursor: null } : { data: [{ name: "guardian_approval", stage: "stable", displayName: null, description: null, announcement: null, enabled: false, defaultEnabled: true }], nextCursor: "1" };
+    if (method === "config/batchWrite") { enabled = params.edits[0].value === true; return { status: "ok", version: "v", filePath: "/c", overriddenMetadata: null }; }
+    return rpc.replies.get(method);
+  };
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  const before = rpc.calls.length;
+  expect((await session.experimentalFeatures()).map(feature => feature.name)).toEqual(["guardian_approval", "fast_mode"]);
+  expect(rpc.calls.slice(before).map(call => call.params)).toEqual([{ limit: 100 }, { limit: 100, cursor: "1" }]);
+  const on = await session.setExperimentalFeature("fast_mode", true);
+  expect(rpc.calls.filter(call => call.method === "config/batchWrite").at(-1)?.params).toEqual({ edits: [{ keyPath: "features.\"fast_mode\"", value: true, mergeStrategy: "replace" }], reloadUserConfig: true });
+  expect(on.overridden).toBe(false);
+  expect(on.features.find(feature => feature.name === "fast_mode")?.enabled).toBe(true);
+  await session.setExperimentalFeature("fast_mode", false);
+  expect(rpc.calls.filter(call => call.method === "config/batchWrite").at(-1)?.params).toEqual({ edits: [{ keyPath: "features.\"fast_mode\"", value: null, mergeStrategy: "replace" }], reloadUserConfig: true });
+});
+
+/**
+ * `/memories` (`chatwidget.rs:1039-1079`, `app/config_persistence.rs:846-948`, `config_update.rs`): the feature
+ * state comes from `experimentalFeature/list` (`memories`), the two settings from `config/read`
+ * (`memories.use_memories` / `generate_memories`, both on when unset); saving writes both keys, and a change to
+ * «Generate memories» also sets the open thread with `thread/memoryMode/set` (`v2/ThreadMemoryModeSetParams.ts`);
+ * enabling writes `features.memories` and the legacy `features.memory_tool`; reset is `memory/reset`.
+ */
+test("memory settings are read, saved, enabled and reset with Codex's own methods", async () => {
+  const { rpc, session } = await conversationFixture();
+  rpc.replies.set("experimentalFeature/list", featureList(false, [{ name: "memories", stage: "stable", displayName: null, description: null, announcement: null, enabled: true, defaultEnabled: false }]));
+  rpc.replies.set("config/read", { config: { memories: { use_memories: false } }, origins: {}, layers: null });
+  rpc.replies.set("config/batchWrite", { status: "ok", version: "v", filePath: "/c", overriddenMetadata: null });
+  rpc.replies.set("thread/memoryMode/set", {});
+  rpc.replies.set("memory/reset", {});
+  expect(await session.memorySettings()).toEqual({ featureEnabled: true, useMemories: false, generateMemories: true });
+  expect(rpc.calls.find(call => call.method === "config/read")?.params).toEqual({ cwd: "/project" });
+  expect(await session.saveMemorySettings(true, false)).toEqual({ status: "ok" });
+  expect(rpc.calls.filter(call => call.method === "config/batchWrite").at(-1)?.params).toEqual({ edits: [
+    { keyPath: "memories.use_memories", value: true, mergeStrategy: "replace" },
+    { keyPath: "memories.generate_memories", value: false, mergeStrategy: "replace" },
+  ], reloadUserConfig: true });
+  expect(rpc.calls.filter(call => call.method === "thread/memoryMode/set")).toEqual([{ method: "thread/memoryMode/set", params: { threadId: "t", mode: "disabled" } }]);
+  await session.enableMemories();
+  expect(rpc.calls.filter(call => call.method === "config/batchWrite").at(-1)?.params).toEqual({ edits: [
+    { keyPath: "features.memories", value: true, mergeStrategy: "replace" },
+    { keyPath: "features.memory_tool", value: true, mergeStrategy: "replace" },
+  ], reloadUserConfig: true });
+  await session.resetMemories();
+  expect(rpc.calls.filter(call => call.method === "memory/reset")).toEqual([{ method: "memory/reset", params: {} }]);
+});
+
+/** `/export` reads the whole conversation with `thread/read` (`v2/ThreadReadParams.ts`, turns included) and renders it like `app/transcript_export.rs` `render_markdown_transcript`. */
+test("exportTranscript() reads the thread with its turns and renders Codex's Markdown transcript", async () => {
+  const { rpc, session } = await conversationFixture();
+  rpc.replies.set("thread/read", { thread: { id: "t", cwd: "/project", turns: [{ id: "1", items: [
+    { type: "userMessage", id: "a", content: [{ type: "text", text: "Explain **the change**" }] },
+    { type: "agentMessage", id: "b", text: "```rust\nlet answer = 42;\n```" },
+    { type: "plan", id: "c", text: "completed plan" },
+    { type: "commandExecution", id: "d", command: "cargo test" },
+  ] }] } });
+  expect(await session.exportTranscript()).toBe("# Codex conversation\n\n## User\n\nExplain **the change**\n\n## Assistant\n\n```rust\nlet answer = 42;\n```\n\n## Plan\n\ncompleted plan\n\n## Activity\n\n    $ cargo test\n");
+  expect(rpc.calls.find(call => call.method === "thread/read")?.params).toEqual({ threadId: "t", includeTurns: true });
+});
+
+/** `/mention` searches with the app-server's `fuzzyFileSearch` (`FuzzyFileSearchParams.ts`) over the session folder and hands back the relative paths. */
+test("searchFiles() calls fuzzyFileSearch over the folder and returns the matching paths", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.replies.set("fuzzyFileSearch", { files: [{ root: "/project", path: "src/session.ts", match_type: "file", file_name: "session.ts", score: 9, indices: null }] });
+  expect(await session.searchFiles("sess")).toEqual(["src/session.ts"]);
+  expect(rpc.calls.find(call => call.method === "fuzzyFileSearch")?.params).toEqual({ query: "sess", roots: ["/project"], cancellationToken: null });
+});
+
+/** `/copy` copies Codex's last completed answer (`transcript.last_agent_markdown`): the session keeps it. */
+test("lastResponse() is the last completed agent message", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  expect(session.lastResponse()).toBeUndefined();
+  const pending = session.send("hello");
+  await new Promise(resolve => setImmediate(resolve));
+  rpc.onNotification("item/completed", { threadId: "t", turnId: "u", item: { type: "agentMessage", id: "m", text: "Here it is" } });
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await pending;
+  expect(session.lastResponse()).toBe("Here it is");
 });

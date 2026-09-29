@@ -21,19 +21,26 @@ export interface CodexCommand {
   readonly availableDuringTask: boolean;
   /** `is_visible()` on macOS: `/rollout` and `/test-approval` exist only in debug builds of Codex. */
   readonly visible: boolean;
+  /**
+   * The command lives only in Codex's own screen: it drives its keyboard, window, desktop app, local config or
+   * debug tools and has no app-server method (see `chatwidget/slash_dispatch.rs`), so Shell says exactly that.
+   */
+  readonly screenOnly: boolean;
 }
 
-const command = (name: string, description: string, availableDuringTask: boolean, options: { aliases?: string[]; visible?: boolean } = {}): CodexCommand =>
-  ({ name, description, availableDuringTask, aliases: options.aliases ?? [], visible: options.visible ?? true });
+const command = (name: string, description: string, availableDuringTask: boolean, options: { aliases?: string[]; visible?: boolean; screenOnly?: boolean } = {}): CodexCommand =>
+  ({ name, description, availableDuringTask, aliases: options.aliases ?? [], visible: options.visible ?? true, screenOnly: options.screenOnly ?? false });
+/** Shorthand for `{ screenOnly: true }` plus any other option. */
+const screen = (options: { aliases?: string[]; visible?: boolean } = {}) => ({ ...options, screenOnly: true });
 
 /** Codex 0.159.0's commands in the enum's order. */
 export const CODEX_COMMANDS: readonly CodexCommand[] = [
   command("model", "choose what model and reasoning effort to use", true),
-  command("ide", "include current selection, open files, and other context from your IDE", true),
+  command("ide", "include current selection, open files, and other context from your IDE", true, screen()),
   command("permissions", "choose what Codex is allowed to do", true),
-  command("keymap", "remap TUI shortcuts", false),
-  command("vim", "toggle Vim mode for the composer", false),
-  command("setup-default-sandbox", "set up elevated agent sandbox", false),
+  command("keymap", "remap TUI shortcuts", false, screen()),
+  command("vim", "toggle Vim mode for the composer", false, screen()),
+  command("setup-default-sandbox", "set up elevated agent sandbox", false, screen()),
   command("experimental", "toggle experimental features", false),
   command("approve", "approve one retry of a recent auto-review denial", true),
   command("memories", "configure memory use and generation", false),
@@ -47,34 +54,34 @@ export const CODEX_COMMANDS: readonly CodexCommand[] = [
   command("delete", "permanently delete this session", false),
   command("resume", "resume a saved chat", true),
   command("fork", "fork the current chat", false),
-  command("worktree", "start or continue a conversation in a new worktree", false),
-  command("app", "continue this session in the Desktop app", true),
+  command("worktree", "start or continue a conversation in a new worktree", false, screen()),
+  command("app", "continue this session in the Desktop app", true, screen()),
   command("init", "create an AGENTS.md file with instructions for Codex", false),
   command("compact", "summarize conversation to prevent hitting the context limit", false),
   command("recap", "summarize the current conversation now", false),
   command("plan", "switch to Plan mode", false),
-  command("voice", "start or stop voice; use /voice settings to choose a voice", true),
+  command("voice", "start or stop voice; use /voice settings to choose a voice", true, screen()),
   command("goal", "set or view the goal for a long-running task", true),
-  command("agents", "open the agent command center", true),
+  command("agents", "open the agent command center", true, screen()),
   command("side", "start a side conversation in an ephemeral fork", true),
   command("btw", "start a side conversation in an ephemeral fork", true),
   command("copy", "copy the last response or part of it", true),
   command("export", "export the conversation as markdown", false),
-  command("raw", "toggle raw scrollback mode for copy-friendly terminal selection", true),
-  command("tui", "choose the TUI mode for the next launch", false),
+  command("raw", "toggle raw scrollback mode for copy-friendly terminal selection", true, screen()),
+  command("tui", "choose the TUI mode for the next launch", false, screen()),
   command("diff", "show git diff (including untracked files)", true),
   command("mention", "mention a file", true),
   command("status", "show current session configuration and token usage", true),
-  command("daemon", "Manage the local background server", true),
-  command("warnings", "view retained warnings and diagnostic details", true),
-  command("cd", "change the current working directory", false),
+  command("daemon", "Manage the local background server", true, screen()),
+  command("warnings", "view retained warnings and diagnostic details", true, screen()),
+  command("cd", "change the current working directory", false, screen()),
   command("pwd", "show the current working directory", true, { aliases: ["cwd"] }),
   command("usage", "view account usage or use a usage limit reset", true),
-  command("debug-config", "show config layers and requirement sources for debugging", true),
-  command("title", "configure which items appear in the terminal title", true),
-  command("statusline", "configure which items appear in the status line", true),
-  command("theme", "choose a syntax highlighting theme", false),
-  command("pets", "choose or hide the terminal pet", false, { aliases: ["pet"] }),
+  command("debug-config", "show config layers and requirement sources for debugging", true, screen()),
+  command("title", "configure which items appear in the terminal title", true, screen()),
+  command("statusline", "configure which items appear in the status line", true, screen()),
+  command("theme", "choose a syntax highlighting theme", false, screen()),
+  command("pets", "choose or hide the terminal pet", false, screen({ aliases: ["pet"] })),
   command("mcp", "list configured MCP tools; use /mcp verbose for details", true),
   command("apps", "manage apps", true),
   command("plugins", "browse plugins", true),
@@ -82,14 +89,14 @@ export const CODEX_COMMANDS: readonly CodexCommand[] = [
   command("quit", "exit Codex", true),
   command("exit", "exit Codex", true),
   command("feedback", "send logs to maintainers", true),
-  command("rollout", "print the rollout file path", true, { visible: false }),
+  command("rollout", "print the rollout file path", true, screen({ visible: false })),
   command("ps", "list background terminals", true),
   command("stop", "stop all background terminals", true, { aliases: ["clean"] }),
   command("clear", "clear the terminal and start a new chat", false),
-  command("test-approval", "test approval request", true, { visible: false }),
+  command("test-approval", "test approval request", true, screen({ visible: false })),
   command("subagents", "switch between this session's subagents", true),
-  command("debug-m-drop", "DO NOT USE", false),
-  command("debug-m-update", "DO NOT USE", false),
+  command("debug-m-drop", "DO NOT USE", false, screen()),
+  command("debug-m-update", "DO NOT USE", false, screen()),
 ];
 
 /** The command a typed name (without the slash) refers to — by its name or one of Codex's accepted spellings — or nothing when it is not a Codex command. */

@@ -7,6 +7,7 @@ import { renderLayoutFrame } from "../../../node_modules/@earendil-works/pi-tui/
 import { ChatText, accent, muted, warning } from "./theme.ts";
 import { workspaceLayout, IndependentScrollView, attachJumpToLatest } from "./workspace.ts";
 import { ShellSidebar } from "./sidebar.ts";
+import { getCatalog } from "../../i18n/index.ts";
 import type { Component, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
 
 const plain = (lines: string[]) => lines.map(stripVTControlCharacters);
@@ -256,6 +257,25 @@ test("the composer shows the adapter's own mode name colored by its tone, and kn
   expect(stripVTControlCharacters(unknown.text + unknown.help)).not.toContain("some-future-id");
   expect(stripVTControlCharacters(workModePresentation({ id: "x1", label: "Default", tone: "manual" }, "es").help)).toContain("Shift+Tab");
   expect(stripVTControlCharacters(workModePresentation(undefined).text)).toContain("engine mode");
+});
+
+/**
+ * With an assistant whose Shift+Tab switches collaboration modes (Codex: Plan ↔ Default), the indicator keeps the
+ * permission and adds the active mode's own indicator («Plan mode», as Codex's footer shows it, nothing in
+ * Default), and the help names what Shift+Tab does now instead of «cycle».
+ */
+test("with collaboration modes the indicator keeps the permission, adds Plan mode and the help names the switch", () => {
+  const modes = [{ id: "plan", label: "Plan", indicator: "Plan mode" }, { id: "default", label: "Default" }];
+  for (const locale of ["en", "es"] as const) {
+    const plan = workModePresentation({ id: "x", label: "Full Access", tone: "danger" }, locale, { modes, active: "plan" });
+    expect(stripVTControlCharacters(plan.text)).toBe("▶▶ Full Access · Plan mode");
+    expect(stripVTControlCharacters(plan.help)).toBe(getCatalog(locale).workMode.shiftTabCollaboration({ modes: "Plan ↔ Default" }));
+    const plain = workModePresentation({ id: "x", label: "Full Access", tone: "danger" }, locale, { modes, active: "default" });
+    expect(stripVTControlCharacters(plain.text)).toBe("▶▶ Full Access");
+  }
+  // Short on purpose, so it fits next to the permission: the key and the assistant's own mode names, the same in both languages.
+  expect(getCatalog("en").workMode.shiftTabCollaboration({ modes: "Plan ↔ Default" })).toBe("Shift+Tab: Plan ↔ Default");
+  expect(getCatalog("es").workMode.shiftTabCollaboration({ modes: "Plan ↔ Default" })).toBe("Shift+Tab: Plan ↔ Default");
 });
 
 test("composer preserves pasted newlines and fits narrow and wide viewports", () => {

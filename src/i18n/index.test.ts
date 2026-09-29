@@ -72,3 +72,21 @@ test("guessSystemLocaleFocus never resolves a locale by itself — it never caus
     expect(resolveConfiguredLocale({ env: { LANG: "es_MX.UTF-8" }, home })).toBeUndefined();
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+/**
+ * Every text Shell copies from Codex's screen (`codexNative`) must come out in the person's language: the Spanish catalog may
+ * not keep an English text. It walks the whole block, calls each function with the same example parameters in both
+ * languages and compares what the person would read. It exists because the first version of the block shipped almost
+ * entirely in English inside `es.ts`. Only the three permission names are Codex's own names and stay as Codex writes them.
+ */
+test("every codexNative text in the Spanish catalog is translated, except Codex's permission names", () => {
+  const sameInBothLanguages = new Set(["askForApproval", "approveForMe", "fullAccess"]);
+  const example = new Proxy({}, { get: (_target, key) => `<${String(key)}>` });
+  const show = (value: unknown): string => typeof value === "function" ? (value as (params: object) => string)(example) : String(value);
+  const en = getCatalog("en").codexNative as Record<string, unknown>;
+  const es = getCatalog("es").codexNative as Record<string, unknown>;
+  expect(Object.keys(es)).toEqual(Object.keys(en));
+  const untranslated = Object.keys(en).filter(key => !sameInBothLanguages.has(key) && show(es[key]) === show(en[key]));
+  expect(untranslated).toEqual([]);
+  for (const key of sameInBothLanguages) expect(show(es[key])).toBe(show(en[key]));
+});

@@ -68,3 +68,23 @@ test("the menu lists only what Codex shows on macOS, in Codex's order, with Code
   expect(findCodexCommand("rollout")?.visible).toBe(false);
   expect(findCodexCommand("app")?.visible).toBe(true);
 });
+
+/**
+ * The commands that only exist in Codex's own screen (keyboard, window, desktop, local config or debug tools
+ * with no app-server method; see `chatwidget/slash_dispatch.rs`) are marked so Shell answers «only in Codex's
+ * screen» for them, and only for them; the part-3 commands are not marked and keep the honest «not yet».
+ */
+test("screen-only commands are exactly the ones with no app-server counterpart", () => {
+  expect(CODEX_COMMANDS.filter(command => command.screenOnly).map(command => command.name)).toEqual([
+    "ide", "keymap", "vim", "setup-default-sandbox", "worktree", "app", "voice", "agents", "raw", "tui", "daemon", "warnings", "cd",
+    "debug-config", "title", "statusline", "theme", "pets", "rollout", "test-approval", "debug-m-drop", "debug-m-update",
+  ]);
+  for (const name of ["recap", "side", "btw", "subagents", "import", "plugins", "feedback", "approve"]) expect(findCodexCommand(name)?.screenOnly).toBe(false);
+  expect(findCodexCommand("pet")?.screenOnly).toBe(true);
+});
+
+/** `/model` and `/resume` run while Codex works, per `available_during_task`. */
+test("model and resume are available during a task", () => {
+  expect(findCodexCommand("model")?.availableDuringTask).toBe(true);
+  expect(findCodexCommand("resume")?.availableDuringTask).toBe(true);
+});
