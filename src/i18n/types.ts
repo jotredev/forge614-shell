@@ -350,6 +350,11 @@ export interface Catalog {
     toolCompleted: (params: { duration: string }) => string;
     toolFailed: (params: { duration: string }) => string;
   };
+  /** The status line that says where Engram's memory comes from (`memorySourceLine`). */
+  memorySource: {
+    byAssistant: string;
+    byShell: string;
+  };
   telemetry: {
     notReported: string;
     modelLine: (params: { model: string; effort: string }) => string;

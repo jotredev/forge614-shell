@@ -13,6 +13,7 @@ import { gitBranches, gitCommits, gitCurrentBranch, gitDiff } from "../../infras
 import { copyToClipboard, saveNewFile } from "../../infrastructure/clipboard.ts";
 import { openLink } from "../../infrastructure/browser.ts";
 import { cycleWorkMode, restoreWorkMode } from "../../engines/work-mode.ts";
+import { memorySourceLine } from "../../engines/memory-source.ts";
 import type { WorkModeControl } from "../../engines/work-mode.ts";
 import { ShellStatusBar } from "./status-bar.ts";
 import { ActivityCard, chatMessage } from "./transcript.ts";
@@ -302,7 +303,10 @@ export async function runNativeUI(
       return;
     }
     // Codex's own `/status`: the account, model, quotas, folder, work mode and conversation, as Codex reports them.
-    if (name === "/status") { write(session.status().join("\n")); return; }
+    if (name === "/status") {
+      const memory = session.memoryDeliveredByAssistant ? [memorySourceLine(await session.memoryDeliveredByAssistant(), locale)] : [];
+      write([...session.status(), ...memory].join("\n")); return;
+    }
     // Codex's own commands that Shell has connected: Codex says which of them may run while it works.
     const official = findCodexCommand((name ?? "").slice(1));
     // A command of Codex's own screen (keyboard, window, desktop, debug) has no app-server method: say exactly that.

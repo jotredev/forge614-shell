@@ -12,6 +12,7 @@ import { formatCodexPermission } from "../permission-text.ts";
 import { engramToolLabel } from "../mcp-labels.ts";
 import type { getStartupContext } from "../../infrastructure/forge614-engram.ts";
 import { ShellError, describeError } from "../../shell-error.ts";
+import { MEMORY_HOOK_TIMEOUT_MS } from "../../infrastructure/memory-hook.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -84,6 +85,12 @@ function toNativeGoal(goal: any): NativeGoal {
   };
 }
 
+/** Whether a hook `hooks/list` reports is Engines' memory hook: a `sessionStart` command that runs `memory-hook-run`, enabled and trusted (or managed by the organization). */
+function isEngramStartupHook(hook: NativeHook): boolean {
+  return hook.event === "sessionStart" && hook.handler === "command" && /\bmemory-hook-run\b/.test(hook.detail ?? "")
+    && hook.enabled && (hook.trust === "trusted" || hook.trust === "managed");
+}
+
 function wrapStartupContext(text: string): string {
   return [
     "<forge614-engram-memory>",
@@ -121,6 +128,8 @@ export class CodexSession implements NativeSession {
   /** The mode of the last thread/turn request Codex accepted (undefined = the default it opened with); where a rejected mode goes back to. */
   private acceptedMode?: CodexWorkMode;
   private pendingStartupContext?: string;
+  /** The one answer of the run to «does the startup hook deliver the memory?» (see `memoryDeliveredByAssistant`), asked lazily and never again. */
+  private hookDelivers?: Promise<boolean>;
   /** The skills Codex listed the last time (`skills/list`), used to recognize `$name` when a message is sent; undefined until it has been read. */
   private skillCatalog?: NativeSkill[];
   /** Codex's collaboration presets (`collaborationMode/list`) that its own screen shows (Plan and Default), in Codex's order; empty when Codex lists none. */
@@ -149,6 +158,11 @@ export class CodexSession implements NativeSession {
     /** Injected by the composition root (`app/native-chat.ts`) with the real `getStartupContext`. Left undefined in tests that do not exercise memory recall — never falls back to calling a real Forge614 Engram binary implicitly. */
     private getStartupContextFn?: typeof getStartupContext,
     locale: Locale = "en",
+    /**
+     * Injected by the composition root (`app/native-chat.ts`) with the once-per-run `verify memory-integration` check of Engines' startup hook
+     * (`createMemoryHookProbe`). Left undefined, Shell never counts the hook as delivering and always sends its own block, as before the hook existed.
+     */
+    private memoryHookVerified?: () => Promise<boolean>,
   ) {
     this.locale = locale;
     this.auth = this.t.notLoggedIn;
@@ -502,12 +516,31 @@ export class CodexSession implements NativeSession {
     this.sessionId = result.thread.id; this.loaded = true; this.model = result.model; this.effort ??= result.reasoningEffort;
     await this.loadStartupContext();
   }
-  /** Fetches Engram's digest (with its notices) and keeps it, wrapped as data, to go in front of the next message; a failure or no digest leaves nothing pending. */
+  /**
+   * Whether Codex already receives Engram's memory from Engines' startup hook, so Shell must not send it a second time. It needs both
+   * answers: Engines' `verify memory-integration` says the hook is active, and this session's own `hooks/list` shows a `sessionStart` command
+   * hook running `memory-hook-run`, enabled and trusted (or managed). Decided once per run; a missing check, a «no», a failure or a slow answer
+   * all mean no — Shell sends its block (better twice than never). Also what `/status` shows, so the person can see which one is in force.
+   */
+  memoryDeliveredByAssistant(): Promise<boolean> {
+    const verified = this.memoryHookVerified;
+    return this.hookDelivers ??= (async () => {
+      if (!verified) return false;
+      try {
+        if (!await verified()) return false;
+        return (await this.hooks(MEMORY_HOOK_TIMEOUT_MS)).some(isEngramStartupHook);
+      } catch { return false; }
+    })();
+  }
+  /**
+   * Fetches Engram's digest (with its notices) and keeps it, wrapped as data, to go in front of the next message; a failure or no digest leaves nothing pending.
+   * When the startup hook delivers the memory the digest is still fetched — that is how Engram's notices reach the person — but nothing is left pending.
+   */
   private async loadStartupContext(): Promise<void> {
     if (!this.getStartupContextFn) return;
     try {
-      const context = await this.getStartupContextFn(this.cwd, {});
-      this.pendingStartupContext = context.available ? wrapStartupContext(context.text) : undefined;
+      const [context, byAssistant] = await Promise.all([this.getStartupContextFn(this.cwd, {}), this.memoryDeliveredByAssistant()]);
+      this.pendingStartupContext = context.available && !byAssistant ? wrapStartupContext(context.text) : undefined;
     } catch {
       this.pendingStartupContext = undefined;
     }
@@ -650,9 +683,9 @@ export class CodexSession implements NativeSession {
     } while (cursor);
     return servers;
   }
-  /** `/hooks`: `hooks/list` for this folder (`v2/HooksListParams.ts`) — view only; managing them is not connected. */
-  async hooks(): Promise<NativeHook[]> {
-    const response = await this.rpc.request("hooks/list", { cwds: [this.cwd] });
+  /** `/hooks`: `hooks/list` for this folder (`v2/HooksListParams.ts`) — view only; managing them is not connected. `timeoutMs` bounds the wait for Codex's answer (none by default). */
+  async hooks(timeoutMs?: number): Promise<NativeHook[]> {
+    const response = await this.rpc.request("hooks/list", { cwds: [this.cwd] }, timeoutMs);
     return (response.data ?? []).flatMap((entry: any) => (entry.hooks ?? []).map((hook: any): NativeHook => {
       const detail = hook.handlerType === "command" ? hook.command : hook.handlerType === "mcpTool" ? `${hook.server}: ${hook.tool}` : undefined;
       return {

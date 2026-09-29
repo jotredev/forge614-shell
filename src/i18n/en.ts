@@ -350,6 +350,10 @@ The selected engine's project settings and permissions apply. This is not a sand
     toolCompleted: ({ duration }) => `Completed · ${duration}`,
     toolFailed: ({ duration }) => `Failed · ${duration}`,
   },
+  memorySource: {
+    byAssistant: "Memory: the assistant delivers it at startup",
+    byShell: "Memory: Shell pastes it",
+  },
   telemetry: {
     notReported: "not reported",
     modelLine: ({ model, effort }) => `Model: ${model} | Applied effort: ${effort}`,

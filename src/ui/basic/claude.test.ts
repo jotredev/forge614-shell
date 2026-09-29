@@ -454,3 +454,27 @@ test.skipIf(process.platform === "win32")("Claude UI: the / menu keeps the assis
     } finally { await other.finish(true); }
   }
 });
+
+/**
+ * `/f614:status` says where the memory comes from, so the person can check it without asking the model (the memory used to arrive twice: measured with a
+ * real account on 2026-09-29, build of 067e348). Through the real composition root: with no Engines under `$FORGE614_HOME` Shell cannot know that the
+ * startup hook delivers, so it says «Shell pastes it»; with an Engines that reports the hook active, it says the assistant delivers it (the exact words in both languages are checked in `memory-source.test.ts`).
+ */
+test.skipIf(process.platform === "win32")("Claude UI: /f614:status says who delivers the memory, from the one detection of the run", async () => {
+  const h = await claudeUi();
+  try {
+    h.terminal.output = ""; h.enter("/f614:status"); await tick(); await tick();
+    expect(h.plain()).toContain("Memory: Shell pastes it");
+    expect(h.plain()).not.toContain("delivers it at startup");
+  } finally { await h.finish(); }
+  const second = await claudeUi();
+  try {
+    const bin = join(process.env.FORGE614_HOME!, "engines", "bin"); mkdirSync(bin, { recursive: true });
+    const verification = { agentId: "claude-code", mcp: { path: "/x", present: true }, instructions: { supported: true, paths: [], present: true }, hook: { supported: true, path: "/x", present: true, dryRunOk: true, runtimeStatus: { kind: "runtime-observed" } }, overallStatus: "complete" };
+    writeFileSync(join(bin, "forge614-engines"), `#!${process.execPath}\nconsole.log(JSON.stringify({schemaVersion:1,verification:${JSON.stringify(verification)}}));\n`, { mode: 0o755 });
+    second.terminal.output = ""; second.enter("/f614:status");
+    for (let i = 0; i < 60 && !second.plain().includes("Memory: "); i++) await tick();
+    expect(second.plain()).toContain("Memory: the assistant delivers it at startup");
+    expect(second.plain()).not.toContain("Shell pastes it");
+  } finally { await second.finish(); }
+});

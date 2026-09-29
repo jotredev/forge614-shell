@@ -20,6 +20,11 @@ type Dependencies = {
    * real Forge614 Engram binary implicitly, so unrelated tests stay hermetic.
    */
   getStartupContext?: typeof getStartupContext;
+  /**
+   * Injected by the composition root with the once-per-run check of whether Claude Code already receives Engram's memory through its own
+   * SessionStart hook (`createMemoryHookProbe`). Left undefined, Shell always puts its own block in, as it did before the hook existed.
+   */
+  memoryHookActive?: () => Promise<boolean>;
 };
 
 const STARTUP_CONTEXT_TAG_OPEN = "<forge614-engram-memory>";
@@ -141,6 +146,8 @@ export class ClaudeSession {
   private abort?: AbortController;
   private startupContextText?: string;
   private startupContextStale = true;
+  /** The one answer of the run to «does the startup hook deliver the memory?», asked lazily and never again. */
+  private hookDelivers?: Promise<boolean>;
 
   constructor(private readonly dependencies: Dependencies) {}
 
@@ -158,9 +165,23 @@ export class ClaudeSession {
   }
 
   /**
+   * Whether Claude Code already receives Engram's memory from its own startup hook, so Shell must not paste it a second time. Decided once
+   * per run by the injected check; no check, or a check that fails, means no — Shell pastes its block (better twice than never). Also what
+   * `/f614:status` shows, so the person can see which one is in force.
+   */
+  memoryDeliveredByAssistant(): Promise<boolean> {
+    const probe = this.dependencies.memoryHookActive;
+    return this.hookDelivers ??= (async () => {
+      try { return probe ? await probe() : false; } catch { return false; }
+    })();
+  }
+
+  /**
    * Loads Engram's startup context at most once per logical conversation (until `reset()` or
    * `resume()` marks it stale again). Never throws — a failure here must never block a chat turn,
    * and no dependency injected means no call is made at all (see `Dependencies.getStartupContext`).
+   * With the startup hook delivering the memory the call is still made — it is how Engram's notices
+   * reach the person — but its text is dropped: nothing goes into the system prompt.
    */
   private async ensureStartupContext(): Promise<void> {
     if (!this.startupContextStale) return;
@@ -168,8 +189,8 @@ export class ClaudeSession {
     const fetch = this.dependencies.getStartupContext;
     if (!fetch) return;
     try {
-      const result = await fetch(this.dependencies.cwd, { env: this.dependencies.env });
-      this.startupContextText = result.available ? result.text : undefined;
+      const [result, byAssistant] = await Promise.all([fetch(this.dependencies.cwd, { env: this.dependencies.env }), this.memoryDeliveredByAssistant()]);
+      this.startupContextText = result.available && !byAssistant ? result.text : undefined;
     } catch {
       this.startupContextText = undefined;
     }

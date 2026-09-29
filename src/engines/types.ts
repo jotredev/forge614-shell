@@ -178,6 +178,8 @@ export interface NativeSession {
   /** A short phrase of what the engine is doing right now (the command it is running), for the «Working» indicator; undefined when nothing specific runs. */
   currentActivity?(): string | undefined;
   status(): string[];
+  /** Whether the assistant already receives Engram's memory from its own startup hook (so Shell does not paste it); `/status` says which. Absent when the session has no such check. */
+  memoryDeliveredByAssistant?(): Promise<boolean>;
   visual?(): NativeVisualState;
   refreshUsage?(): Promise<void>;
   close(): void;
