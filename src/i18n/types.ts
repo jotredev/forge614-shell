@@ -285,6 +285,9 @@ export interface Catalog {
     shiftEnterNewline: string;
     commandsFallbackTitle: string;
     menuFooter: (params: { title: string; from: number; to: number; total: number }) => string;
+    searchLabel: string;
+    searchPlaceholder: string;
+    searchNoMatches: string;
   };
   workMode: {
     bypassPermissionsOn: string;
@@ -332,7 +335,6 @@ export interface Catalog {
     defaultResolvesLater: string;
     effortNotSupported: string;
     invalidEffort: string;
-    resumeInstruction: string;
     noClaudeSessionsFound: string;
     useResumeFirst: string;
     usageUnavailable: string;
@@ -483,7 +485,6 @@ export interface Catalog {
     selectedModel: (params: { model: string }) => string;
     useLoginForCatalog: string;
     noReasoningOptionsForModel: string;
-    resumeInstruction: string;
     noSessionsFound: string;
     chooseSessionOrId: string;
     waitForEngine: string;

@@ -1,8 +1,9 @@
 import { stripVTControlCharacters } from "node:util";
 import { Container, HStack, ProcessTerminal, ScrollView, Text, TuiAltScreen, VStack, matchesKey } from "@earendil-works/pi-tui";
 import type { Terminal } from "@earendil-works/pi-tui";
-import type { Approve, Emit, NativeEvent, NativeId, NativeSession } from "../../engines/types.ts";
+import type { Approve, Emit, NativeEvent, NativeId, NativeSession, NativeSessionInfo } from "../../engines/types.ts";
 import { createComposer } from "./composer.ts";
+import { resumeChoice, sortRecentFirst } from "./resume-picker.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { readRuntimeResources } from "../../infrastructure/runtime-resources.ts";
@@ -56,7 +57,7 @@ export async function runNativeUI(
   const exited = new Promise<void>(resolve => { finish = resolve; });
   const streaming = new Map<string, { component: ChatText; text: string }>();
   const approvals: { description: string; answer: (allow: boolean) => void }[] = [];
-  let sessions: { id: string; title: string }[] = [];
+  let sessions: NativeSessionInfo[] = [];
   let session: NativeSession;
   const write = (text: string) => { const component = new ChatText(clean(text)); transcript.addChild(component); tui.requestRender(); return component; };
   /** Red, so an error reads as an error at a glance instead of blending into a normal reply. */
@@ -227,8 +228,13 @@ export async function runNativeUI(
         }
       } else if (name === "/resume") {
         if (!argument) {
-          sessions = await session.listSessions();
-          write(sessions.length ? sessions.map((item, i) => `${i + 1}. ${item.title} [${item.id}]`).join("\n") + "\n" + tc.resumeInstruction : tc.noSessionsFound);
+          // Newest first; the same order gives the numbers `/resume <number>` has always used.
+          sessions = sortRecentFirst(await session.listSessions());
+          if (!sessions.length) write(tc.noSessionsFound);
+          else {
+            const picked = await input.choose(t.commandChatHistory, sessions.map(item => resumeChoice(item, locale, process.env.HOME)), undefined, { searchable: true });
+            if (picked) { await session.resume(picked); write(session.resumeNotice ?? t.historyRestored); }
+          }
         } else {
           const selected = /^\d+$/.test(argument) ? sessions[Number(argument) - 1]?.id : argument;
           if (!selected) throw new Error(tc.chooseSessionOrId);

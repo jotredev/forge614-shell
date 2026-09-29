@@ -181,3 +181,75 @@ test("the working indicator names the running command for a native session, and 
     expect(stripVTControlCharacters(terminal.output)).toMatch(/Working · \d+s/);
   } finally { terminal.input("/quit!"); terminal.input("\r"); await ui; }
 });
+
+/** Doble de sesión con tres conversaciones del mismo título (como «Color favorito» ×3), entregadas de la más vieja a la más nueva a propósito, para comprobar que el selector las reordena y que se distinguen. Sin cuenta ni disco reales. */
+function sessionWithThreeSameTitle(resumed: string[]) {
+  return {
+    busy: false, models: [],
+    async initialize() {}, async login() {}, async cancel() {}, reset() {}, async resume(id: string) { resumed.push(id); },
+    async listSessions() {
+      return [
+        { id: "thread-old", title: "Favorite color", firstMessage: "alpha-message", folder: "/project", updatedAt: Date.UTC(2026, 8, 20, 10) },
+        { id: "thread-new", title: "Favorite color", firstMessage: "gamma-message", folder: "/project", updatedAt: Date.UTC(2026, 8, 28, 10) },
+        { id: "thread-mid", title: "Favorite color", firstMessage: "beta-message", folder: "/project", updatedAt: Date.UTC(2026, 8, 25, 10) },
+      ];
+    },
+    async setModel(_id: string) {}, async setEffort(_effort: string) {},
+    status() { return ["native status"]; },
+    async send(_text: string) {},
+    close() {},
+  };
+}
+
+/** Mejora 8: `/resume` abre un selector (no imprime una lista): la más reciente arriba, cada fila con su primer mensaje para distinguir las repetidas, y Enter retoma la resaltada. */
+test("/resume opens a selector with the newest first and Enter resumes the highlighted conversation", async () => {
+  const terminal = new TestTerminal(); const resumed: string[] = [];
+  const ui = runNativeUI("codex", "/project", () => sessionWithThreeSameTitle(resumed), terminal);
+  const enter = (value: string) => { terminal.input(value); terminal.input("\r"); };
+  try {
+    await tick(); enter("/resume"); await tick();
+    const shown = stripVTControlCharacters(terminal.output);
+    for (const message of ["alpha-message", "beta-message", "gamma-message"]) expect(shown).toContain(message);
+    expect(shown.indexOf("gamma-message")).toBeLessThan(shown.indexOf("beta-message"));
+    expect(shown.indexOf("beta-message")).toBeLessThan(shown.indexOf("alpha-message"));
+    expect(resumed).toEqual([]);
+    terminal.input("\r"); await tick();
+    expect(resumed).toEqual(["thread-new"]);
+  } finally { enter("/quit!"); await ui; }
+});
+
+/** Mejora 8: escribir filtra (sin mayúsculas ni acentos, también por primer mensaje) y Esc cancela sin retomar nada ni cambiar la conversación. */
+test("/resume filters by what is typed and Esc cancels without resuming anything", async () => {
+  const terminal = new TestTerminal(); const resumed: string[] = [];
+  const ui = runNativeUI("codex", "/project", () => sessionWithThreeSameTitle(resumed), terminal);
+  const enter = (value: string) => { terminal.input(value); terminal.input("\r"); };
+  try {
+    await tick(); enter("/resume"); await tick();
+    for (const char of "BETA-MESS") terminal.input(char);
+    await tick(); terminal.input("\r"); await tick();
+    expect(resumed).toEqual(["thread-mid"]);
+    enter("/resume"); await tick(); terminal.input("\x1b"); await tick();
+    expect(resumed).toEqual(["thread-mid"]);
+    expect(stripVTControlCharacters(terminal.output).split("History restored")).toHaveLength(2);
+  } finally { enter("/quit!"); await ui; }
+});
+
+/** Mejora 8, punto 3: quien ya usaba `/resume <número>` (sobre el orden que ve en pantalla) o `/resume <id>` sigue igual; y sin sesiones sale el mensaje de siempre. */
+test("/resume <number> and /resume <id> keep working and an empty list keeps its message", async () => {
+  const terminal = new TestTerminal(); const resumed: string[] = [];
+  const ui = runNativeUI("codex", "/project", () => sessionWithThreeSameTitle(resumed), terminal);
+  const enter = (value: string) => { terminal.input(value); terminal.input("\r"); };
+  try {
+    await tick(); enter("/resume"); await tick(); terminal.input("\x1b"); await tick();
+    enter("/resume 2"); await tick();
+    expect(resumed).toEqual(["thread-mid"]);
+    enter("/resume some-native-id"); await tick();
+    expect(resumed).toEqual(["thread-mid", "some-native-id"]);
+  } finally { enter("/quit!"); await ui; }
+  const emptyTerminal = new TestTerminal();
+  const emptyUi = runNativeUI("codex", "/project", () => ({ ...sessionWithThreeSameTitle([]), async listSessions() { return []; } }), emptyTerminal);
+  try {
+    await tick(); emptyTerminal.input("/resume"); emptyTerminal.input("\r"); await tick();
+    expect(stripVTControlCharacters(emptyTerminal.output)).toContain(getCatalog("en").chat.noSessionsFound);
+  } finally { emptyTerminal.input("/quit!"); emptyTerminal.input("\r"); await emptyUi; }
+});

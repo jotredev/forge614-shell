@@ -10,7 +10,8 @@ The Basic interface is the only available visual interface. The startup picker a
 | --- | --- |
 | `/login` | Connects Shell to the existing native account or offers the official flow. |
 | `/logout` | Disconnects only this Shell session; it does not revoke the account. |
-| `/new`, `/resume` | Starts or resumes a client conversation. |
+| `/new` | Starts a new client conversation. |
+| `/resume` | Opens a selector of this project's saved conversations, the most recent on top. Each row shows the title, the date, the first message and the folder, only what the assistant reports. Arrow keys move, typing filters (title, first message and folder, ignoring case and accents), Enter resumes the highlighted one and Esc cancels without changing anything. `/resume <number>` (the row's position in that list) and, in Codex, `/resume <id>` still work. |
 | `/model`, `/effort` | Shows or adjusts options reported by the client. |
 | `/status` | Shows client-reported state. |
 | `/stop`, `/quit` | Interrupts the active turn or exits. |

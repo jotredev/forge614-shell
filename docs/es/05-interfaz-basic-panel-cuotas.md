@@ -10,7 +10,8 @@ La interfaz Basic es la única interfaz visual disponible. El selector inicial p
 | --- | --- |
 | `/login` | Conecta Shell con la cuenta nativa existente u ofrece el flujo oficial. |
 | `/logout` | Desconecta solo esta sesión Shell; no revoca la cuenta. |
-| `/new`, `/resume` | Crea o retoma una conversación del cliente. |
+| `/new` | Crea una conversación nueva del cliente. |
+| `/resume` | Abre un selector con las conversaciones guardadas de este proyecto, la más reciente arriba. Cada fila muestra el título, la fecha, el primer mensaje y la carpeta, solo lo que el asistente informa. Las flechas se mueven, escribir filtra (título, primer mensaje y carpeta, sin distinguir mayúsculas ni acentos), Enter retoma la resaltada y Esc cancela sin cambiar nada. `/resume <número>` (la posición de la fila en esa lista) y, en Codex, `/resume <id>` siguen funcionando. |
 | `/model`, `/effort` | Muestra o ajusta opciones que el cliente informa. |
 | `/status` | Muestra estado reportado por el cliente. |
 | `/stop`, `/quit` | Interrumpe el turno activo o sale. |

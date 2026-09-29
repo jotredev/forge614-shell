@@ -1,5 +1,5 @@
 import type { RpcConnection } from "../../infrastructure/rpc.ts";
-import type { Approve, Emit, NativeModel, NativeSession, NativeVisualState, NativeWorkMode } from "../types.ts";
+import type { Approve, Emit, NativeModel, NativeSession, NativeSessionInfo, NativeVisualState, NativeWorkMode } from "../types.ts";
 import { openLoginBrowser } from "../../infrastructure/browser.ts";
 import { confirmedLogout } from "../logout.ts";
 import { engramToolLabel } from "../mcp-labels.ts";
@@ -217,10 +217,21 @@ export class CodexSession implements NativeSession {
     this.effort = effort;
   }
   reset(): void { this.idle(); this.sessionId = undefined; this.loaded = false; this.tokens = this.t.tokensNotReported; this.context = undefined; }
-  async listSessions(): Promise<{ id: string; title: string }[]> {
+  /**
+   * The project's saved threads for the `/resume` selector: title (name, or the first message when it
+   * has none), first message (`preview`), folder and last update as Codex reports them — a field Codex
+   * does not send is left out. Codex counts `updatedAt` in seconds; the selector wants milliseconds.
+   */
+  async listSessions(): Promise<NativeSessionInfo[]> {
     this.idle();
     const result = await this.rpc.request("thread/list", { cwd: this.cwd, limit: 100, sortKey: "updated_at" });
-    return result.data.filter((thread: any) => thread.cwd === this.cwd).map((thread: any) => ({ id: thread.id, title: thread.name || thread.preview || thread.id }));
+    return result.data.filter((thread: any) => thread.cwd === this.cwd).map((thread: any): NativeSessionInfo => ({
+      id: thread.id,
+      title: thread.name || thread.preview || thread.id,
+      ...(thread.preview ? { firstMessage: String(thread.preview) } : {}),
+      ...(typeof thread.cwd === "string" ? { folder: thread.cwd } : {}),
+      ...(typeof thread.updatedAt === "number" ? { updatedAt: thread.updatedAt < 1e11 ? thread.updatedAt * 1000 : thread.updatedAt } : {}),
+    }));
   }
   async resume(id: string): Promise<void> {
     this.idle();

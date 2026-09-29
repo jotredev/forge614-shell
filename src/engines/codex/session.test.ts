@@ -494,3 +494,21 @@ test("currentActivity reports the running command as one trimmed line until it c
   await session.send("wait for the checks");
   expect(seen).toEqual([undefined, "gh pr checks 3 --watch", undefined]);
 });
+
+/** Mejora 8: Codex entrega en `thread/list` el nombre, el primer mensaje (`preview`), la carpeta y la fecha (segundos); `listSessions()` los pasa al selector tal cual (fecha en milisegundos), sin inventar los que faltan y sin listar hilos de otra carpeta. */
+test("listSessions hands the selector each thread's name, first message, folder and date, and only what Codex delivered", async () => {
+  const rpc = codexFixture();
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.replies.set("thread/list", { data: [
+    { id: "t1", name: "", preview: "Hi there", cwd: "/project", updatedAt: 1_790_000_000 },
+    { id: "t2", name: "Named", preview: "Second question", cwd: "/project", updatedAt: 1_790_005_000 },
+    { id: "t3", preview: "Other folder", cwd: "/other", updatedAt: 1_790_009_000 },
+    { id: "t4", cwd: "/project" },
+  ], nextCursor: null });
+  expect(await session.listSessions()).toEqual([
+    { id: "t1", title: "Hi there", firstMessage: "Hi there", folder: "/project", updatedAt: 1_790_000_000_000 },
+    { id: "t2", title: "Named", firstMessage: "Second question", folder: "/project", updatedAt: 1_790_005_000_000 },
+    { id: "t4", title: "t4", folder: "/project" },
+  ]);
+});
