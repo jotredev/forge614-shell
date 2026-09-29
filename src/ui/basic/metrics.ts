@@ -37,6 +37,17 @@ export function compactNumber(value: number): string {
   return String(value);
 }
 
+/** Whole number with the language's thousands separator: "2 996" in Spanish, "2,996" in English. Written by hand because `Intl` skips the separator on four-digit numbers in Spanish. */
+export function formatCount(value: number, locale: Locale = "en"): string {
+  return String(Math.round(value)).replace(/\B(?=(\d{3})+(?!\d))/g, locale === "es" ? " " : ",");
+}
+
+/** Dollar amount with two decimals and the language's decimal mark: "$0,67" in Spanish, "$0.67" in English. */
+export function formatUsd(value: number, locale: Locale = "en"): string {
+  const fixed = value.toFixed(2);
+  return `$${locale === "es" ? fixed.replace(".", ",") : fixed}`;
+}
+
 export function usageTitle(label: string, locale: Locale = "en"): string {
   const t = getCatalog(locale).metrics;
   const names: Record<string, string> = { five_hour: t.usageFiveHourLimit, seven_day: t.usageWeeklyLimit, seven_day_opus: t.usageWeeklyOpus, seven_day_sonnet: t.usageWeeklySonnet, seven_day_oauth_apps: t.usageWeeklyConnectedApps, extra_usage: t.usageExtraUsage };

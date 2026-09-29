@@ -17,7 +17,7 @@ La interfaz Basic es la única interfaz visual disponible. El selector inicial p
 | `/refresh` | Solicita de nuevo las cuotas que Codex o Claude informan; no envía un prompt de chat. |
 | `$` | Abre el descubrimiento de skills (instrucciones reutilizables) de Codex. |
 
-La barra de estado, el panel lateral y el historial muestran proyecto, modelo, contexto y cuotas cuando el cliente los expone. “No reportado” significa exactamente que el cliente no entregó el dato. La interfaz no soporta pantallas ni comandos de Gemini o Antigravity.
+El panel lateral muestra la sesión, el modelo, el razonamiento, el contexto y las cuotas, y la barra de estado bajo el chat muestra solo lo que el panel no repite: trabajo en segundo plano, carpeta, rama y estado de Git. El historial muestra la conversación, con cada herramienta con sangría bajo el mensaje del asistente al que pertenece. “No reportado” significa exactamente que el cliente no entregó el dato. La interfaz no soporta pantallas ni comandos de Gemini o Antigravity.
 
 ## Actividad de memoria Engram
 
@@ -77,10 +77,14 @@ En el sidebar, la ausencia de razonamiento explícito se llama `Default (auto)`.
 
 Como agrupar los instrumentos de consumo junto al medidor de combustible, el sidebar coloca los datos de uso donde se interpretan juntos y deja la RAM como recurso del proceso.
 
-Los tokens de la última respuesta (`Last turn`, entrada y salida) y el importe estimado quedan debajo de `PLAN USAGE`, antes de `RESOURCES`; ya no se mezclan con la RAM de Shell o del motor. El importe se rotula `Est. API cost` y siempre añade `Reference only, not billed`: es una referencia estimada, no un cargo facturado por Shell.
+Los tokens del último mensaje y el importe estimado quedan debajo de `PLAN USAGE`, antes de `RESOURCES`; ya no se mezclan con la RAM de Shell o del motor. Se escriben en palabras normales y en renglones cortos, sin cortes: `Este mensaje` / `leyó 2 996 tokens` / `escribió 700`, y luego `Si pagaras por uso` / `≈ $0,67` / `tu plan no lo cobra`. El importe es una referencia estimada, no un cargo de Shell ni de tu plan; si es menos de un centavo dice `menos de $0,01` en vez de cero.
+
+Mientras el contexto no tiene cifra, la sección `CONTEXTO` dice cuándo aparecerá, con un texto corto que cabe en el ancho del panel: `tras el 1.er mensaje` en una conversación nueva, `tras el próximo mensaje` en una reanudada que aún no se ha medido.
+
+El panel también toma para sí presionar, arrastrar y soltar el botón izquierdo, igual que el compositor, así que seleccionar texto del chat con el ratón ya no resalta el panel. Que la selección se quede quieta al desplazar la pantalla todavía no está resuelto.
 
 Los conteos compactos usan `1M`, no `1000k`, y conservan una decimal solo cuando aporta información: `1.5k`, `43k`, `1M` y `1.5M`. El anillo de contexto y las porciones llenas de las barras de uso comparten una escala de alerta: color normal por debajo de 85 %, ámbar desde 85 % y rojo desde 100 %. Así el color expresa cercanía al límite, no solo una preferencia estética.
 
 ## Actividad en segundo plano
 
-Cuando el motor activo reporta trabajo en segundo plano (subagentes de Claude Code, procesos backgroundeados), el panel lateral muestra una fila por actividad con su estado (corriendo, hecho, fallido) y el tiempo transcurrido; un clic la expande para ver el resultado si el motor lo entregó. La barra de estado añade un contador con el punto animado mientras haya actividad corriendo. Si el motor no reporta esto de forma distinguible, el panel lo dice explícitamente en vez de mostrar una lista vacía silenciosa — ver `docs/superpowers/specs/2026-09-22-background-activity-indicator-design.md`.
+Cuando el motor activo reporta trabajo en segundo plano (subagentes de Claude Code, procesos backgroundeados), el panel lateral muestra una fila por actividad con su estado (corriendo, hecho, fallido) y el tiempo transcurrido; un clic la expande para ver el resultado si el motor lo entregó. La barra de estado añade un contador con el punto animado mientras haya actividad corriendo (es lo que queda ahí además de carpeta, rama y estado de Git). Si el motor no reporta esto de forma distinguible, el panel lo dice explícitamente en vez de mostrar una lista vacía silenciosa — ver `docs/superpowers/specs/2026-09-22-background-activity-indicator-design.md`.

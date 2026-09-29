@@ -17,7 +17,7 @@ The Basic interface is the only available visual interface. The startup picker a
 | `/refresh` | Requests the quotas that Codex or Claude report again; it sends no chat prompt. |
 | `$` | Opens Codex skill discovery (reusable instructions). |
 
-The status bar, sidebar, and history show project, model, context, and quotas when the client exposes them. “Not reported” means exactly that the client did not provide the value. The interface has no Gemini or Antigravity screens or commands.
+The sidebar shows the session, model, reasoning, context, and quotas, and the status bar below the chat shows only what the sidebar does not repeat: background work, folder, branch, and Git state. The history shows the conversation, with each tool call indented under the assistant message it belongs to. “Not reported” means exactly that the client did not provide the value. The interface has no Gemini or Antigravity screens or commands.
 
 ## Engram memory activity
 
@@ -77,10 +77,14 @@ In the sidebar, no explicit reasoning level is labeled `Default (auto)`. Claude 
 
 Like keeping consumption instruments beside the fuel gauge, the sidebar groups usage information together and leaves RAM as a process resource.
 
-The latest-response tokens (`Last turn`, input and output) and estimated amount sit under `PLAN USAGE`, before `RESOURCES`; they are no longer mixed with Shell or engine RAM. The amount is labeled `Est. API cost` and always includes `Reference only, not billed`: it is a reference estimate, not a charge billed by Shell.
+The latest message's tokens and the estimated amount sit under `PLAN USAGE`, before `RESOURCES`; they are no longer mixed with Shell or engine RAM. They are written in plain words over short rows, never cut off: `This message` / `read 2,996 tokens` / `wrote 700`, then `If you paid per use` / `≈ $0.67` / `your plan doesn't bill it`. The amount is a reference estimate, not a charge billed by Shell or by your plan; under one cent it reads `under $0.01` instead of zero.
+
+Until the context has a figure, the `CONTEXT` section says when it will appear, in a short text that fits the sidebar's width: `after 1st message` in a new conversation, `after the next message` in a resumed one that has not been measured yet.
+
+The sidebar also takes over the left button's press, drag, and release, like the composer, so selecting text in the chat with the mouse no longer highlights the sidebar. Keeping the selection still while the screen scrolls is not solved yet.
 
 Compact counts use `1M`, not `1000k`, and retain one decimal only when it adds information: `1.5k`, `43k`, `1M`, and `1.5M`. The context ring and filled portions of usage bars share an alert scale: normal below 85%, amber from 85%, and red from 100%. Color therefore conveys proximity to the limit, rather than merely a visual preference.
 
 ## Background activity
 
-When the active engine reports background work (Claude Code subagents, backgrounded processes), the sidebar shows one row per activity with its state (running, done, failed) and elapsed time; clicking it expands to show the result if the engine delivered it. The status bar adds a counter with an animated dot while activity is running. If the engine does not report this distinctly, the sidebar says so explicitly instead of silently showing an empty list — see `docs/superpowers/specs/2026-09-22-background-activity-indicator-design.md`.
+When the active engine reports background work (Claude Code subagents, backgrounded processes), the sidebar shows one row per activity with its state (running, done, failed) and elapsed time; clicking it expands to show the result if the engine delivered it. The status bar adds a counter with an animated dot while activity is running (this is what remains there besides folder, branch, and Git state). If the engine does not report this distinctly, the sidebar says so explicitly instead of silently showing an empty list — see `docs/superpowers/specs/2026-09-22-background-activity-indicator-design.md`.

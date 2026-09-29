@@ -10,18 +10,19 @@ import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 const separator = muted(" · ");
 
-function contextPercent(snapshot: ShellSnapshot): string | undefined {
-  if (!snapshot.context || snapshot.context.window <= 0) return undefined;
-  return `ctx ${Math.round((snapshot.context.used / snapshot.context.window) * 100)}%`;
-}
-
 function backgroundActivityLabel(snapshot: ShellSnapshot, locale: Locale): string | undefined {
   const running = snapshot.backgroundActivity?.filter(activity => activity.state === "running").length ?? 0;
   if (!running) return undefined;
   return `${spinnerFrame(true)} ${getCatalog(locale).backgroundActivity.statusBarCount({ count: running })}`;
 }
 
-/** A deliberately compact workspace footer: unknown data is never represented. */
+/**
+ * A deliberately compact workspace footer: unknown data is never represented, and nothing the
+ * sidebar already shows is repeated. Agent, model, reasoning level and context percentage live in
+ * the sidebar only; here stay background work, folder, branch and Git state. A non-connected
+ * account is kept as a warning (with its `/login` hint) so it still reaches a terminal too narrow
+ * for the sidebar.
+ */
 export class ShellStatusBar implements Component {
   constructor(
     private readonly getSnapshot: () => ShellSnapshot,
@@ -38,7 +39,7 @@ export class ShellStatusBar implements Component {
     const t = getCatalog(this.locale).statusBar;
     const snapshot = this.getSnapshot();
     const details = snapshot.account === "connected"
-      ? [snapshot.provider, snapshot.model, snapshot.reasoning, contextPercent(snapshot), backgroundActivityLabel(snapshot, this.locale)].filter((part): part is string => Boolean(part))
+      ? [backgroundActivityLabel(snapshot, this.locale)].filter((part): part is string => Boolean(part))
       : snapshot.account === "checking" ? [t.checkingAccount] : [snapshot.account === "unknown" ? t.accountUnverified : t.disconnected, "/login"];
     const projectInfo = this.getProject?.();
     const project = this.cwd ? [

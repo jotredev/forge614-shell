@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
 import { ActivityCard, chatMessage } from "./transcript.ts";
+import { ChatText } from "./theme.ts";
 import { lineDiff } from "./diff.ts";
 
 test("chat messages render a role label separate from their content", () => {
@@ -66,4 +67,29 @@ test("tool card replaces progress with reported completion details", () => {
   const output = stripVTControlCharacters(card.render(60).join("\n"));
   expect(output).toContain("Completed · 1.2s"); expect(output).toContain("file contents");
   expect(output).not.toContain("Requested");
+});
+
+/** Owner's point 15: grey tool lines used to touch the chat's left edge, further out than the assistant's «ASSISTANT · time» header and text, so they did not read as sub-tasks of that message. They must start further in than both, and the `└` preview further in than the bullet. */
+test("tool lines are indented deeper than the assistant header and text they belong to", () => {
+  const leading = (line: string) => line.length - line.trimStart().length;
+  const message = new ChatText(chatMessage("assistant", "I will inspect the workspace.")).render(60).map(stripVTControlCharacters);
+  const header = message.find(line => line.includes("ASSISTANT"))!;
+  const body = message.find(line => line.includes("I will inspect"))!;
+
+  const tool = new ActivityCard("Bash", "Completed · 17.7s", "merge=0").render(60).map(stripVTControlCharacters);
+  const bullet = tool.find(line => line.includes("• Bash"))!;
+  const preview = tool.find(line => line.includes("└ merge=0"))!;
+
+  expect(leading(bullet)).toBeGreaterThan(Math.max(leading(header), leading(body)));
+  expect(leading(preview)).toBeGreaterThan(leading(bullet));
+});
+
+/** The indent is a chat-only concern: a card asked for `indent = 0` (the narrow sidebar) keeps its bullet at column 0, and no rendered line ever exceeds the width it was given. */
+test("an indent of zero keeps the bullet at the edge and indented lines still fit the width", () => {
+  expect(stripVTControlCharacters(new ActivityCard("Bash", "ok", "", false, undefined, 0).render(30)[1]!)).toStartWith("• Bash");
+  for (const width of [12, 30, 56]) {
+    for (const line of new ActivityCard("A very long tool title that needs cutting", "Completed · 17.7s", "a long preview line").render(width)) {
+      expect(stripVTControlCharacters(line).length).toBeLessThanOrEqual(width);
+    }
+  }
 });
