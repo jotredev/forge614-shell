@@ -109,7 +109,9 @@ if (args.length === 1 && args[0] === "update") {
         try { installed = await discoverSelectableEngines({ env: process.env }); }
         finally { stopSpinner(); }
         const { chooseStartup } = await import("./ui/startup/visual-picker.ts");
-        const choice = await chooseStartup(installed, terminal, metadata.version, locale);
+        const { loadLastEngine, saveLastEngine } = await import("./infrastructure/shell-preferences.ts");
+        const choice = await chooseStartup(installed, terminal, metadata.version, locale, loadLastEngine({ env: process.env }));
+        if (choice) saveLastEngine(choice.id, { env: process.env });
         selected.engine = choice?.id;
         selectedExecutable = choice?.executable;
       }

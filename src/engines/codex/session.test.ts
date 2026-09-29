@@ -123,20 +123,176 @@ test("Codex streams a turn, scopes events and never grants denied permissions", 
   expect(session.busy).toBe(false);
 });
 
-test("Codex applies only a mode allowed by its native app-server requirements", async () => {
-  const rpc = codexFixture();
-  rpc.replies.set("configRequirements/read", { requirements: { allowedApprovalPolicies: ["onRequest"], allowedSandboxModes: ["readOnly", "workspaceWrite"] } });
-  rpc.replies.set("thread/start", { thread: { id: "t" }, model: "test-model", modelProvider: "openai" });
-  rpc.replies.set("turn/start", { turn: { id: "u", status: "inProgress" } });
-  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
-  await session.initialize();
-  expect(session.workModes?.()).toEqual(expect.arrayContaining([{ id: "onRequest:readOnly", label: "onRequest · readOnly" }]));
-  await session.setWorkMode?.("onRequest:readOnly");
-  const pending = session.send("inspect");
+/**
+ * Minimal copy of what the Codex app-server accepts, taken from the protocol generated with
+ * `codex app-server generate-ts` (codex-cli 0.159.0): `v2/AskForApproval.ts` (plus the object form
+ * `{ granular }`), `v2/SandboxMode.ts` (used by `thread/start`) and `v2/SandboxPolicy.ts` (its `type`,
+ * used by `turn/start`). If Codex changes them, refresh this copy from a fresh generation, never from memory.
+ */
+const PROTOCOL = {
+  approvalPolicy: ["untrusted", "on-request", "never"],
+  sandboxMode: ["read-only", "workspace-write", "danger-full-access"],
+  sandboxPolicyType: ["dangerFullAccess", "readOnly", "externalSandbox", "workspaceWrite"],
+};
+
+/** Runs one whole turn on an already-configured fixture: waits for `turn/start`, then completes it. */
+async function runTurn(rpc: ReturnType<typeof codexFixture>, session: CodexSession, text: string): Promise<void> {
+  const pending = session.send(text);
   await new Promise(resolve => setImmediate(resolve));
-  expect(rpc.calls.find(call => call.method === "thread/start")?.params).toMatchObject({ approvalPolicy: "onRequest", sandboxPolicy: { type: "readOnly" } });
   rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
   await pending;
+}
+
+/** A fixture whose `thread/start`, `turn/start` and `thread/compact/start` answer like a real app-server. */
+function turnFixture(requirements: unknown = null) {
+  const rpc = codexFixture();
+  rpc.replies.set("configRequirements/read", { requirements });
+  rpc.replies.set("thread/start", { thread: { id: "t" }, model: "test-model", modelProvider: "openai" });
+  rpc.replies.set("turn/start", { turn: { id: "u", status: "inProgress" } });
+  rpc.replies.set("thread/compact/start", {});
+  return rpc;
+}
+
+/** Codex only ever accepts the mode restrictions it reports itself (`configRequirements/read`), in the protocol's own values. */
+test("Codex applies only a mode allowed by its native app-server requirements", async () => {
+  const rpc = turnFixture({ allowedApprovalPolicies: ["on-request"], allowedSandboxModes: ["read-only", "workspace-write"] });
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  expect(session.workModes().map(mode => mode.id)).toEqual(["on-request:read-only", "on-request:workspace-write"]);
+  await session.setWorkMode("on-request:read-only");
+  await session.setWorkMode("never:danger-full-access").then(() => { throw new Error("must not accept a mode Codex did not allow"); }, error => expect(error).toBeInstanceOf(ShellError));
+  const pending = session.send("inspect");
+  await new Promise(resolve => setImmediate(resolve));
+  expect(rpc.calls.find(call => call.method === "thread/start")?.params).toMatchObject({ approvalPolicy: "on-request", sandbox: "read-only" });
+  expect(rpc.calls.find(call => call.method === "turn/start")?.params).toMatchObject({ approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly" } });
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await pending;
+});
+
+/**
+ * Bug 26: with Codex 0.157+, switching to the old «auto» mode broke the turn with `unknown variant
+ * unlessTrusted`, because Shell used a hand-written list with retired names. Now every mode the adapter
+ * offers must put only protocol-valid values on the wire (`thread/start` and `turn/start`), and the
+ * retired names must appear nowhere.
+ */
+test("every work mode Codex offers sends only values the app-server protocol accepts", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  const modes = session.workModes();
+  expect(modes.length).toBeGreaterThan(0);
+  for (const mode of modes) {
+    await session.setWorkMode(mode.id);
+    await runTurn(rpc, session, `try ${mode.label}`);
+    const turn = rpc.calls.filter(call => call.method === "turn/start").at(-1)!.params;
+    expect(PROTOCOL.approvalPolicy).toContain(turn.approvalPolicy);
+    expect(PROTOCOL.sandboxPolicyType).toContain(turn.sandboxPolicy.type);
+  }
+  const start = rpc.calls.find(call => call.method === "thread/start")!.params;
+  expect(PROTOCOL.approvalPolicy).toContain(start.approvalPolicy);
+  expect(PROTOCOL.sandboxMode).toContain(start.sandbox);
+  expect(start).not.toHaveProperty("sandboxPolicy");
+  expect(JSON.stringify(rpc.calls)).not.toMatch(/unlessTrusted|onRequest|readOnly:|workspaceWrite:/);
+});
+
+/** The names the person sees are the ones Codex itself shows (Read Only / Default / Full Access), not Shell's «manual/auto». */
+test("the Codex mode list comes from the adapter with the names Codex shows, also when the requirements call fails", async () => {
+  const withNull = turnFixture(null);
+  const first = new CodexSession(withNull, "/project", () => {}, async () => false);
+  await first.initialize();
+  expect(first.workModes().map(mode => mode.label)).toEqual(["Read Only", "Default", "Full Access"]);
+  expect(first.workModes().map(mode => mode.id)).toEqual(["on-request:read-only", "on-request:workspace-write", "never:danger-full-access"]);
+
+  const failing = codexFixture(); // no `configRequirements/read` reply: the fixture throws, like an app-server without it
+  const second = new CodexSession(failing, "/project", () => {}, async () => false);
+  await second.initialize();
+  expect(second.workModes().map(mode => mode.label)).toEqual(["Read Only", "Default", "Full Access"]);
+});
+
+/** When Codex restricts the modes to something that is not one of its presets, Shell offers exactly what Codex allows, named with the protocol's own values. */
+test("restrictions outside Codex's presets are offered as reported, never replaced by a hand-written list", async () => {
+  const rpc = turnFixture({ allowedApprovalPolicies: ["untrusted"], allowedSandboxModes: ["workspace-write"] });
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  expect(session.workModes().map(mode => [mode.id, mode.label])).toEqual([["untrusted:workspace-write", "untrusted · workspace-write"]]);
+  const full = turnFixture({ allowedApprovalPolicies: ["never"], allowedSandboxModes: ["danger-full-access"] });
+  const other = new CodexSession(full, "/project", () => {}, async () => false);
+  await other.initialize();
+  expect(other.workModes().map(mode => mode.label)).toEqual(["Full Access"]);
+});
+
+/** Idea 1: changing mode mid-turn used to throw «Finish or /stop…». Codex sets the mode per `turn/start`, so it is accepted now and reported as taking effect next turn. */
+test("changing the Codex mode mid-turn is accepted, reported as next-turn, and lands on the next turn/start", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  await session.setWorkMode("on-request:workspace-write");
+  const pending = session.send("long job");
+  await new Promise(resolve => setImmediate(resolve));
+  expect(session.busy).toBe(true);
+  expect(await session.setWorkMode("never:danger-full-access")).toBe("next-turn");
+  expect(session.workMode()).toBe("never:danger-full-access");
+  expect(rpc.calls.filter(call => call.method === "turn/start").length).toBe(1);
+  expect(rpc.calls.find(call => call.method === "turn/start")?.params).toMatchObject({ approvalPolicy: "on-request" });
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await pending;
+  expect(await session.setWorkMode("on-request:read-only")).toBe("applied");
+  await session.setWorkMode("never:danger-full-access");
+  await runTurn(rpc, session, "second");
+  expect(rpc.calls.filter(call => call.method === "turn/start").at(-1)?.params).toMatchObject({ approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } });
+});
+
+/** Row 26: if the assistant refuses a mode, the person hears it in plain words and the previous mode comes back. */
+test("a mode Codex rejects is reported plainly and the previous mode returns", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  await session.setWorkMode("on-request:workspace-write");
+  await runTurn(rpc, session, "first");
+  await session.setWorkMode("never:danger-full-access");
+  rpc.handler = async method => { if (method === "turn/start") throw new Error("Invalid request: unknown variant"); return rpc.replies.get(method); };
+  let caught: unknown;
+  try { await session.send("second"); } catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(ShellError);
+  expect((caught as ShellError).code).toBe("codex-mode-rejected");
+  expect(describeError(caught, "en")).toContain("Codex did not accept that work mode");
+  expect(describeError(caught, "es")).toContain("Codex no aceptó ese modo de trabajo");
+  expect(session.workMode()).toBe("on-request:workspace-write");
+  expect(session.busy).toBe(false);
+});
+
+/** Idea 23: `/compact` asks Codex's own engine (`thread/compact/start`), holds the session busy until the compaction turn ends, and the startup memory is sent again with the next message. */
+test("compact() calls thread/compact/start, waits for the compaction turn and reloads the startup memory for the next message", async () => {
+  const rpc = turnFixture(null);
+  let memory = "Memory v1";
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false, undefined, async () => ({ available: true, text: memory }));
+  await session.initialize();
+  await runTurn(rpc, session, "hello");
+  expect(rpc.calls.find(call => call.method === "turn/start")?.params.input[0].text).toContain("Memory v1");
+  memory = "Memory v2";
+  const compacting = session.compact();
+  await new Promise(resolve => setImmediate(resolve));
+  expect(rpc.calls.find(call => call.method === "thread/compact/start")?.params).toEqual({ threadId: "t" });
+  expect(session.busy).toBe(true);
+  rpc.onNotification("turn/started", { threadId: "t", turn: { id: "c1" } });
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "c1", status: "completed" } });
+  await compacting;
+  expect(session.busy).toBe(false);
+  await runTurn(rpc, session, "after compact");
+  const next = rpc.calls.filter(call => call.method === "turn/start").at(-1)!.params.input;
+  expect(next[0].text).toContain("Memory v2");
+  expect(next.at(-1)).toEqual({ type: "text", text: "after compact" });
+});
+
+/** There is nothing to compact before the first message; Shell says so in its own words instead of calling Codex with no thread. */
+test("compact() before any conversation says there is nothing to compact and never calls Codex", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  let caught: unknown;
+  try { await session.compact(); } catch (error) { caught = error; }
+  expect((caught as ShellError).code).toBe("codex-compact-no-conversation");
+  expect(rpc.calls.some(call => call.method === "thread/compact/start")).toBe(false);
 });
 
 test("Codex resume only restores history and waits for a message", async () => {

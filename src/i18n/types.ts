@@ -16,10 +16,12 @@ export type ShellErrorCode =
   | "claude-switch-session-busy"
   | "claude-new-chat-busy"
   | "claude-work-mode-unknown"
-  | "claude-turn-busy"
+  | "claude-mode-rejected"
   | "claude-turn-already-running"
   | "claude-no-result"
   | "codex-mode-unknown"
+  | "codex-mode-rejected"
+  | "codex-compact-no-conversation"
   | "codex-refresh-requires-login"
   | "codex-login-not-managed"
   | "codex-turn-busy"
@@ -238,6 +240,8 @@ export interface Catalog {
   };
   enginePicker: {
     title: string;
+    /** Mark beside the assistant used last time. */
+    lastUsed: string;
     noEnginesFound: string;
   };
   /** Shared between the Claude and Codex chat UIs — the wording is identical in both today. */
@@ -263,6 +267,9 @@ export interface Catalog {
     noPermissionPending: string;
     answerPendingPermissionFirst: string;
     unknownCommand: (params: { name: string }) => string;
+    /** One line after a work-mode change the assistant only reads when a turn starts. */
+    workModeNextTurn: (params: { mode: string }) => string;
+    commandCompact: string;
     statusWorking: string;
     statusReady: string;
     statusConnectWithLogin: string;
@@ -289,25 +296,15 @@ export interface Catalog {
     searchPlaceholder: string;
     searchNoMatches: string;
   };
+  /** Help lines by tone (see `WorkModeTone`); the mode's own name always comes from the assistant's adapter. */
   workMode: {
-    bypassPermissionsOn: string;
     bypassPermissionsHelp: string;
-    autoModeOn: string;
     autoModeHelp: string;
-    manualModeOn: string;
     manualModeHelp: string;
-    acceptEditsOn: string;
+    readOnlyModeHelp: string;
     acceptEditsHelp: string;
-    planModeOn: string;
     planModeHelp: string;
-    dontAskModeOn: string;
     dontAskModeHelp: string;
-    readOnly: string;
-    workspaceWrite: string;
-    manualModeOnWithSandbox: (params: { sandbox: string }) => string;
-    manualModeApprovalHelp: string;
-    autoModeOnWithSandbox: (params: { sandbox: string }) => string;
-    trustedWorkspaceHelp: string;
     engineMode: string;
     shiftTabToCycle: string;
   };
@@ -479,6 +476,9 @@ export interface Catalog {
     sessionTokensLine: (params: { input: string; cached: string; output: string; lastContext: string; window: string }) => string;
   };
   codexChat: {
+    compacted: string;
+    /** Honest answer for a `/command` Shell cannot pass on to Codex through its app-server. */
+    commandNotAllowed: (params: { name: string }) => string;
     workOrLoginActive: string;
     cancellationRequested: string;
     logoutUnavailable: string;

@@ -1,10 +1,10 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { EffortLevel, ModelInfo, Options, PermissionMode, SDKMessage, SDKUserMessage, SlashCommand } from "@anthropic-ai/claude-agent-sdk";
+import type { EffortLevel, ModelInfo, Options, PermissionMode, Query, SDKMessage, SDKUserMessage, SlashCommand } from "@anthropic-ai/claude-agent-sdk";
 import { checkAuthentication, claudeEnvironment } from "./auth.ts";
 import { loadClaudeCatalog, readPlanUsage } from "./catalog.ts";
 import type { getStartupContext } from "../../infrastructure/forge614-engram.ts";
 import { ShellError } from "../../shell-error.ts";
-import type { BackgroundActivity, BackgroundActivityKind } from "../types.ts";
+import type { BackgroundActivity, BackgroundActivityKind, NativeWorkMode, WorkModeChange } from "../types.ts";
 
 type RunInput = { prompt: string; options: Options };
 type Dependencies = {
@@ -117,10 +117,18 @@ export class ClaudeSession {
   context?: { used: number; window: number };
   backgroundActivity: BackgroundActivity[] = [];
   private permissionMode: PermissionMode = "default";
-  private static readonly permissionModes: { id: PermissionMode; label: string }[] = [
-    { id: "default", label: "default" }, { id: "acceptEdits", label: "acceptEdits" },
-    { id: "plan", label: "plan" }, { id: "dontAsk", label: "dontAsk" },
-    { id: "auto", label: "auto" }, { id: "bypassPermissions", label: "bypassPermissions" },
+  /** The open SDK query of the running turn, the one that can be told a new permission mode live; undefined between turns. */
+  private live?: Query;
+  /** True once the running turn's options are fixed: from then on only the live query can still change its mode. */
+  private optionsFixed = false;
+  /**
+   * The SDK's own `PermissionMode` values (`sdk.d.ts`), each with the `title` Claude Code gives it in its
+   * mode table (read from the `claude` binary shipped with the SDK) and the tone Shell draws it with.
+   */
+  private static readonly permissionModes: NativeWorkMode[] = [
+    { id: "default", label: "Manual", tone: "manual" }, { id: "acceptEdits", label: "Accept edits", tone: "acceptEdits" },
+    { id: "plan", label: "Plan", tone: "plan" }, { id: "dontAsk", label: "Don't Ask", tone: "strict" },
+    { id: "auto", label: "Auto", tone: "auto" }, { id: "bypassPermissions", label: "Bypass Permissions", tone: "danger" },
   ];
   async initialize(signal?: AbortSignal): Promise<void> {
     const catalog = await loadClaudeCatalog(this.dependencies, signal);
@@ -169,12 +177,27 @@ export class ClaudeSession {
 
   stop(): void { this.abort?.abort(); }
 
-  workModes(): { id: string; label: string }[] { return ClaudeSession.permissionModes; }
+  workModes(): NativeWorkMode[] { return ClaudeSession.permissionModes; }
   workMode(): string { return this.permissionMode; }
-  async setWorkMode(mode: string): Promise<void> {
+  /**
+   * Changes the permission mode at any moment. While a turn runs, the SDK's live query is told at once
+   * (`Query.setPermissionMode`); if Claude Code refuses, the previous mode comes back and the person hears
+   * so in plain words. Before the turn's options exist the change simply becomes that turn's mode; if the
+   * options are already fixed and there is no live query to tell, it is kept for the next turn.
+   */
+  async setWorkMode(mode: string): Promise<WorkModeChange> {
     if (!ClaudeSession.permissionModes.some(item => item.id === mode)) throw new ShellError("claude-work-mode-unknown");
-    if (this.busy) throw new ShellError("claude-turn-busy");
+    const previous = this.permissionMode;
     this.permissionMode = mode as PermissionMode;
+    if (!this.busy) return "applied";
+    if (this.live) {
+      try { await this.live.setPermissionMode(this.permissionMode); return "applied"; }
+      catch {
+        if (this.permissionMode === mode) this.permissionMode = previous;
+        throw new ShellError("claude-mode-rejected");
+      }
+    }
+    return this.optionsFixed ? "next-turn" : "applied";
   }
 
   async send(
@@ -200,8 +223,10 @@ export class ClaudeSession {
           ? { type: "preset", preset: "claude_code", append: wrapStartupContext(this.startupContextText) }
           : { type: "preset", preset: "claude_code" },
         settingSources: ["user", "project", "local"],
+        // `allowDangerouslySkipPermissions` only makes «Bypass Permissions» reachable — the SDK refuses to
+        // switch to it live on a query opened without it. The mode the turn starts in is still `permissionMode`.
         permissionMode: this.permissionMode, persistSession: true, includePartialMessages: true,
-        ...(this.permissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
+        allowDangerouslySkipPermissions: true,
         ...(this.sessionId ? { resume: this.sessionId } : {}),
         ...(this.model ? { model: this.model } : {}),
         ...(this.effort ? { effort: this.effort } : {}),
@@ -212,6 +237,7 @@ export class ClaudeSession {
             : { behavior: "deny", message: "The user did not approve this tool call." };
         },
       };
+      this.optionsFixed = true;
       const run = this.dependencies.run ?? ((input: RunInput) => this.officialRun(input));
       let resultSeen = false;
       for await (const event of run({ prompt, options })) {
@@ -233,6 +259,7 @@ export class ClaudeSession {
       }
       this.backgroundActivity = [...tasks.values()].map(toPublicActivity);
       this.abort = undefined;
+      this.optionsFixed = false;
       this.busy = false;
     }
   }
@@ -247,7 +274,12 @@ export class ClaudeSession {
       await gate;
     }
     const session = (this.dependencies.connect ?? query)({ ...input, prompt: messages() });
+    this.live = session;
     try {
+      // A mode changed between fixing the options and opening the query still reaches this turn.
+      if (this.permissionMode !== input.options.permissionMode) {
+        try { await session.setPermissionMode(this.permissionMode); } catch { this.permissionMode = input.options.permissionMode ?? "default"; }
+      }
       // This control request is a model catalog, not a separate model prompt.
       this.models = await session.supportedModels();
       for await (const event of session) {
@@ -263,6 +295,6 @@ export class ClaudeSession {
         yield event;
         if (event.type === "result") break;
       }
-    } finally { release(); session.close(); }
+    } finally { this.live = undefined; release(); session.close(); }
   }
 }

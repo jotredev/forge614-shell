@@ -7,7 +7,10 @@ export type EngineId = "claude" | "codex";
 export interface EnginePreference {
   model?: string;
   effort?: string;
+  /** The id of the last work mode used with this assistant, whatever it was (full access included), as its adapter lists it. */
+  mode?: string;
 }
+const ENGINE_IDS: readonly EngineId[] = ["claude", "codex"];
 
 /** The only locale values Shell's i18n layer currently ships a catalog for. */
 export type Locale = "es" | "en";
@@ -22,6 +25,7 @@ interface PreferenceOptions {
 interface PreferencesFile {
   format?: unknown;
   locale?: unknown;
+  lastEngine?: unknown;
   claude?: EnginePreference;
   codex?: EnginePreference;
 }
@@ -75,16 +79,46 @@ export function loadEnginePreference(engine: EngineId, options: PreferenceOption
   if (!entry || typeof entry !== "object") return undefined;
   const model = typeof entry.model === "string" && entry.model ? entry.model : undefined;
   const effort = typeof entry.effort === "string" && entry.effort ? entry.effort : undefined;
-  if (!model && !effort) return undefined;
-  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+  const mode = typeof entry.mode === "string" && entry.mode ? entry.mode : undefined;
+  if (!model && !effort && !mode) return undefined;
+  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(mode ? { mode } : {}) };
 }
 
+/**
+ * Saves the model and reasoning picked for an assistant. Those two are replaced as a pair (an omitted one
+ * is cleared), but the saved work mode is left exactly as it was: it is saved at another moment
+ * (`saveEngineMode`) and a model change must never forget it.
+ */
 export function saveEnginePreference(engine: EngineId, preference: EnginePreference, options: PreferenceOptions = {}): void {
   const path = preferencesPath(options);
   const all = readAll(options);
-  all[engine] = { ...(preference.model ? { model: preference.model } : {}), ...(preference.effort ? { effort: preference.effort } : {}) };
+  const mode = loadEnginePreference(engine, options)?.mode;
+  all[engine] = { ...(preference.model ? { model: preference.model } : {}), ...(preference.effort ? { effort: preference.effort } : {}), ...(mode ? { mode } : {}) };
   // Best-effort only — a failed write just means the next session starts from scratch.
   writeAtomic(path, all);
+}
+
+/**
+ * Saves the last work mode used with an assistant — any mode, the full-access one included — next to its
+ * model and reasoning, which stay untouched. Best-effort like the rest: a failed write only means the
+ * assistant opens in its default mode next time.
+ */
+export function saveEngineMode(engine: EngineId, mode: string, options: PreferenceOptions = {}): void {
+  const all = readAll(options);
+  const current = loadEnginePreference(engine, options) ?? {};
+  all[engine] = { ...current, mode };
+  writeAtomic(preferencesPath(options), all);
+}
+
+/** The assistant used last time, or none when nothing was saved or the saved value is not an assistant Shell knows. */
+export function loadLastEngine(options: PreferenceOptions = {}): EngineId | undefined {
+  const value = readAll(options).lastEngine;
+  return ENGINE_IDS.find(engine => engine === value);
+}
+
+/** Remembers which assistant was used, so the startup picker can mark it. Keeps every other saved field. Best-effort. */
+export function saveLastEngine(engine: EngineId, options: PreferenceOptions = {}): void {
+  writeAtomic(preferencesPath(options), { ...readAll(options), lastEngine: engine });
 }
 
 /**

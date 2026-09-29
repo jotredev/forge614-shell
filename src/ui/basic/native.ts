@@ -7,7 +7,9 @@ import { resumeChoice, sortRecentFirst } from "./resume-picker.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { readRuntimeResources } from "../../infrastructure/runtime-resources.ts";
-import { loadEnginePreference, saveEnginePreference } from "../../infrastructure/shell-preferences.ts";
+import { loadEnginePreference, saveEngineMode, saveEnginePreference } from "../../infrastructure/shell-preferences.ts";
+import { cycleWorkMode, restoreWorkMode } from "../../engines/work-mode.ts";
+import type { WorkModeControl } from "../../engines/work-mode.ts";
 import { ShellStatusBar } from "./status-bar.ts";
 import { ActivityCard, chatMessage } from "./transcript.ts";
 import { effortDescription, effortLabel } from "./metrics.ts";
@@ -45,6 +47,7 @@ export async function runNativeUI(
   const providerCommands = [
     ["/model", t.commandSelectModel],
     ...(id === "codex" ? [] : [["/effort", t.commandSelectReasoning]]),
+    ["/compact", t.commandCompact],
     ["/resume", t.commandChatHistory], ["/new", t.commandNewConversation], ["/login", t.commandConnectAccount], ["/logout", t.commandDisconnectLocally], ["/status", t.commandSessionDetails], ["/stop", t.commandCancelActiveTurn],
   ].map(([value, label]) => ({ value: value!, label: label! }));
   input.setCommandGroups([
@@ -99,7 +102,7 @@ export async function runNativeUI(
     sidebar.invalidate();
     const working = turnStartedAt !== undefined ? workingStatus(t.statusWorking, session.currentActivity?.(), (Date.now() - turnStartedAt) / 1000) : t.statusWorking;
     input.setStatus(session.busy || commandBusy ? working : shellState.snapshot().account === "connected" ? t.statusReady : t.statusConnectWithLogin);
-    input.setWorkModeHint(session.workMode?.());
+    input.setWorkModeHint(session.workModes?.().find(mode => mode.id === session.workMode?.()));
     statusBar.invalidate();
     tui.requestRender();
   };
@@ -170,6 +173,10 @@ export async function runNativeUI(
     const visual = session.visual?.();
     saveEnginePreference("codex", { model: visual?.model, effort: visual?.reasoning }, { env: process.env });
   };
+  /** The session seen only as far as work modes go, so the shared cycle/restore steps know nothing about Codex. */
+  const workModeControl = (): WorkModeControl | undefined => session.workModes && session.setWorkMode
+    ? { workModes: () => session.workModes!(), workMode: () => session.workMode?.(), setWorkMode: modeId => session.setWorkMode!(modeId) }
+    : undefined;
   const command = async (value: string) => {
     if (value.trim() === "/refresh") { await sidebar.refreshUsage(); return; }
     const [name, ...parts] = value.trim().split(/\s+/); const argument = parts.join(" ");
@@ -226,6 +233,9 @@ export async function runNativeUI(
             if (selected) { await session.setEffort(selected); persistPreference(); }
           } else write(tc.noReasoningOptionsForModel);
         }
+      } else if (name === "/compact") {
+        if (!session.compact) write(tc.commandNotAllowed({ name }));
+        else { await session.compact(); write(tc.compacted); }
       } else if (name === "/resume") {
         if (!argument) {
           // Newest first; the same order gives the numbers `/resume <number>` has always used.
@@ -242,7 +252,8 @@ export async function runNativeUI(
           write(session.resumeNotice ?? t.historyRestored);
         }
       } else if (name === "/new") { session.reset(); transcript.clear(); streaming.clear(); }
-      else throw new Error(t.unknownCommand({ name: name ?? "" }));
+      // Codex's own commands are not all reachable through its app-server: say so honestly, not «unknown».
+      else write(tc.commandNotAllowed({ name: name ?? "" }));
     } finally { commandBusy = false; refresh(); }
   };
   session = createSession(emit, approve);
@@ -262,17 +273,18 @@ export async function runNativeUI(
       refresh();
     }
   };
-  const cycleWorkMode = async () => {
-    const modes = session.workModes?.() ?? [];
-    if (!session.setWorkMode || !modes.length || session.busy || commandBusy) return;
-    const current = session.workMode?.();
-    const index = modes.findIndex(mode => mode.id === current);
-    const next = modes[(index + 1) % modes.length]!;
-    await session.setWorkMode(next.id);
+  /** Shift+Tab: available at any moment — mid-turn, during a command or with a permission pending. Saves the mode and, when Codex can only apply it from the next turn, says so in one line. */
+  const changeWorkMode = async () => {
+    const control = workModeControl();
+    const result = control ? await cycleWorkMode(control) : undefined;
+    if (!result) return;
+    const modeId = session.workMode?.();
+    if (modeId) saveEngineMode("codex", modeId, { env: process.env });
+    if (result.change === "next-turn") write(t.workModeNextTurn({ mode: result.mode.label }));
     refresh();
   };
   tui.addInputListener(data => {
-    if (matchesKey(data, "shift+tab")) { void cycleWorkMode().catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))); return { consume: true }; }
+    if (matchesKey(data, "shift+tab")) { void changeWorkMode().catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))); return { consume: true }; }
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { void command("/quit"); return { consume: true }; }
     return undefined;
   });
@@ -298,6 +310,9 @@ export async function runNativeUI(
             if (saved?.effort) await session.setEffort(saved.effort);
           } catch { /* stale preference from an older catalog — ignore, keep the engine's own default */ }
         }
+        // The last work mode comes back without asking; one Codex no longer lists leaves its default.
+        const control = workModeControl();
+        if (control) await restoreWorkMode(control, saved?.mode);
       }
       ready = true; refresh();
     }).catch(error => writeError(tc.connectionFailed({ message: describeError(error, locale) })));

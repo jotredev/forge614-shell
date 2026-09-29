@@ -11,16 +11,19 @@ export async function chooseEngine(
   terminal: Terminal = new ProcessTerminal(),
   version?: string,
   locale: Locale = "en",
+  lastEngine?: AvailableEngine["id"],
 ): Promise<AvailableEngine | undefined> {
   const t = getCatalog(locale).enginePicker;
   if (!engines.length) {
     throw new Error(t.noEnginesFound);
   }
   const plain = (text: string) => text;
-  const list = new SelectList(engines.map(engine => ({ value: engine.id, label: engine.label })), 8, {
+  const list = new SelectList(engines.map(engine => ({ value: engine.id, label: engine.label, ...(engine.id === lastEngine ? { description: t.lastUsed } : {}) })), 8, {
     selectedPrefix: accent, selectedText: accent,
     description: plain, scrollInfo: plain, noMatch: plain,
   });
+  // The assistant used last time is the one highlighted, so Enter alone reopens it; the first row otherwise.
+  list.setSelectedIndex(Math.max(0, engines.findIndex(engine => engine.id === lastEngine)));
   const tui = startupFrame(terminal, t.title, list, undefined, undefined, version);
   let finish!: (engine?: AvailableEngine) => void;
   const selection = new Promise<AvailableEngine | undefined>(resolve => { finish = resolve; });

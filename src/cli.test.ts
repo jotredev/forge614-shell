@@ -27,6 +27,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getCatalog } from "./i18n/index.ts";
 
+/** Idea 7: startup hands the picker the assistant used last time and remembers the one chosen now, both through Shell's preferences file. */
+test("startup marks the last used engine in the picker and remembers the one chosen", async () => {
+  const source = await readFile(new URL("./cli.ts", import.meta.url), "utf8");
+  expect(source).toMatch(/chooseStartup\(installed,\s*terminal,\s*metadata\.version,\s*locale,\s*loadLastEngine\(\{\s*env:\s*process\.env\s*\}\)\)/);
+  expect(source).toMatch(/saveLastEngine\(choice\.id,\s*\{\s*env:\s*process\.env\s*\}\)/);
+});
+
 test("without a real terminal, init refuses at once (it never starts the screens, so it can never ask or link a group)", () => {
   const home = mkdtempSync(join(tmpdir(), "forge614-shell-cli-notty-"));
   try {

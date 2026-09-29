@@ -13,6 +13,8 @@ La interfaz Basic es la única interfaz visual disponible. El selector inicial p
 | `/new` | Crea una conversación nueva del cliente. |
 | `/resume` | Abre un selector con las conversaciones guardadas de este proyecto, la más reciente arriba. Cada fila muestra el título, la fecha, el primer mensaje y la carpeta, solo lo que el asistente informa. Las flechas se mueven, escribir filtra (título, primer mensaje y carpeta, sin distinguir mayúsculas ni acentos), Enter retoma la resaltada y Esc cancela sin cambiar nada. `/resume <número>` (la posición de la fila en esa lista) y, en Codex, `/resume <id>` siguen funcionando. |
 | `/model`, `/effort` | Muestra o ajusta opciones que el cliente informa. |
+| `/compact` | Codex: le pide al propio motor de Codex que compacte la conversación (`thread/compact/start`) y avisa cuando termina; la memoria de Engram se vuelve a enviar con tu siguiente mensaje, igual que al abrir un hilo. Claude Code: pasa el comando a Claude Code. Cualquier otro `/comando` que Shell no pueda pasar a Codex se responde con «Codex no permite /x desde Shell todavía», no con «Comando desconocido». |
+| `Shift+Tab` | Cambia el modo de trabajo en cualquier momento, también a mitad de un turno o con un permiso pendiente. Claude Code aplica el cambio al instante. Codex lee el modo en cada turno, así que Shell acepta el cambio y avisa en una línea que se aplicará en el siguiente turno. |
 | `/status` | Muestra estado reportado por el cliente. |
 | `/stop`, `/quit` | Interrumpe el turno activo o sale. |
 | `/refresh` | Solicita de nuevo las cuotas que Codex o Claude informan; no envía un prompt de chat. |
@@ -38,7 +40,7 @@ La pantalla de recepción sin proyecto (lista de proyectos recientes, con el gru
 
 ## Sesiones y permisos
 
-Codex lista y retoma hilos del directorio actual; rechaza un hilo de otro proyecto o activo en otro cliente. Los modos de trabajo de Codex proceden de sus requisitos de configuración y pueden combinar política de aprobación con sandbox. Claude mantiene su propio historial nativo. Antes de una acción que requiera confirmación, Shell muestra la pregunta en la interfaz.
+Codex lista y retoma hilos del directorio actual; rechaza un hilo de otro proyecto o activo en otro cliente. Cada asistente conserva sus modos de trabajo nativos, con los nombres y el comportamiento que él les da, leídos del propio asistente y nunca de una lista escrita en Shell: Claude Code muestra los modos de permisos de su SDK (Manual, Accept edits, Plan, Don't Ask, Auto, Bypass Permissions); Codex muestra sus propios preajustes (Read Only, Default, Full Access), acotados por las restricciones que informa (`configRequirements/read`) y enviados como la política de aprobación y el sandbox que define su protocolo. Si un asistente rechaza un modo, Shell lo dice en palabras normales y vuelve al anterior. Claude mantiene su propio historial nativo. Antes de una acción que requiera confirmación, Shell muestra la pregunta en la interfaz.
 
 ## Arranque visible y bienvenida
 
@@ -70,7 +72,7 @@ Los menús de `/model` y `/effort` son elecciones explícitas: numeran las opcio
 
 Para Claude Code, el sidebar intenta mostrar el nombre amigable que ofrece el catálogo —por ejemplo, `Opus (1M context)`— en vez de un identificador técnico. Si la elección o la telemetría no tienen una coincidencia exacta en el catálogo, aplica una conversión legible del identificador sin inventar un nombre de producto.
 
-Shell recuerda por separado el modelo y el nivel de razonamiento elegidos para `claude` y `codex` en `~/.forge614/shell/preferences.json` (o bajo `FORGE614_HOME` si se definió). Es una preferencia propia de Shell, no modifica la configuración nativa de los CLIs. Leer o escribir ese archivo es una comodidad de mejor esfuerzo: un archivo ausente o inválido, una escritura fallida o un modelo ya no ofrecido dejan que la sesión continúe con los valores disponibles.
+Shell recuerda por separado el modelo y el nivel de razonamiento elegidos para `claude` y `codex` en `~/.forge614/shell/preferences.json` (o bajo `FORGE614_HOME` si se definió). También recuerda el último asistente usado (el selector de arranque lo marca como «último usado» y lo deja resaltado, así que Enter lo acepta) y, por asistente, el último modo de trabajo, sea cual sea (también el de acceso total), que restaura al abrir sin preguntar; un modo guardado que el asistente ya no tiene deja su modo por defecto, sin error. Es una preferencia propia de Shell, no modifica la configuración nativa de los CLIs. Leer o escribir ese archivo es una comodidad de mejor esfuerzo: un archivo ausente o inválido, una escritura fallida o un modelo ya no ofrecido dejan que la sesión continúe con los valores disponibles.
 
 En el sidebar, la ausencia de razonamiento explícito se llama `Default (auto)`. En el selector de razonamiento de Claude Code aparece `Default (recommended)` y explica `Claude Code decides — shown in the sidebar after you send a message`: Claude no comunica de antemano el nivel concreto que resolverá, por lo que Shell lo declara en vez de adivinarlo.
 
