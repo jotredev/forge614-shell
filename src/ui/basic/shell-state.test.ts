@@ -7,7 +7,7 @@ test("disconnecting clears engine details while preserving no stale usage", () =
 
   state.disconnect();
 
-  expect(state.snapshot()).toEqual({ account: "disconnected", provider: "Codex" });
+  expect(state.snapshot()).toEqual({ account: "disconnected", provider: "Codex", loginCommand: "/login" });
 });
 
 test("connected state exposes only engine details owned by Shell", () => {

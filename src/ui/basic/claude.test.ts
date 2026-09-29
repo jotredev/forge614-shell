@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { startClaudeUI } from "./claude.ts";
 import { getCatalog } from "../../i18n/index.ts";
+import { emptyTelemetry, telemetryLines } from "../../engines/claude/telemetry.ts";
 
 class TestTerminal implements Terminal {
   columns = 120; rows = 50; kittyProtocolActive = false;
@@ -64,11 +65,11 @@ if(process.argv[2]==='auth') {
     terminal.input("\x1b"); await tick();
     enter("/logout"); await tick();
     expect(terminal.output).toContain("only in this Forge614-Shell session");
-    enter("/no"); await tick();
+    enter("/f614:no"); await tick();
     expect(await readFile(marker, "utf8")).toBe("auth status --json\n");
     enter("/logout"); await tick(); enter("/f614:stop"); await tick();
     expect(await readFile(marker, "utf8")).toBe("auth status --json\n");
-    enter("/logout"); await tick(); enter("/yes");
+    enter("/logout"); await tick(); enter("/f614:yes");
     await tick();
     expect(terminal.output).toContain("Disconnected locally");
     enter("/new"); await tick(); enter("hello"); await tick();
@@ -79,7 +80,7 @@ if(process.argv[2]==='auth') {
     expect(await readFile(marker, "utf8")).toBe("auth status --json\nauth status --json\n");
     expect(terminal.output).toContain("Connected to Claude in Shell");
   } finally {
-    enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
+    enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
   }
 });
@@ -121,7 +122,7 @@ else {
     expect(stripVTControlCharacters(terminal.output)).toContain(getCatalog("en").workMode.shiftTabToCycle);
     expect(stripVTControlCharacters(terminal.output)).not.toContain("Shift+Tab: Plan");
   } finally {
-    enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
+    enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
   }
 });
@@ -161,7 +162,7 @@ else {
     for (let i = 0; i < 60 && !plain().includes(getCatalog("en").chat.statusReady); i++) await tick();
     expect(plain()).toContain(getCatalog("en").chat.statusReady);
   } finally {
-    enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
+    enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
   }
 });
@@ -220,7 +221,7 @@ else {
     for (let i = 0; i < 60 && readFileSync(marker, "utf8") === "allow\n"; i++) await tick();
     expect(readFileSync(marker, "utf8")).toBe("allow\ndeny\n");
   } finally {
-    enter("/quit!"); await ui; process.chdir(previousCwd); await rm(root, { recursive: true, force: true });
+    enter("/f614:quit"); await ui; process.chdir(previousCwd); await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
   }
 });
@@ -261,7 +262,7 @@ else {
     terminal.input("\x1b");
     await tick();
   } finally {
-    enter("/quit!"); await ui; process.chdir(previousCwd); await rm(root, { recursive: true, force: true });
+    enter("/f614:quit"); await ui; process.chdir(previousCwd); await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
   }
 });
@@ -291,7 +292,7 @@ else {
     ui = startClaudeUI([], executable, terminal); await tick();
     for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
     enter("/logout"); await tick();
-    expect(plain()).toContain(getCatalog("en").logout.confirmPrompt({ engine: "Claude Code" }).slice(0, 30));
+    expect(plain()).toContain(getCatalog("en").logout.confirmPrompt({ engine: "Claude Code", loginCommand: "/login" }).slice(0, 30));
     expect(plain()).toContain("› Yes");
     expect(plain()).not.toContain("Sign out");
     terminal.input("\r");
@@ -300,7 +301,156 @@ else {
     for (let i = 0; i < 30 && !plain().includes(confirmed); i++) await tick();
     expect(plain()).toContain(confirmed);
   } finally {
-    enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
+    enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+  }
+});
+
+/**
+ * A Claude Code screen over a fake `claude` that is signed in, reports `commands` as the assistant's own list, never answers a
+ * prompt (so a turn stays open until it is stopped) and writes what it receives to a marker file: one `control` line per control
+ * request and one `prompt:` line per chat prompt. No real account or network is involved. `finish` leaves the screen and cleans up.
+ */
+async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = []) {
+  const root = await mkdtemp(join(tmpdir(), "forge614-prefix-ui-"));
+  const executable = join(root, "claude"); const marker = join(root, "calls");
+  const terminal = new TestTerminal();
+  const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+  const plain = () => stripVTControlCharacters(terminal.output);
+  const previousForgeHome = process.env.FORGE614_HOME;
+  process.env.FORGE614_HOME = join(root, "forge614-home");
+  await writeFile(executable, `#!${process.execPath}
+const fs=require('fs');
+if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
+else {
+  require('readline').createInterface({input:process.stdin}).on('line',line=>{
+    const msg=JSON.parse(line);
+    if(msg.type==='control_request') { fs.appendFileSync(${JSON.stringify(marker)},'control\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:${JSON.stringify(commands)},agents:[],output_style:'default',available_output_styles:[]}}})); }
+    if(msg.type==='user') fs.appendFileSync(${JSON.stringify(marker)},'prompt:'+JSON.stringify(msg.message.content)+'\\n');
+  });
+}`, { mode: 0o755 });
+  const ui = startClaudeUI([], executable, terminal);
+  await tick();
+  for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
+  const calls = () => existsSync(marker) ? readFileSync(marker, "utf8").split("\n").filter(Boolean) : [];
+  /** Leaves through `/f614:quit`, or, with `byCtrlC`, through Esc and Ctrl+C (for a test that leaves text in the box), and puts the environment back. */
+  const finish = async (byCtrlC = false) => {
+    if (byCtrlC) { terminal.input("\x1b"); terminal.input("\x03"); } else enter("/f614:quit");
+    await ui; await rm(root, { recursive: true, force: true });
+    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+  };
+  return { terminal, enter, plain, ui, calls, finish };
+}
+
+/**
+ * Every Shell command with Claude Code answers to `/f614:<name>` and does what its unprefixed name did before 1.12.0:
+ * `/f614:status` is Shell's own session telemetry (it used to be `/status` and `/forge614-status`), `/f614:refresh` asks
+ * Claude Code for the plan usage again, `/f614:help` and `/f614:commands` open Shell's command menu, and `/f614:yes` and
+ * `/f614:no` answer a pending permission (here none is pending, so they say so).
+ */
+test.skipIf(process.platform === "win32")("Claude UI: each Shell command answers to /f614:<name> and does what the old name did", async () => {
+  const h = await claudeUi();
+  try {
+    h.terminal.output = ""; h.enter("/f614:status"); await tick();
+    expect(h.plain()).toContain(telemetryLines(emptyTelemetry(), "en")[0]!);
+    const before = h.calls().filter(line => line === "control").length;
+    h.enter("/f614:refresh"); await tick(); await tick();
+    expect(h.calls().filter(line => line === "control").length).toBeGreaterThan(before);
+    for (const name of ["/f614:help", "/f614:commands"]) {
+      h.terminal.output = ""; h.enter(name); await tick();
+      expect(h.plain(), name).toContain("Commands · 1–5 of");
+      h.terminal.input("\x1b"); await tick();
+    }
+    for (const name of ["/f614:yes", "/f614:no"]) {
+      h.terminal.output = ""; h.enter(name); await tick();
+      expect(h.plain(), name).toContain(getCatalog("en").chat.noPermissionPending);
+    }
+    expect(h.calls().filter(line => line.startsWith("prompt:"))).toEqual([]); // none of them became a chat turn
+  } finally { await h.finish(); }
+});
+
+/**
+ * With Claude Code a slash command without prefix is Claude Code's or nothing: the names Shell used to answer
+ * (`/refresh`, `/yes`, `/no`, `/commands`, `/forge614-status`, `/quit!`, `/exit!`) and `/thinking` (Claude Code has `/effort`
+ * only) are unknown commands, and none of them becomes a chat prompt. It exists so that no silent alias survives the move.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: the old unprefixed Shell names are unknown commands and send nothing", async () => {
+  const h = await claudeUi();
+  try {
+    for (const name of ["/refresh", "/yes", "/no", "/commands", "/forge614-status", "/quit!", "/exit!", "/thinking"]) {
+      h.terminal.output = ""; h.enter(name); await tick();
+      expect(h.plain(), name).toContain(getCatalog("en").chat.unknownCommand({ name }));
+    }
+    expect(h.calls().filter(line => line.startsWith("prompt:"))).toEqual([]);
+  } finally { await h.finish(); }
+});
+
+/**
+ * `/status` and `/help` are Claude Code's own commands now (Shell's telemetry is `/f614:status`, Shell's menu `/f614:help`).
+ * Shell has not connected them, so they answer with the honest message, never as unknown and never as a chat prompt; when
+ * Claude Code itself reports one of them in its command list, it is forwarded as Claude Code's own instead.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: /status and /help are Claude Code's own: an honest message, or forwarded when Claude Code lists them", async () => {
+  const bare = await claudeUi();
+  try {
+    for (const name of ["/status", "/help"]) {
+      bare.terminal.output = ""; bare.enter(name); await tick();
+      expect(bare.plain(), name).toContain(getCatalog("en").claudeChat.commandNotAllowed({ name }));
+      expect(bare.plain(), name).not.toContain(getCatalog("en").chat.unknownCommand({ name }));
+    }
+    expect(bare.calls().filter(line => line.startsWith("prompt:"))).toEqual([]);
+  } finally { await bare.finish(); }
+  expect(getCatalog("en").claudeChat.commandNotAllowed({ name: "/status" })).toBe("Claude Code doesn't allow /status from Shell yet.");
+  expect(getCatalog("es").claudeChat.commandNotAllowed({ name: "/status" })).toBe("Claude Code no permite /status desde Shell todavía.");
+  const listed = await claudeUi([{ name: "status", description: "Show status", argumentHint: "" }]);
+  try {
+    listed.enter("/status");
+    for (let i = 0; i < 30 && !listed.calls().some(line => line.startsWith("prompt:")); i++) await tick();
+    expect(listed.calls().filter(line => line.startsWith("prompt:"))).toEqual(["prompt:\"/status\""]);
+  } finally { await listed.finish(); }
+});
+
+/**
+ * `/exit` and its alias `/quit` are Claude Code's own: they refuse while a turn runs (naming `/f614:quit`, which stops it and
+ * leaves) and Ctrl+C does the same; `/f614:quit` leaves at once. The old `/quit!` is gone (see the unknown-names test).
+ */
+test.skipIf(process.platform === "win32")("Claude UI: /exit, /quit and Ctrl+C refuse while a turn runs and /f614:quit leaves at once", async () => {
+  const h = await claudeUi();
+  h.enter("work please"); await tick();
+  for (let i = 0; i < 30 && !h.plain().includes(getCatalog("en").chat.statusWorking); i++) await tick();
+  const refusal = "Work or authentication is active. Use /f614:quit to stop it and exit, or keep working. Nothing was stopped.";
+  expect(getCatalog("en").claudeChat.workOrAuthActive).toBe(refusal);
+  for (const send of [() => h.enter("/exit"), () => h.enter("/quit"), () => h.terminal.input("\x03")]) {
+    h.terminal.output = ""; send(); await tick();
+    expect(h.plain()).toContain("Nothing was stopped");
+  }
+  let left = false; void h.ui.then(() => { left = true; });
+  await tick(); expect(left).toBe(false);
+  await h.finish();
+  expect(left).toBe(true);
+});
+
+/**
+ * The `/` menu with Claude Code: what Claude Code has goes under CLAUDE CODE with no Shell name in it (its own `/login`,
+ * `/logout`, `/effort`, `/exit`, `/resume` stay as they are), and the FORGE614 group has only `/f614:` commands. It exists so
+ * the menu keeps telling apart the assistant's commands from Shell's after the prefix.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: the / menu keeps the assistant's own names and lists only /f614: commands under FORGE614", async () => {
+  const h = await claudeUi();
+  try {
+    h.terminal.output = ""; h.terminal.input("/f614:"); await tick();
+    for (const name of ["/f614:refresh", "/f614:status", "/f614:commands", "/f614:stop", "/f614:quit"]) expect(h.plain(), name).toContain(name);
+    expect(h.plain()).toContain("FORGE614 ");
+  } finally { await h.finish(true); }
+  for (const [typed, shown, hidden] of [
+    ["/lo", ["/login", "/logout"], ["/f614:login"]], ["/e", ["/effort", "/exit"], ["/f614:effort"]], ["/re", ["/resume"], ["/refresh"]],
+    ["/th", [], ["/thinking"]], ["/c", [], ["/commands"]], ["/q", [], ["/quit!"]],
+  ] as [string, string[], string[]][]) {
+    const other = await claudeUi();
+    try {
+      other.terminal.output = ""; other.terminal.input(typed); await tick();
+      for (const text of shown) expect(other.plain(), typed).toContain(text);
+      for (const text of hidden) expect(other.plain(), typed).not.toContain(text);
+    } finally { await other.finish(true); }
   }
 });

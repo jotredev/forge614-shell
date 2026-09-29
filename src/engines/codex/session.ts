@@ -338,7 +338,7 @@ export class CodexSession implements NativeSession {
         this.disconnected = true;
         this.quotas = this.t.quotaNotReported;
         this.context = undefined; this.usage = [];
-      }, this.locale);
+      }, this.locale, "/f614:login");
       if (!done) { this.emit({ type: "text", text: this.t.logoutCancelled }); return; }
       this.auth = this.t.disconnectedShort;
       this.sessionId = undefined; this.loaded = false; this.tokens = this.t.tokensNotReported; this.context = undefined;

@@ -53,19 +53,22 @@ export async function runNativeUI(
   const composer = createComposer(tui, locale);
   const { input } = composer;
   const engineLabel = "Codex";
-  const shellState = new ShellState(engineLabel);
+  // Codex has no `/login`: Shell's own `/f614:login` connects the account, and it is the command every «not connected» text names.
+  const shellState = new ShellState(engineLabel, "/f614:login");
   const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd, process.env.HOME, locale);
   const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version, locale);
   tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface, cwd));
   attachJumpToLatest(tui, transcriptScroll, locale);
   tui.setFocus(input);
   // With Codex the menu is Codex's own list (names, descriptions and order as its terminal shows them on macOS);
-  // what is Shell's own sits apart under FORGE614. `/f614:stop` cancels the answer in progress: `/stop` is Codex's.
+  // what is Shell's own sits apart under FORGE614, every one of them with the `/f614:` prefix (a command without it is Codex's).
+  // `/f614:stop` cancels the answer in progress (`/stop` is Codex's) and `/f614:quit` leaves at once, stopping what runs (`/quit` is Codex's).
   input.setCommandGroups([
     { title: engineLabel.toUpperCase(), items: codexMenuCommands() },
     { title: "FORGE614", items: [
-      { value: "/login", label: t.commandConnectAccount }, { value: "/refresh", label: t.commandRefreshPlanUsage },
-      { value: "/commands", label: t.commandBrowseCommands }, { value: "/f614:stop", label: t.commandCancelActiveTurn },
+      { value: "/f614:login", label: t.commandConnectAccount }, { value: "/f614:refresh", label: t.commandRefreshPlanUsage },
+      { value: "/f614:commands", label: t.commandBrowseCommands }, { value: "/f614:stop", label: t.commandCancelActiveTurn },
+      { value: "/f614:quit", label: t.commandExitShell },
     ] },
   ]);
   let closed = false; let ready = false; let commandBusy = false;
@@ -118,7 +121,7 @@ export async function runNativeUI(
     // `/compact` shows Codex's own words for it (title, detail, time) from the moment it is typed; Codex reports no real progress, so there is no bar.
     const working = compacting ? workingStatus(tc.compactingTitle, tc.compactingDetail, elapsed)
       : turnStartedAt !== undefined ? workingStatus(t.statusWorking, session.currentActivity?.(), elapsed) : t.statusWorking;
-    input.setStatus(session.busy || commandBusy ? working : shellState.snapshot().account === "connected" ? t.statusReady : t.statusConnectWithLogin);
+    input.setStatus(session.busy || commandBusy ? working : shellState.snapshot().account === "connected" ? t.statusReady : t.statusConnectWithLogin({ command: "/f614:login" }));
     const collaborationModes = session.collaborationModes?.() ?? [];
     input.setWorkModeHint(session.workModes?.().find(mode => mode.id === session.workMode?.()), collaborationModes.length ? { modes: collaborationModes, active: session.collaborationMode?.() } : undefined);
     statusBar.invalidate();
@@ -271,28 +274,34 @@ export async function runNativeUI(
     await session.resume(selected);
     write(session.resumeNotice ?? t.historyRestored);
   };
+  /**
+   * Leaves Shell. Codex's own `/quit` and `/exit` (the same command, «exit Codex») and Ctrl+C/Ctrl+D refuse while work or a login
+   * is in progress and say which command leaves anyway; Shell's `/f614:quit` (`force`) leaves at once, stopping what runs.
+   */
+  const quit = (force: boolean) => {
+    if (!force && (session.busy || commandBusy)) writeError(tc.workOrLoginActive);
+    else shutdown();
+  };
   const command = async (value: string) => {
-    if (value.trim() === "/refresh") { await sidebar.refreshUsage(); return; }
     const [name, ...parts] = value.trim().split(/\s+/); const argument = parts.join(" ");
-    // In Codex `/exit` and `/quit` are the same command («exit Codex»): `/exit` and `/exit!` do what `/quit` and `/quit!` do.
-    if (name === "/quit" || name === "/quit!" || name === "/exit" || name === "/exit!") {
-      if ((session.busy || commandBusy) && !name.endsWith("!")) writeError(tc.workOrLoginActive);
-      else shutdown();
-      return;
-    }
-    if (name === "/yes" || name === "/no") {
+    // Every command of Shell's own starts with `/f614:`; without it a name is Codex's (or unknown), never a silent alias of Shell's.
+    if (name === "/f614:refresh") { await sidebar.refreshUsage(); return; }
+    if (name === "/quit" || name === "/exit") { quit(false); return; }
+    if (name === "/f614:quit") { quit(true); return; }
+    if (name === "/f614:yes" || name === "/f614:no") {
       if (!approvals[0]) throw new Error(t.noPermissionPending);
-      approvals[0].answer(name === "/yes"); return;
+      approvals[0].answer(name === "/f614:yes"); return;
     }
     // Shell's own «cancel the answer in progress». Plain `/stop` is Codex's «stop all background terminals».
     // When Codex did not confirm, the session already told the person (once) that Shell ended the turn on its side: «requested» would be untrue.
     if (name === "/f614:stop") { const outcome = await session.cancel(); if (!outcome || outcome === "requested") write(tc.cancellationRequested); return; }
-    if (name === "/help" || name === "/commands") {
+    if (name === "/f614:help" || name === "/f614:commands") {
       if (approvals.length) { write(t.answerPendingPermissionFirst); return; }
       const selected = await input.chooseCommand();
       if (selected) input.onSubmit?.(selected);
       return;
     }
+    // Codex's own `/status`: the account, model, quotas, folder, work mode and conversation, as Codex reports them.
     if (name === "/status") { write(session.status().join("\n")); return; }
     // Codex's own commands that Shell has connected: Codex says which of them may run while it works.
     const official = findCodexCommand((name ?? "").slice(1));
@@ -316,24 +325,14 @@ export async function runNativeUI(
     if (!ready || commandBusy || session.busy) throw new Error(tc.waitForEngine);
     commandBusy = true;
     try {
-      if (name === "/login") await session.login();
+      // Codex has no `/login`: connecting the account is Shell's own `/f614:login`. `/logout` is Codex's.
+      // There is no `/effort` either: with Codex the reasoning effort is chosen inside `/model`.
+      if (name === "/f614:login") await session.login();
       else if (name === "/logout") {
         if (!session.logout) throw new Error(tc.logoutUnavailable);
         await session.logout();
       }
-      else if (name === "/effort" || name === "/thinking") {
-        if (argument) { await session.setEffort(argument); persistPreference(); }
-        else {
-          const visual = session.visual?.();
-          const levels = session.models.find(model => model.id === visual?.model)?.efforts;
-          if (levels?.length) {
-            const selected = await input.choose(t.commandSelectReasoning, levels.map(value => ({
-              value, display: effortLabel(value, locale), label: effortDescription(value, locale),
-            })), visual?.reasoning);
-            if (selected) { await session.setEffort(selected); persistPreference(); }
-          } else write(tc.noReasoningOptionsForModel);
-        }
-      } else if (name === "/compact") {
+      else if (name === "/compact") {
         if (!session.compact) write(tc.commandNotAllowed({ name }));
         else {
           compacting = true; beginTurn(); refresh();
@@ -397,7 +396,8 @@ export async function runNativeUI(
   };
   tui.addInputListener(data => {
     if (matchesKey(data, "shift+tab")) { void changeWorkMode().catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))); return { consume: true }; }
-    if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { void command("/quit"); return { consume: true }; }
+    // Ctrl+C and Ctrl+D leave like Codex's own `/quit`: refused while work is in progress, `/f614:quit` leaves anyway.
+    if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { quit(false); return { consume: true }; }
     return undefined;
   });
   process.once("SIGTERM", shutdown);

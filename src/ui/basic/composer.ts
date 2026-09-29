@@ -5,12 +5,15 @@ import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 import type { NativeCollaborationMode, NativeWorkMode } from "../../engines/types.ts";
 
+/**
+ * Shell's own commands, all with the `/f614:` prefix: what the menu offers until an assistant's screen hands over its own list.
+ * The assistants' commands (`/model`, `/login`, `/status`…) never belong here: the screen lists them under the assistant's name.
+ */
 function defaultForgeCommands(locale: Locale): ComposerChoice[] {
   const t = getCatalog(locale).chat;
   return [
-    ["/model", t.commandSelectModel], ["/effort", t.commandReasoningLevel], ["/resume", t.commandChatHistory],
-    ["/refresh", t.commandRefreshPlanUsageEngines], ["/new", t.commandNewConversation], ["/login", t.commandConnectAccount], ["/logout", t.commandDisconnectLocally],
-    ["/status", t.commandSessionDetails], ["/f614:stop", t.commandCancelKeepOpen], ["/help", t.commandBrowseAllCommands], ["/commands", t.commandBrowseAllCommands], ["/quit", t.commandExitShell],
+    ["/f614:refresh", t.commandRefreshPlanUsageEngines], ["/f614:stop", t.commandCancelKeepOpen],
+    ["/f614:help", t.commandBrowseAllCommands], ["/f614:commands", t.commandBrowseAllCommands], ["/f614:quit", t.commandExitShell],
   ].map(([value, label]) => ({ value: value!, label: label! }));
 }
 /**
@@ -229,7 +232,7 @@ export class ForgeComposer extends Editor {
   }
   private commandItems(): ComposerChoice[] { return this.commandGroups.flatMap(group => group.items.map(item => ({ ...item, group: group.title }))); }
   chooseCommand(): Promise<string | undefined> {
-    return this.choose(getCatalog(this.locale).chat.commandsFallbackTitle, this.commandItems().filter(item => item.value !== "/help" && item.value !== "/commands"));
+    return this.choose(getCatalog(this.locale).chat.commandsFallbackTitle, this.commandItems().filter(item => item.value !== "/f614:help" && item.value !== "/f614:commands"));
   }
   private suggestions(): ComposerChoice[] {
     const text = this.getText();

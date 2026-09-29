@@ -15,7 +15,7 @@ Think of a telephone exchange: Shell receives and displays the conversation; Eng
 
 At interactive startup Shell runs `~/.forge614/engines/bin/forge614-engines detect` and requires `schemaVersion: 1` (the response-format version). It displays only `claude-code` and `codex`, because they are the only identifiers with a chat adapter. If Engines is absent, incompatible, or invalid, Shell fails with repair guidance; it does not run a second discovery against `PATH` (the system list of runnable programs).
 
-Claude Code uses its official subscription flow and Codex uses `app-server` with ChatGPT sign-in. Both retain credentials managed by their native client. `/login` reuses the existing account or opens the official flow; `/logout` clears only Shell-session state.
+Claude Code uses its official subscription flow and Codex uses `app-server` with ChatGPT sign-in. Both retain credentials managed by their native client. `/login` (Claude Code) or `/f614:login` (Codex) reuses the existing account or opens the official flow; `/logout` clears only Shell-session state.
 
 ## Launch mechanisms
 

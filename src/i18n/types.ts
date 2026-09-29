@@ -209,7 +209,7 @@ export interface Catalog {
     engineSpecifiedTwice: string;
   };
   logout: {
-    confirmPrompt: (params: { engine: string }) => string;
+    confirmPrompt: (params: { engine: string; loginCommand: string }) => string;
     disconnectFailed: string;
   };
   /**
@@ -271,7 +271,7 @@ export interface Catalog {
     commandCompact: string;
     statusWorking: string;
     statusReady: string;
-    statusConnectWithLogin: string;
+    statusConnectWithLogin: (params: { command: string }) => string;
     waitForCurrentOperation: string;
     turnAlreadyRunning: string;
     reconnectBeforeMessage: string;
@@ -322,6 +322,8 @@ export interface Catalog {
     questionnaireUnsupported: string;
     claudeError: (params: { message: string }) => string;
     finishOrStopFirst: string;
+    /** A command of Claude Code's own that Shell has not connected yet (`/status`, `/help`): said honestly, never as an unknown command. */
+    commandNotAllowed: (params: { name: string }) => string;
     workOrAuthActive: string;
     checkingAccount: string;
     connectedExistingAccount: string;
@@ -387,13 +389,13 @@ export interface Catalog {
   };
   sidebar: {
     refreshNotSupported: string;
-    connectFirst: string;
+    connectFirst: (params: { command: string }) => string;
     usageUpdated: string;
     refreshFailed: string;
     checking: string;
     unverified: string;
     disconnected: string;
-    loginToConnect: string;
+    loginToConnect: (params: { command: string }) => string;
     checkingNativeAccount: string;
     headingSession: string;
     headingContext: string;
@@ -723,7 +725,6 @@ export interface Catalog {
     logoutUnavailable: string;
     selectedModel: (params: { model: string }) => string;
     useLoginForCatalog: string;
-    noReasoningOptionsForModel: string;
     noSessionsFound: string;
     chooseSessionOrId: string;
     waitForEngine: string;

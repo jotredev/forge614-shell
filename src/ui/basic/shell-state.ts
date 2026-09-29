@@ -29,6 +29,8 @@ export type ShellSnapshot = {
   startedAt?: number;
   account: AccountState;
   provider: string;
+  /** The command that connects the account with this assistant (Claude Code: its own `/login`; Codex has none, so Shell's `/f614:login`); the screens name it when the account is not connected. */
+  loginCommand?: string;
   model?: string;
   reasoning?: string;
   context?: ContextUsage;
@@ -43,7 +45,8 @@ export class ShellState {
   private account: AccountState = "disconnected";
   private details: ConnectedDetails = {};
 
-  constructor(private readonly provider: string) {}
+  /** `loginCommand` is the command that reconnects with this assistant, shown wherever Shell says the account is not connected. */
+  constructor(private readonly provider: string, private readonly loginCommand = "/login") {}
 
   checking(): void { this.account = "checking"; this.details = {}; }
   unknown(): void { this.account = "unknown"; this.details = {}; }
@@ -64,10 +67,11 @@ export class ShellState {
   }
 
   snapshot(): ShellSnapshot {
-    if (this.account === "disconnected") return { account: this.account, provider: this.provider };
+    if (this.account === "disconnected") return { account: this.account, provider: this.provider, loginCommand: this.loginCommand };
     return {
       account: this.account,
       provider: this.provider,
+      loginCommand: this.loginCommand,
       ...this.details,
       ...(this.account === "connected" ? { startedAt: this.startedAt } : {}),
     };

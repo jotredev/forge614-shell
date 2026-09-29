@@ -38,9 +38,9 @@ test("Codex logout is local and reconnect reuses the untouched native account", 
     expect(session.status().join(" ").includes("24%")).toBe(!allow);
     expect(session.busy).toBe(false);
     if (allow) {
-      expect(session.status()[0]).toContain("/login");
+      expect(session.status()[0]).toContain("/f614:login");
       session.reset();
-      await expect(session.send("hello")).rejects.toThrow("/login");
+      await expect(session.send("hello")).rejects.toThrow("/f614:login");
       expect(rpc.calls.length).toBe(before);
       await session.login();
       expect(session.status()[0]).toContain("ChatGPT");
@@ -561,7 +561,7 @@ test("Codex's own status/login narration renders in the session's own locale, no
   await session.initialize();
   expect(session.status()[0]).toContain("Cuenta de ChatGPT");
   await session.logout();
-  expect(events.some(event => event.type === "text" && event.text === "Se desconectó localmente de Codex en esta sesión de Shell. Tu cuenta nativa y otras aplicaciones no cambiaron. Usa /login para reconectar.")).toBe(true);
+  expect(events.some(event => event.type === "text" && event.text === "Se desconectó localmente de Codex en esta sesión de Shell. Tu cuenta nativa y otras aplicaciones no cambiaron. Usa /f614:login para reconectar.")).toBe(true);
 });
 
 test("Codex reports no background activity today — no session emits it until a live app-server probe proves otherwise (see docs/superpowers/specs/2026-09-22-background-activity-indicator-design.md §3.2)", async () => {
