@@ -38,6 +38,8 @@ export class ActivityCard implements Component {
     private diffLines?: DiffLine[],
     /** Left indent of a routine (non-`full`) line. The chat uses the default; the narrow sidebar passes 0. */
     private readonly indent = TOOL_INDENT,
+    /** Whether a routine line adds a second `└` row with the detail's first line. The sidebar turns it off: there the title, state and time are the whole row. */
+    private readonly showPreview = true,
   ) {}
 
   update(status: string, detail?: string): void {
@@ -74,7 +76,7 @@ export class ActivityCard implements Component {
     if (!this.full) {
       const pad = " ".repeat(Math.min(this.indent, Math.max(0, width - 1)));
       const line = fit(muted(`${pad}• ${this.summary()}`), width);
-      const preview = this.detail.split("\n")[0]?.trim();
+      const preview = !this.showPreview ? undefined : this.detail.split("\n")[0]?.trim();
       return preview ? ["", line, fit(muted(`${pad}  └ ${preview}`), width)] : ["", line];
     }
     const outer = Math.min(2, Math.max(0, width - 1));

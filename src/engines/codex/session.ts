@@ -49,6 +49,8 @@ export class CodexSession implements NativeSession {
   private finishTurn?: (error?: Error) => void;
   private items = new Map<string, any>();
   private streamed = new Set<string>();
+  /** Commands started and not yet completed, by item id, in start order — what `currentActivity()` reports. */
+  private runningCommands = new Map<string, string>();
   private modes: NativeWorkMode[] = [];
   private selectedMode?: { approvalPolicy: string; sandboxPolicy: { type: string } };
   private pendingStartupContext?: string;
@@ -101,6 +103,12 @@ export class CodexSession implements NativeSession {
     } catch { this.modes = []; }
   }
   workModes(): NativeWorkMode[] { return this.modes; }
+  /** The command Codex is running now (its `item/started` `command`), collapsed to one line; undefined when none runs. */
+  currentActivity(): string | undefined {
+    const commands = [...this.runningCommands.values()];
+    const last = commands[commands.length - 1];
+    return last?.replace(/\s+/g, " ").trim() || undefined;
+  }
   workMode(): string | undefined { return this.selectedMode ? `${this.selectedMode.approvalPolicy}:${this.selectedMode.sandboxPolicy.type}` : undefined; }
   async setWorkMode(id: string): Promise<void> {
     this.idle();
@@ -176,7 +184,7 @@ export class CodexSession implements NativeSession {
       if (!done) { this.emit({ type: "text", text: this.t.logoutCancelled }); return; }
       this.auth = this.t.disconnectedShort;
       this.sessionId = undefined; this.loaded = false; this.tokens = this.t.tokensNotReported; this.context = undefined;
-      this.items.clear(); this.streamed.clear();
+      this.items.clear(); this.streamed.clear(); this.runningCommands.clear();
       this.emit({ type: "text", text: this.t.disconnectedLocally });
     } finally { this.busy = false; this.emit({ type: "status", text: "" }); }
   }
@@ -229,7 +237,7 @@ export class CodexSession implements NativeSession {
   async send(text: string): Promise<void> {
     this.idle(); if (!text.trim()) return;
     if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
-    this.busy = true; this.aborted = new AbortController(); this.streamed.clear(); this.items.clear();
+    this.busy = true; this.aborted = new AbortController(); this.streamed.clear(); this.items.clear(); this.runningCommands.clear();
     try {
       if (!await this.readAccount()) throw new ShellError("codex-requires-login-no-fallback");
       if (this.aborted.signal.aborted) return;
@@ -295,9 +303,11 @@ export class CodexSession implements NativeSession {
         const label = engramToolLabel(params.item.server, params.item.tool) ?? `${params.item.server}: ${params.item.tool}`;
         this.emit({ type: "text", text: `Tool: ${label}\n${JSON.stringify(params.item.arguments ?? {}, null, 2)}` });
       } else if (["commandExecution", "fileChange"].includes(params.item.type)) {
+        if (params.item.type === "commandExecution" && typeof params.item.command === "string") this.runningCommands.set(params.item.id, params.item.command);
         this.emit({ type: "text", text: `Tool: ${params.item.type}\n${params.item.command ?? ""}` });
       }
     }
+    if (method === "item/completed") this.runningCommands.delete(params.item.id);
     if (method === "item/completed" && params.item.type === "agentMessage" && !this.streamed.has(params.item.id)) this.emit({ type: "text", text: params.item.text });
     if (method === "thread/tokenUsage/updated") {
       const usage = params.tokenUsage;

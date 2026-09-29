@@ -468,3 +468,29 @@ test("Codex: a migration notice is shown once even when a new conversation gets 
   expect(shown).toHaveLength(1);
   expect(shown[0]).toContain("updated its database");
 });
+
+/** Lo que el indicador «Trabajando» dice junto al tiempo en Codex es el `command` del evento item/started de commandExecution (una sola línea, recortada); deja de decirse en cuanto item/completed lo cierra. Cubre el caso de un comando multilínea. */
+test("currentActivity reports the running command as one trimmed line until it completes", async () => {
+  const rpc = codexFixture();
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.replies.set("thread/start", { thread: { id: "thread-1" }, model: "test-model", reasoningEffort: "medium", modelProvider: "openai" });
+  const seen: (string | undefined)[] = [];
+  rpc.handler = async (method) => {
+    if (method === "turn/start") {
+      queueMicrotask(() => {
+        seen.push(session.currentActivity());
+        rpc.onNotification("item/started", { threadId: "thread-1", item: { type: "commandExecution", id: "cmd-1", command: "gh pr checks 3\n  --watch" } });
+        seen.push(session.currentActivity());
+        rpc.onNotification("item/completed", { threadId: "thread-1", item: { type: "commandExecution", id: "cmd-1", command: "gh pr checks 3\n  --watch" } });
+        seen.push(session.currentActivity());
+        rpc.onNotification("turn/completed", { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } });
+      });
+      return { turn: { id: "turn-1" } };
+    }
+    if (!rpc.replies.has(method)) throw new Error(`Unexpected ${method}`);
+    return rpc.replies.get(method);
+  };
+  await session.send("wait for the checks");
+  expect(seen).toEqual([undefined, "gh pr checks 3 --watch", undefined]);
+});

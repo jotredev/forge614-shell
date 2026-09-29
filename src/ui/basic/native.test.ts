@@ -156,3 +156,28 @@ test("native chat waits for input and warns instead of quitting an active turn",
   terminal.input("/quit!"); terminal.input("\r"); await ui;
   expect(closed).toBe(true); expect(terminal.stopped).toBe(true);
 });
+
+/** Mejora 14 en Codex: mientras un comando corre, el indicador dice «Working · <comando> · <tiempo legible>»; cuando no hay ninguno, solo «Working · <tiempo>». Se lee de `currentActivity()` de la sesión, sin mirar el id del motor. */
+test("the working indicator names the running command for a native session, and only the time when there is none", async () => {
+  const terminal = new TestTerminal(); let finishTurn!: () => void; let activity: string | undefined = "gh pr checks 3 --watch";
+  const session = {
+    busy: false, models: [],
+    async initialize() {}, async login() {}, async cancel() {}, reset() {}, async resume(_id: string) {},
+    async listSessions() { return []; }, async setModel(_id: string) {}, async setEffort(_effort: string) {},
+    status() { return ["native status"]; },
+    async send(_text: string) { session.busy = true; await new Promise<void>(resolve => { finishTurn = resolve; }); session.busy = false; },
+    close() { finishTurn?.(); },
+    currentActivity() { return activity; },
+  };
+  const ui = runNativeUI("codex", "/project", (_emit, _approve) => session, terminal);
+  try {
+    await tick(); terminal.input("go"); terminal.input("\r"); await tick();
+    await new Promise(resolve => setTimeout(resolve, 600));
+    const withCommand = stripVTControlCharacters(terminal.output);
+    expect(withCommand).toContain("Working · gh pr checks 3 --watch · 0s");
+    expect(withCommand).not.toMatch(/Working · \d+s/);
+    terminal.output = ""; activity = undefined;
+    await new Promise(resolve => setTimeout(resolve, 600));
+    expect(stripVTControlCharacters(terminal.output)).toMatch(/Working · \d+s/);
+  } finally { terminal.input("/quit!"); terminal.input("\r"); await ui; }
+});

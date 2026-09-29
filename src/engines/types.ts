@@ -44,6 +44,8 @@ export interface NativeSession {
   workMode?(): string | undefined;
   setWorkMode?(id: string): Promise<void>;
   backgroundActivity?(): BackgroundActivity[];
+  /** A short phrase of what the engine is doing right now (the command it is running), for the «Working» indicator; undefined when nothing specific runs. */
+  currentActivity?(): string | undefined;
   status(): string[];
   visual?(): NativeVisualState;
   refreshUsage?(): Promise<void>;

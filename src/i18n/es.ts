@@ -345,9 +345,9 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     couldNotVerifyAccount: "No se pudo verificar tu cuenta de Claude. Usa /login para reintentar.",
     statusCheckingAccount: "Verificando cuenta",
     toolRequested: "Solicitado",
-    toolRunning: ({ seconds }) => `Ejecutando · ${seconds}s`,
-    toolCompleted: ({ seconds }) => `Completado · ${seconds}s`,
-    toolFailed: ({ seconds }) => `Fallido · ${seconds}s`,
+    toolRunning: ({ duration }) => `Ejecutando · ${duration}`,
+    toolCompleted: ({ duration }) => `Completado · ${duration}`,
+    toolFailed: ({ duration }) => `Fallido · ${duration}`,
   },
   telemetry: {
     notReported: "no reportado",
@@ -444,8 +444,6 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     failed: "fallido",
     idle: "Nada corriendo en segundo plano por ahora.",
     notReportedByEngine: "Este motor no informa actividad en segundo plano.",
-    elapsedSeconds: ({ seconds }) => `${seconds}s`,
-    elapsedMinutes: ({ minutes }) => `${minutes}m`,
     statusBarCount: ({ count }) => `${count} en segundo plano`,
   },
   update: {

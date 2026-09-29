@@ -339,9 +339,9 @@ export interface Catalog {
     couldNotVerifyAccount: string;
     statusCheckingAccount: string;
     toolRequested: string;
-    toolRunning: (params: { seconds: number }) => string;
-    toolCompleted: (params: { seconds: string }) => string;
-    toolFailed: (params: { seconds: string }) => string;
+    toolRunning: (params: { duration: string }) => string;
+    toolCompleted: (params: { duration: string }) => string;
+    toolFailed: (params: { duration: string }) => string;
   };
   telemetry: {
     notReported: string;
@@ -438,8 +438,6 @@ export interface Catalog {
     failed: string;
     idle: string;
     notReportedByEngine: string;
-    elapsedSeconds: (params: { seconds: number }) => string;
-    elapsedMinutes: (params: { minutes: number }) => string;
     statusBarCount: (params: { count: number }) => string;
   };
   update: {
