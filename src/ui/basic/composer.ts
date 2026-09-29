@@ -3,7 +3,7 @@ import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { accent as cyan, danger, muted, fit, paint, success, warning } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
-import type { NativeWorkMode } from "../../engines/types.ts";
+import type { NativeCollaborationMode, NativeWorkMode } from "../../engines/types.ts";
 
 function defaultForgeCommands(locale: Locale): ComposerChoice[] {
   const t = getCatalog(locale).chat;
@@ -34,15 +34,29 @@ export function filterChoices(items: ComposerChoice[], query: string): ComposerC
 
 const purple = paint("176;132;255");
 const planning = paint("52;170;166");
+/** Codex's footer draws «Plan mode» in magenta (`CollaborationModeIndicator::styled_line`). */
+const magenta = paint("217;112;214");
 export type WorkModePresentation = { text: string; help: string };
+/** The assistant's collaboration modes, when Shift+Tab switches them instead of the permissions (Codex: Plan ↔ Default), and the active one. */
+export type CollaborationHint = { modes: NativeCollaborationMode[]; active?: string };
 
 /**
  * Draws the work mode an adapter hands over: the assistant's own name for it (`label`), colored and
  * explained by the adapter's `tone`. It knows no mode ids or names of any assistant, so a mode an
  * assistant adds tomorrow needs no change here; without a mode it shows the engine's own default.
+ * With `collaboration` (an assistant whose Shift+Tab switches collaboration modes) the permission stays,
+ * the active mode's own indicator is added after it, and the help names that switch instead of «cycle».
  */
-export function workModePresentation(mode?: NativeWorkMode, locale: Locale = "en"): WorkModePresentation {
+export function workModePresentation(mode?: NativeWorkMode, locale: Locale = "en", collaboration?: CollaborationHint): WorkModePresentation {
   const t = getCatalog(locale).workMode;
+  if (collaboration?.modes.length) {
+    const base = mode ? workModePresentation(mode, locale).text : muted(t.engineMode);
+    const indicator = collaboration.modes.find(item => item.id === collaboration.active)?.indicator;
+    return {
+      text: indicator ? `${base}${muted(" · ")}${magenta(indicator)}` : base,
+      help: muted(t.shiftTabCollaboration({ modes: collaboration.modes.map(item => item.label).join(" ↔ ") })),
+    };
+  }
   if (!mode) return { text: muted(t.engineMode), help: muted(t.shiftTabToCycle) };
   const withCycle = (text: string) => `${text} · ${t.shiftTabToCycle}`;
   const drawn = (glyph: string, color: (text: string) => string, help?: string): WorkModePresentation =>
@@ -97,11 +111,17 @@ function statusDot(status: string): string {
 export class ForgeComposer extends Editor {
   private status: string;
   private workModeHint?: NativeWorkMode;
+  private collaborationHint?: CollaborationHint;
   private selectedChoice = 0;
   private currentValue?: string;
   private dismissed = "";
   private commandGroups: ComposerCommandGroup[];
   private skillChoices: ComposerChoice[] = [];
+  /** Where `@` looks for files (the assistant's own search); none means `@` is plain text. */
+  private fileSearch?: (query: string) => Promise<string[]>;
+  /** The `@` query last searched and the files it found. */
+  private fileQuery = "";
+  private fileChoices: ComposerChoice[] = [];
   private picker?: { title: string; items: ComposerChoice[]; searchable: boolean; resolve: (value?: string) => void };
   private pickerQuery = "";
   private repaint: () => void;
@@ -152,6 +172,38 @@ export class ForgeComposer extends Editor {
     this.skillChoices = skills.map(skill => ({ ...skill, group: "CODEX SKILLS" }));
     this.repaint();
   }
+  /** Lets `@` search files with the assistant's own search (Codex: `fuzzyFileSearch`); undefined turns it off. */
+  setFileSearch(search?: (query: string) => Promise<string[]>): void {
+    this.fileSearch = search; this.fileQuery = ""; this.fileChoices = [];
+  }
+  /**
+   * The files for the `@token` at the end of the text. Like Codex's file search, an empty token searches
+   * nothing; a new token starts a search whose answer is kept only if the token is still the same.
+   */
+  private fileSuggestions(query: string): ComposerChoice[] {
+    if (!this.fileSearch || !query) return [];
+    if (query !== this.fileQuery) {
+      this.fileQuery = query; this.fileChoices = [];
+      void this.fileSearch(query).then(paths => {
+        if (this.fileQuery !== query) return;
+        const group = getCatalog(this.locale).chat.filesGroup;
+        this.fileChoices = paths.map(path => ({ value: path, label: "", group }));
+        this.repaint();
+      }).catch(() => {});
+    }
+    return this.fileChoices;
+  }
+  /**
+   * Puts the chosen file where the `@token` was, like Codex's `insert_selected_path`: the path as plain text,
+   * in double quotes when it has spaces (and no quote of its own), followed by one space.
+   */
+  private insertFile(path: string): void {
+    const text = this.getText();
+    const token = /@[^\s@]*$/.exec(text);
+    const inserted = /\s/.test(path) && !path.includes("\"") ? `"${path}"` : path;
+    const next = `${token ? text.slice(0, token.index) : text}${inserted} `;
+    this.setText(next); this.dismissed = next; this.fileQuery = ""; this.fileChoices = [];
+  }
   private commandItems(): ComposerChoice[] { return this.commandGroups.flatMap(group => group.items.map(item => ({ ...item, group: group.title }))); }
   chooseCommand(): Promise<string | undefined> {
     return this.choose(getCatalog(this.locale).chat.commandsFallbackTitle, this.commandItems().filter(item => item.value !== "/help" && item.value !== "/commands"));
@@ -162,6 +214,8 @@ export class ForgeComposer extends Editor {
     // A command name may hold digits, «-» and «:» (`/f614:stop`, `/debug-config`); a skill name may also hold «.» and «:» (plugin skills).
     if (/^\/[a-z0-9:_-]*$/.test(text)) return this.commandItems().filter(item => item.value.startsWith(text));
     if (/^\$[a-z0-9_:.-]*$/i.test(text)) return this.skillChoices.filter(item => item.value.startsWith(text));
+    const mention = /(?:^|\s)@([^\s@]*)$/.exec(text);
+    if (mention) return this.fileSuggestions(mention[1]!);
     return [];
   }
   handleInput(data: string): void {
@@ -181,6 +235,7 @@ export class ForgeComposer extends Editor {
       if (matchesKey(data, "enter") || matchesKey(data, "tab")) {
         const item = items[this.selectedChoice % items.length]!;
         if (this.picker) { const picker = this.picker; this.picker = undefined; picker.resolve(item.value); }
+        else if (item.group === getCatalog(this.locale).chat.filesGroup) this.insertFile(item.value);
         else { this.setText(item.value); this.dismissed = item.value; if (matchesKey(data, "enter")) this.onSubmit?.(item.value); }
         this.repaint(); return;
       }
@@ -192,8 +247,8 @@ export class ForgeComposer extends Editor {
   }
   setValue(value: string): void { this.setText(value); }
   setStatus(status: string): void { this.status = status; }
-  /** The work mode to show under the input, as its adapter lists it; none shows the engine's own default. */
-  setWorkModeHint(mode?: NativeWorkMode): void { this.workModeHint = mode; this.repaint(); }
+  /** The work mode to show under the input, as its adapter lists it (none shows the engine's own default), and the collaboration modes when Shift+Tab switches those. */
+  setWorkModeHint(mode?: NativeWorkMode, collaboration?: CollaborationHint): void { this.workModeHint = mode; this.collaborationHint = collaboration; this.repaint(); }
   handleMouse(event: TuiMouseEvent) {
     // Own editor gestures so screen-level selection cannot highlight the
     // zero-width cursor marker (or the entire padded input row).
@@ -215,7 +270,7 @@ export class ForgeComposer extends Editor {
     const editor = super.render(innerWidth).slice(1, -1);
     const title = `  ${statusDot(this.status)} ${this.status}  `;
     const topFill = rule(Math.max(0, width - visibleWidth(title) - 5));
-    const mode = this.workModeHint ? workModePresentation(this.workModeHint, this.locale) : undefined;
+    const mode = this.workModeHint || this.collaborationHint?.modes.length ? workModePresentation(this.workModeHint, this.locale, this.collaborationHint) : undefined;
     const hint = mode ? mode.text : muted(t.helpOrCommandsHint);
     const shortcuts = mode ? mode.help : muted(t.shiftEnterNewline);
     const hintWidth = visibleWidth(hint) + visibleWidth(shortcuts);

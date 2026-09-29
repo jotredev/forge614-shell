@@ -9,6 +9,8 @@ export interface EnginePreference {
   effort?: string;
   /** The id of the last work mode used with this assistant, whatever it was (full access included), as its adapter lists it. */
   mode?: string;
+  /** The id of the last collaboration mode used with this assistant (Codex: `plan` or `default`), as its adapter lists it. */
+  collaborationMode?: string;
 }
 const ENGINE_IDS: readonly EngineId[] = ["claude", "codex"];
 
@@ -80,20 +82,24 @@ export function loadEnginePreference(engine: EngineId, options: PreferenceOption
   const model = typeof entry.model === "string" && entry.model ? entry.model : undefined;
   const effort = typeof entry.effort === "string" && entry.effort ? entry.effort : undefined;
   const mode = typeof entry.mode === "string" && entry.mode ? entry.mode : undefined;
-  if (!model && !effort && !mode) return undefined;
-  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(mode ? { mode } : {}) };
+  const collaborationMode = typeof entry.collaborationMode === "string" && entry.collaborationMode ? entry.collaborationMode : undefined;
+  if (!model && !effort && !mode && !collaborationMode) return undefined;
+  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(mode ? { mode } : {}), ...(collaborationMode ? { collaborationMode } : {}) };
 }
 
 /**
  * Saves the model and reasoning picked for an assistant. Those two are replaced as a pair (an omitted one
- * is cleared), but the saved work mode is left exactly as it was: it is saved at another moment
- * (`saveEngineMode`) and a model change must never forget it.
+ * is cleared), but the saved work mode and collaboration mode are left exactly as they were: they are saved
+ * at other moments (`saveEngineMode`, `saveEngineCollaborationMode`) and a model change must never forget them.
  */
 export function saveEnginePreference(engine: EngineId, preference: EnginePreference, options: PreferenceOptions = {}): void {
   const path = preferencesPath(options);
   const all = readAll(options);
-  const mode = loadEnginePreference(engine, options)?.mode;
-  all[engine] = { ...(preference.model ? { model: preference.model } : {}), ...(preference.effort ? { effort: preference.effort } : {}), ...(mode ? { mode } : {}) };
+  const { mode, collaborationMode } = loadEnginePreference(engine, options) ?? {};
+  all[engine] = {
+    ...(preference.model ? { model: preference.model } : {}), ...(preference.effort ? { effort: preference.effort } : {}),
+    ...(mode ? { mode } : {}), ...(collaborationMode ? { collaborationMode } : {}),
+  };
   // Best-effort only — a failed write just means the next session starts from scratch.
   writeAtomic(path, all);
 }
@@ -107,6 +113,17 @@ export function saveEngineMode(engine: EngineId, mode: string, options: Preferen
   const all = readAll(options);
   const current = loadEnginePreference(engine, options) ?? {};
   all[engine] = { ...current, mode };
+  writeAtomic(preferencesPath(options), all);
+}
+
+/**
+ * Saves the last collaboration mode used with an assistant (Codex: Plan or Default) next to its model and work
+ * mode, which stay untouched. Best-effort like the rest: a failed write only means it opens in its default next time.
+ */
+export function saveEngineCollaborationMode(engine: EngineId, collaborationMode: string, options: PreferenceOptions = {}): void {
+  const all = readAll(options);
+  const current = loadEnginePreference(engine, options) ?? {};
+  all[engine] = { ...current, collaborationMode };
   writeAtomic(preferencesPath(options), all);
 }
 

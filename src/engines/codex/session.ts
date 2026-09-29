@@ -1,6 +1,10 @@
 import type { RpcConnection } from "../../infrastructure/rpc.ts";
-import type { Approve, Emit, NativeAccountUsage, NativeBackgroundTerminal, NativeGoal, NativeHook, NativeMcpServer, NativeModel, NativeSession, NativeSessionInfo, NativeSkill, NativeVisualState, NativeWorkMode, WorkModeChange } from "../types.ts";
+import type {
+  Approve, Emit, NativeAccountUsage, NativeApp, NativeBackgroundTerminal, NativeCollaborationMode, NativeConfigWrite, NativeFeature, NativeGoal, NativeHook,
+  NativeMcpServer, NativeMemorySettings, NativeModel, NativeReviewTarget, NativeSession, NativeSessionInfo, NativeSkill, NativeVisualState, NativeWorkMode, WorkModeChange,
+} from "../types.ts";
 import { buildCodexWorkModes, sandboxPolicyFor } from "./work-modes.ts";
+import { markdownTranscript } from "./transcript.ts";
 import type { CodexWorkMode } from "./work-modes.ts";
 import { openLoginBrowser } from "../../infrastructure/browser.ts";
 import { confirmedLogout } from "../logout.ts";
@@ -35,6 +39,22 @@ function mentionedNames(text: string): string[] {
   }
   return names;
 }
+
+/**
+ * One collaboration-mode preset as `collaborationMode/list` sends it (`v2/CollaborationModeMask.ts`): the mode
+ * kind, Codex's own name for it, and the model and reasoning effort it imposes (`null` = keep the current one).
+ */
+interface CollaborationMask { name: string; mode: string; model: string | null; reasoning_effort: string | null }
+
+/** A config write's outcome in Shell's terms (`v2/ConfigWriteResponse.ts`): `okOverridden` keeps the message of the setting that still wins, when Codex sends one. */
+function configWrite(response: any): NativeConfigWrite {
+  return response?.status === "okOverridden"
+    ? { status: "okOverridden", ...(response.overriddenMetadata?.message ? { message: String(response.overriddenMetadata.message) } : {}) }
+    : { status: "ok" };
+}
+
+/** A `replace` edit for `config/batchWrite` (`v2/ConfigEdit.ts`), like Codex's `config_update::replace_config_value`. */
+const replaceEdit = (keyPath: string, value: unknown) => ({ keyPath, value, mergeStrategy: "replace" as const });
 
 /** A goal as Codex sends it (`v2/ThreadGoal.ts`), reduced to what Shell shows; a budget of `null` (none) is left out. */
 function toNativeGoal(goal: any): NativeGoal {
@@ -83,6 +103,19 @@ export class CodexSession implements NativeSession {
   private pendingStartupContext?: string;
   /** The skills Codex listed the last time (`skills/list`), used to recognize `$name` when a message is sent; undefined until it has been read. */
   private skillCatalog?: NativeSkill[];
+  /** Codex's collaboration presets (`collaborationMode/list`) that its own screen shows (Plan and Default), in Codex's order; empty when Codex lists none. */
+  private collaborationMasks: CollaborationMask[] = [];
+  /** The collaboration mode the next turn is sent with (a mask's `mode`); undefined when Codex lists none. */
+  private selectedCollaboration?: string;
+  /** The collaboration mode the running turn was sent with, and the plan it proposed, for «Implement this plan?». */
+  private turnCollaboration?: string;
+  private proposedPlan?: string;
+  /** Whether the running turn has produced an answer of its own (so a review's result is not shown twice). */
+  private answeredThisTurn = false;
+  /** The last completed answer, for `/copy`. */
+  private lastAgentMessage?: string;
+  /** «Generate memories» as last read or saved, to know when the open thread must be told (`thread/memoryMode/set`). */
+  private memoryGenerate?: boolean;
 
   private readonly locale: Locale;
 
@@ -107,6 +140,10 @@ export class CodexSession implements NativeSession {
   private get t() {
     return getCatalog(this.locale).codexSession;
   }
+  /** Codex's own words (the same in every language). */
+  private get native() {
+    return getCatalog(this.locale).codexNative;
+  }
   async initialize(): Promise<void> {
     // `experimentalApi` (InitializeCapabilities) is what lets the app-server accept its experimental methods:
     // `/stop` and `/ps` use `thread/backgroundTerminals/clean` and `/list`, which exist only there.
@@ -114,6 +151,7 @@ export class CodexSession implements NativeSession {
     this.rpc.notify("initialized");
     await this.readAccount();
     await this.readWorkModes();
+    await this.readCollaborationModes();
     let cursor: string | undefined;
     do {
       const response = await this.rpc.request("model/list", { limit: 100, includeHidden: false, ...(cursor ? { cursor } : {}) });
@@ -124,13 +162,68 @@ export class CodexSession implements NativeSession {
     } while (cursor);
     await this.readQuotas();
   }
-  /** Builds the mode list from what Codex allows (`configRequirements/read`); if it cannot be read, Codex's own presets are offered unrestricted (see `buildCodexWorkModes`). */
+  /**
+   * Builds the mode list from what Codex allows (`configRequirements/read`) and from whether its
+   * `guardian_approval` feature is on (`experimentalFeature/list`), which is what makes Codex's own menu offer
+   * «Approve for me». If the requirements cannot be read, Codex's presets are offered unrestricted; if the
+   * features cannot be read, «Approve for me» is not offered (see `buildCodexWorkModes`).
+   */
   private async readWorkModes(): Promise<void> {
     let requirements: unknown = null;
     try { requirements = (await this.rpc.request("configRequirements/read", {})).requirements; } catch { /* no restrictions known */ }
-    this.modes = buildCodexWorkModes(requirements as Parameters<typeof buildCodexWorkModes>[0]);
+    let guardianApproval = false;
+    try { guardianApproval = (await this.experimentalFeatures()).some(feature => feature.name === "guardian_approval" && feature.enabled); } catch { /* not known: not offered */ }
+    this.modes = buildCodexWorkModes(requirements as Parameters<typeof buildCodexWorkModes>[0], { guardianApproval, names: this.native });
+  }
+  /**
+   * Reads Codex's collaboration presets (`collaborationMode/list`, experimental) and keeps the ones its own screen
+   * shows — Plan and Default (`ModeKind::is_tui_visible`) — in Codex's order; like Codex, a missing list just
+   * means no modes. The conversation starts in Default (`collaboration_modes::default_mask`).
+   */
+  private async readCollaborationModes(): Promise<void> {
+    let masks: CollaborationMask[] = [];
+    try {
+      const response = await this.rpc.request("collaborationMode/list", {});
+      masks = (response?.data ?? []).filter((mask: any) => mask?.mode === "plan" || mask?.mode === "default")
+        .map((mask: any): CollaborationMask => ({ name: String(mask.name), mode: mask.mode, model: mask.model ?? null, reasoning_effort: mask.reasoning_effort ?? null }));
+    } catch { /* optional discovery: no modes */ }
+    this.collaborationMasks = masks;
+    this.selectedCollaboration = (masks.find(mask => mask.mode === "default") ?? masks[0])?.mode;
   }
   workModes(): NativeWorkMode[] { return this.modes; }
+  /** «Ask for approval» stands in for a remembered mode Codex no longer offers (Read Only on macOS), when Codex allows it. */
+  fallbackWorkMode(): string | undefined {
+    return this.modes.find(mode => mode.approvalPolicy === "on-request" && mode.sandbox === "workspace-write" && mode.approvalsReviewer === "user")?.id;
+  }
+  /** Codex's collaboration modes with its own names; Plan carries the indicator Codex's footer shows («Plan mode»). */
+  collaborationModes(): NativeCollaborationMode[] {
+    return this.collaborationMasks.map(mask => ({ id: mask.mode, label: mask.name, ...(mask.mode === "plan" ? { indicator: this.native.planModeIndicator } : {}) }));
+  }
+  collaborationMode(): string | undefined { return this.selectedCollaboration; }
+  /**
+   * The `CollaborationMode` a turn carries (`CollaborationMode.ts`, `Settings.ts`), built like Codex's
+   * `CollaborationMode::apply_mask`: the preset's model and effort when it sets them, the current ones otherwise,
+   * and `developer_instructions: null` so Codex uses its built-in instructions for the mode.
+   */
+  private collaborationPayload(): { mode: string; settings: { model: string; reasoning_effort: string | null; developer_instructions: null } } | undefined {
+    const mask = this.collaborationMasks.find(item => item.mode === this.selectedCollaboration);
+    if (!mask) return undefined;
+    return { mode: mask.mode, settings: { model: mask.model ?? this.model ?? "", reasoning_effort: mask.reasoning_effort ?? this.effort ?? null, developer_instructions: null } };
+  }
+  /**
+   * Switches the collaboration mode (Shift+Tab, `/plan`). While a turn runs it is kept for the next `turn/start`
+   * and reported as `next-turn`; otherwise an open thread is told at once with `thread/settings/update`, as Codex
+   * does — best-effort, because every turn carries the mode anyway.
+   */
+  async setCollaborationMode(id: string): Promise<WorkModeChange> {
+    if (!this.collaborationMasks.some(mask => mask.mode === id)) throw new ShellError("codex-mode-unknown");
+    this.selectedCollaboration = id;
+    if (this.busy) return "next-turn";
+    if (this.loaded && this.sessionId) {
+      try { await this.rpc.request("thread/settings/update", { threadId: this.sessionId, collaborationMode: this.collaborationPayload() }); } catch { /* the next turn carries it */ }
+    }
+    return "applied";
+  }
   /** The command Codex is running now (its `item/started` `command`), collapsed to one line; undefined when none runs. */
   currentActivity(): string | undefined {
     const commands = [...this.runningCommands.values()];
@@ -245,13 +338,14 @@ export class CodexSession implements NativeSession {
       ...(this.usage?.length ? { usage: this.usage } : {}),
     };
   }
+  /** `/model` may be used while Codex works (`available_during_task`): the next `turn/start` carries the new model. */
   async setModel(id: string): Promise<void> {
-    this.idle(); const model = this.models.find(model => model.id === id);
+    const model = this.models.find(model => model.id === id);
     if (!model) throw new ShellError("codex-model-unknown");
     this.model = id; this.effort = model.defaultEffort;
   }
   async setEffort(effort: string): Promise<void> {
-    this.idle(); const model = this.models.find(model => model.id === this.model);
+    const model = this.models.find(model => model.id === this.model);
     if (effort === "default") { this.effort = model?.defaultEffort; return; }
     if (!model?.efforts?.includes(effort)) throw new ShellError("codex-effort-unknown");
     this.effort = effort;
@@ -263,7 +357,6 @@ export class CodexSession implements NativeSession {
    * does not send is left out. Codex counts `updatedAt` in seconds; the selector wants milliseconds.
    */
   async listSessions(): Promise<NativeSessionInfo[]> {
-    this.idle();
     const result = await this.rpc.request("thread/list", { cwd: this.cwd, limit: 100, sortKey: "updated_at" });
     return result.data.filter((thread: any) => thread.cwd === this.cwd).map((thread: any): NativeSessionInfo => ({
       id: thread.id,
@@ -273,15 +366,26 @@ export class CodexSession implements NativeSession {
       ...(typeof thread.updatedAt === "number" ? { updatedAt: thread.updatedAt < 1e11 ? thread.updatedAt * 1000 : thread.updatedAt } : {}),
     }));
   }
+  /**
+   * `/resume` may be used while Codex works (`available_during_task`): like Codex, the screen moves to the chosen
+   * conversation and stops following the running turn (Codex keeps it going on its side), so Shell no longer
+   * waits for it. A login or logout in progress still has to finish first.
+   */
   async resume(id: string): Promise<void> {
-    this.idle();
+    if (this.busy && !this.finishTurn) throw new ShellError("codex-turn-busy");
     const { thread } = await this.rpc.request("thread/read", { threadId: id, includeTurns: true });
     if (thread.cwd !== this.cwd) throw new ShellError("codex-session-foreign-project");
     if (thread.status?.type === "active") throw new ShellError("codex-session-active-elsewhere");
-    this.sessionId = id; this.loaded = false; this.tokens = this.t.tokensNotReported;
+    this.finishTurn?.();
+    this.sessionId = id; this.loaded = false; this.tokens = this.t.tokensNotReported; this.proposedPlan = undefined;
+    this.showHistory(thread.turns ?? []);
+  }
+  /** Replaces the view with a conversation's saved turns (answers, and what the person wrote) and remembers its last answer for `/copy`. */
+  private showHistory(turns: any[]): void {
     this.emit({ type: "reset", text: "" });
-    for (const turn of thread.turns ?? []) for (const item of turn.items ?? []) {
-      if (item.type === "agentMessage") this.emit({ type: "text", text: item.text });
+    this.lastAgentMessage = undefined;
+    for (const turn of turns) for (const item of turn.items ?? []) {
+      if (item.type === "agentMessage") { this.lastAgentMessage = item.text; this.emit({ type: "text", text: item.text }); }
       if (item.type === "userMessage") this.emit({ type: "text", text: `You: ${item.content.filter((part: any) => part.type === "text").map((part: any) => part.text).join("\n")}` });
     }
   }
@@ -289,6 +393,7 @@ export class CodexSession implements NativeSession {
     this.idle(); if (!text.trim()) return;
     if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
     this.busy = true; this.aborted = new AbortController(); this.streamed.clear(); this.items.clear(); this.runningCommands.clear();
+    this.proposedPlan = undefined; this.answeredThisTurn = false;
     // The mode this turn is sent with; a change made while it runs is for the next one (see `setWorkMode`).
     const mode = this.selectedMode;
     try {
@@ -305,7 +410,13 @@ export class CodexSession implements NativeSession {
       ];
       if (this.aborted.signal.aborted) return;
       this.pendingStartupContext = undefined;
-      const result = await this.requestWithMode(mode, "turn/start", { threadId: this.sessionId, input, model: this.model, effort: this.effort, approvalsReviewer: "user", ...(mode ? { approvalPolicy: mode.approvalPolicy, sandboxPolicy: sandboxPolicyFor(mode.sandbox) } : { approvalPolicy: "untrusted" }) });
+      const collaboration = this.collaborationPayload();
+      this.turnCollaboration = collaboration?.mode;
+      const result = await this.requestWithMode(mode, "turn/start", {
+        threadId: this.sessionId, input, model: this.model, effort: this.effort, approvalsReviewer: mode?.approvalsReviewer ?? "user",
+        ...(mode ? { approvalPolicy: mode.approvalPolicy, sandboxPolicy: sandboxPolicyFor(mode.sandbox) } : { approvalPolicy: "untrusted" }),
+        ...(collaboration ? { collaborationMode: collaboration } : {}),
+      });
       this.turnId = result.turn.id;
       if (this.aborted.signal.aborted) await this.rpc.request("turn/interrupt", { threadId: this.sessionId, turnId: this.turnId });
       await finished;
@@ -331,9 +442,16 @@ export class CodexSession implements NativeSession {
     }
   }
   /** Starts (or resumes) the Codex thread once, with the given mode, and loads Engram's startup memory to send in front of the next message. A thread already open is left as it is. */
+  /** The settings a thread is opened (or forked) with: folder, model, and the work mode's approval policy, reviewer and sandbox — or Codex's cautious default when none is chosen. */
+  private threadConfig(mode: CodexWorkMode | undefined) {
+    return {
+      cwd: this.cwd, model: this.model, modelProvider: "openai", approvalsReviewer: mode?.approvalsReviewer ?? "user",
+      ...(mode ? { approvalPolicy: mode.approvalPolicy, sandbox: mode.sandbox } : { approvalPolicy: "untrusted", sandbox: "workspace-write" }),
+    };
+  }
   private async openThread(mode: CodexWorkMode | undefined): Promise<void> {
     if (this.loaded) return;
-    const config = { cwd: this.cwd, model: this.model, modelProvider: "openai", approvalsReviewer: "user", ...(mode ? { approvalPolicy: mode.approvalPolicy, sandbox: mode.sandbox } : { approvalPolicy: "untrusted", sandbox: "workspace-write" }) };
+    const config = this.threadConfig(mode);
     const result = await this.requestWithMode(mode, this.sessionId ? "thread/resume" : "thread/start", { ...config, ...(this.sessionId ? { threadId: this.sessionId } : {}) });
     if (result.modelProvider !== "openai") throw new ShellError("codex-unexpected-provider");
     this.sessionId = result.thread.id; this.loaded = true; this.model = result.model; this.effort ??= result.reasoningEffort;
@@ -527,6 +645,139 @@ export class CodexSession implements NativeSession {
     await this.rpc.request("thread/backgroundTerminals/clean", { threadId: this.sessionId });
     return true;
   }
+  /** The last answer Codex completed (Markdown), for `/copy`; undefined before the first one. */
+  lastResponse(): string | undefined { return this.lastAgentMessage; }
+  /**
+   * `/review` → `review/start` with `{ threadId, target, delivery: "inline" }` (`v2/ReviewStartParams.ts`,
+   * `app_server_session.rs` `review_start`). The review runs as a turn on the conversation (opened first when
+   * there is none yet), so the session stays busy until it ends and `/f614:stop` can interrupt it.
+   */
+  async startReview(target: NativeReviewTarget): Promise<void> {
+    this.idle();
+    const threadId = await this.ensureThread();
+    this.busy = true; this.aborted = new AbortController(); this.streamed.clear(); this.items.clear(); this.runningCommands.clear();
+    this.proposedPlan = undefined; this.answeredThisTurn = false; this.turnCollaboration = undefined;
+    try {
+      const finished = new Promise<void>((resolve, reject) => { this.finishTurn = error => error ? reject(error) : resolve(); });
+      void finished.catch(() => {});
+      const result = await this.rpc.request("review/start", { threadId, target, delivery: "inline" });
+      this.turnId = result?.turn?.id;
+      if (this.aborted.signal.aborted && this.turnId) await this.rpc.request("turn/interrupt", { threadId, turnId: this.turnId });
+      await finished;
+    } finally { this.busy = false; this.turnId = undefined; this.finishTurn = undefined; this.aborted.abort(); }
+  }
+  /**
+   * `/fork [name]` → `thread/fork` (`v2/ThreadForkParams.ts`) with the thread's own settings, then
+   * `thread/name/set` for the name, as Codex does (`app/event_dispatch.rs` `ForkCurrentSession`); the session moves
+   * to the copy and shows its history. Codex's worktree question is not asked: the copy stays in this folder.
+   */
+  async forkThread(name?: string): Promise<void> {
+    this.idle();
+    const threadId = this.requireThread();
+    if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
+    const mode = this.selectedMode;
+    const result = await this.requestWithMode(mode, "thread/fork", { threadId, ...this.threadConfig(mode) });
+    const forkId = String(result.thread.id);
+    if (name) {
+      try { await this.rpc.request("thread/name/set", { threadId: forkId, name }); }
+      catch (error) { this.emit({ type: "text", text: this.native.forkNameFailed({ error: error instanceof Error ? error.message : String(error) }) }); }
+    }
+    this.sessionId = forkId; this.loaded = true; this.model = result.model ?? this.model;
+    this.tokens = this.t.tokensNotReported; this.context = undefined; this.pendingStartupContext = undefined; this.proposedPlan = undefined;
+    this.showHistory(result.thread.turns ?? []);
+  }
+  /** `/apps` → `app/list` as Codex's screen asks it (`v2/AppsListParams.ts`, `chatwidget/connectors.rs`): a fresh list, scoped to the open thread. */
+  async apps(): Promise<NativeApp[]> {
+    const response = await this.rpc.request("app/list", { ...(this.loaded && this.sessionId ? { threadId: this.sessionId } : {}), forceRefetch: true });
+    return (response?.data ?? []).map((app: any): NativeApp => {
+      const description = typeof app.description === "string" ? app.description.trim() : "";
+      return {
+        id: String(app.id), name: String(app.name), ...(description ? { description } : {}), ...(app.installUrl ? { installUrl: String(app.installUrl) } : {}),
+        installed: Boolean(app.isAccessible), enabled: Boolean(app.isEnabled),
+      };
+    });
+  }
+  /** Every experimental feature Codex reports (`experimentalFeature/list`, 100 per page, at most 10 pages, like `experimental_features.rs`), scoped to the open thread. */
+  async experimentalFeatures(): Promise<NativeFeature[]> {
+    const features: NativeFeature[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const response = await this.rpc.request("experimentalFeature/list", { limit: 100, ...(cursor ? { cursor } : {}), ...(this.loaded && this.sessionId ? { threadId: this.sessionId } : {}) });
+      for (const feature of response?.data ?? []) {
+        if (features.some(item => item.name === feature.name)) continue;
+        features.push({
+          name: String(feature.name), stage: String(feature.stage), enabled: Boolean(feature.enabled), defaultEnabled: Boolean(feature.defaultEnabled),
+          ...(feature.displayName ? { displayName: String(feature.displayName) } : {}), ...(feature.description ? { description: String(feature.description) } : {}),
+        });
+      }
+      cursor = response?.nextCursor ?? undefined;
+      if (!cursor) return features;
+    }
+    return features;
+  }
+  /**
+   * Switches one experimental feature like `experimental_features.rs` `write`: read the list, write
+   * `features."<name>"` with `config/batchWrite` (`null` when turning off a feature that is off by default), then
+   * read the list again; `overridden` when Codex says so or the value read back differs from the choice.
+   */
+  async setExperimentalFeature(name: string, enabled: boolean): Promise<{ features: NativeFeature[]; overridden: boolean }> {
+    const feature = (await this.experimentalFeatures()).find(item => item.name === name);
+    if (!feature) throw new Error(`The server did not advertise experimental feature \`${name}\``);
+    const value = enabled || feature.defaultEnabled || name === "daemon_auto_start" ? enabled : null;
+    const response = await this.rpc.request("config/batchWrite", { edits: [replaceEdit(`features.${JSON.stringify(name)}`, value)], reloadUserConfig: true });
+    const features = await this.experimentalFeatures();
+    return { features, overridden: response?.status === "okOverridden" || !features.some(item => item.name === name && item.enabled === enabled) };
+  }
+  /** `/memories`: whether Codex's `memories` feature is on (`experimentalFeature/list`) and its two settings (`config/read` → `memories`, both on when unset). */
+  async memorySettings(): Promise<NativeMemorySettings> {
+    const featureEnabled = (await this.experimentalFeatures()).some(feature => feature.name === "memories" && feature.enabled);
+    const { config } = await this.rpc.request("config/read", { cwd: this.cwd });
+    const memories = config?.memories ?? {};
+    const settings = {
+      featureEnabled,
+      useMemories: typeof memories.use_memories === "boolean" ? memories.use_memories : true,
+      generateMemories: typeof memories.generate_memories === "boolean" ? memories.generate_memories : true,
+    };
+    this.memoryGenerate = settings.generateMemories;
+    return settings;
+  }
+  /**
+   * Saves both memory settings (`config_update::build_memory_settings_edits`); when «Generate memories» changed and
+   * a thread is open, tells it with `thread/memoryMode/set` (`app/config_persistence.rs`). A failure there is
+   * reported in Codex's words and the saved settings stay.
+   */
+  async saveMemorySettings(useMemories: boolean, generateMemories: boolean): Promise<NativeConfigWrite> {
+    const previous = this.memoryGenerate;
+    const result = configWrite(await this.rpc.request("config/batchWrite", {
+      edits: [replaceEdit("memories.use_memories", useMemories), replaceEdit("memories.generate_memories", generateMemories)], reloadUserConfig: true,
+    }));
+    if (result.status !== "ok") return result;
+    this.memoryGenerate = generateMemories;
+    if (previous !== undefined && previous !== generateMemories && this.loaded && this.sessionId) {
+      try { await this.rpc.request("thread/memoryMode/set", { threadId: this.sessionId, mode: generateMemories ? "enabled" : "disabled" }); }
+      catch (error) { this.emit({ type: "text", text: this.native.memoryModeFailed({ error: error instanceof Error ? error.message : String(error) }) }); }
+    }
+    return result;
+  }
+  /** «Yes, enable» memories for new threads: `features.memories` and the legacy `features.memory_tool` older servers read (`app/experimental_features.rs`). */
+  async enableMemories(): Promise<NativeConfigWrite> {
+    return configWrite(await this.rpc.request("config/batchWrite", { edits: [replaceEdit("features.memories", true), replaceEdit("features.memory_tool", true)], reloadUserConfig: true }));
+  }
+  /** «Reset all memories» → `memory/reset` (no parameters). Deletes for good; the screen asks first. */
+  async resetMemories(): Promise<void> {
+    await this.rpc.request("memory/reset");
+  }
+  /** `/export`: the whole conversation (`thread/read` with its turns) in Codex's Markdown transcript format. */
+  async exportTranscript(): Promise<string> {
+    if (!this.sessionId) throw new Error(this.native.exportNoConversation);
+    const { thread } = await this.rpc.request("thread/read", { threadId: this.sessionId, includeTurns: true });
+    return markdownTranscript(thread?.turns ?? []);
+  }
+  /** `@` file search with the app-server's `fuzzyFileSearch` (`FuzzyFileSearchParams.ts`) over this folder; the paths come back relative to it. */
+  async searchFiles(query: string): Promise<string[]> {
+    const response = await this.rpc.request("fuzzyFileSearch", { query, roots: [this.cwd], cancellationToken: null });
+    return (response?.files ?? []).map((file: any) => String(file.path));
+  }
   async cancel(): Promise<void> {
     this.aborted.abort();
     if (this.loginId) {
@@ -550,12 +801,13 @@ export class CodexSession implements NativeSession {
     if (params.threadId !== this.sessionId) return;
     if (method === "turn/started") this.turnId = params.turn.id;
     if (method === "item/agentMessage/delta") {
-      this.streamed.add(params.itemId);
+      this.streamed.add(params.itemId); this.answeredThisTurn = true;
       this.emit({ type: "delta", id: params.itemId, text: params.delta });
     }
     if (method === "item/started") {
       this.items.set(params.item.id, params.item);
-      if (params.item.type === "mcpToolCall") {
+      if (params.item.type === "enteredReviewMode") this.emit({ type: "text", text: this.native.reviewStarted({ hint: String(params.item.review ?? "") }) });
+      else if (params.item.type === "mcpToolCall") {
         const label = engramToolLabel(params.item.server, params.item.tool) ?? `${params.item.server}: ${params.item.tool}`;
         this.emit({ type: "text", text: `Tool: ${label}\n${JSON.stringify(params.item.arguments ?? {}, null, 2)}` });
       } else if (["commandExecution", "fileChange"].includes(params.item.type)) {
@@ -564,7 +816,16 @@ export class CodexSession implements NativeSession {
       }
     }
     if (method === "item/completed") this.runningCommands.delete(params.item.id);
-    if (method === "item/completed" && params.item.type === "agentMessage" && !this.streamed.has(params.item.id)) this.emit({ type: "text", text: params.item.text });
+    if (method === "item/completed" && params.item.type === "agentMessage") {
+      this.lastAgentMessage = params.item.text; this.answeredThisTurn = true;
+      if (!this.streamed.has(params.item.id)) this.emit({ type: "text", text: params.item.text });
+    }
+    if (method === "item/completed" && params.item.type === "plan" && String(params.item.text ?? "").trim()) this.proposedPlan = String(params.item.text);
+    // Codex frames a review with its banners; its result is shown here only if no answer of the turn already showed it.
+    if (method === "item/completed" && params.item.type === "exitedReviewMode") {
+      if (!this.answeredThisTurn && String(params.item.review ?? "").trim()) this.emit({ type: "text", text: String(params.item.review) });
+      this.emit({ type: "text", text: this.native.reviewFinished });
+    }
     if (method === "thread/tokenUsage/updated") {
       const usage = params.tokenUsage;
       this.tokens = this.t.sessionTokensLine({
@@ -576,6 +837,9 @@ export class CodexSession implements NativeSession {
     }
     if (method === "turn/completed") {
       if (this.turnId && params.turn.id !== this.turnId) return;
+      // `maybe_prompt_plan_implementation`: a turn that ends in Plan mode with a proposed plan offers to implement it.
+      if (params.turn.status === "completed" && this.turnCollaboration === "plan" && this.proposedPlan) this.emit({ type: "planReady", text: this.proposedPlan });
+      this.proposedPlan = undefined;
       // Codex's own `error.message`, when present, is external and stays literal; the fallback is
       // Shell's own typed error, kept as a `ShellError` instance (not just its English `.message`)
       // so it still renders in the active locale wherever this rejection is finally displayed.

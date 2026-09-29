@@ -12,11 +12,11 @@ Shell soporta dos idiomas de interfaz — español (`es`) e inglés (`en`) — p
   "locale": "es",
   "lastEngine": "codex",
   "claude": { "model": "sonnet", "effort": "medium", "mode": "plan" },
-  "codex": { "model": "gpt-5.6-terra", "effort": "high", "mode": "on-request:workspace-write" }
+  "codex": { "model": "gpt-5.6-terra", "effort": "high", "mode": "on-request:workspace-write", "collaborationMode": "plan" }
 }
 ```
 
-`lastEngine` es el asistente usado la última vez y `mode` es el último modo de trabajo de cada asistente, con el nombre que le da el adaptador de ese asistente. Un archivo antiguo que solo tiene las claves `claude`/`codex` se sigue leyendo correctamente — simplemente se trata como si todavía no tuviera preferencia de idioma. JSON corrupto, un `format` desconocido o un valor de `locale` no compatible se tratan igual: sin fallar, sin preferencia. Las escrituras son atómicas (archivo temporal en la misma carpeta y luego un rename), así que un fallo a mitad de la escritura nunca deja JSON parcial.
+`lastEngine` es el asistente usado la última vez, `mode` es el último modo de trabajo de cada asistente, con el nombre que le da el adaptador de ese asistente, y `collaborationMode` es el último modo de colaboración de Codex (`plan` o `default`). Un archivo antiguo que solo tiene las claves `claude`/`codex` se sigue leyendo correctamente — simplemente se trata como si todavía no tuviera preferencia de idioma. JSON corrupto, un `format` desconocido o un valor de `locale` no compatible se tratan igual: sin fallar, sin preferencia. Las escrituras son atómicas (archivo temporal en la misma carpeta y luego un rename), así que un fallo a mitad de la escritura nunca deja JSON parcial.
 
 ## Orden de resolución
 

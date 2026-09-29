@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadEnginePreference, loadLastEngine, loadLocale, saveEngineMode, saveEnginePreference, saveLastEngine, saveLocale } from "./shell-preferences.ts";
+import { loadEnginePreference, loadLastEngine, loadLocale, saveEngineCollaborationMode, saveEngineMode, saveEnginePreference, saveLastEngine, saveLocale } from "./shell-preferences.ts";
 
 function tempHome(): string {
   return mkdtempSync(join(tmpdir(), "forge614-shell-prefs-"));
@@ -229,5 +229,20 @@ test("saving the last engine and the mode keeps the saved language and model cho
     expect(loadLocale({ home })).toBe("es");
     expect(loadEnginePreference("claude", { home })).toEqual({ model: "sonnet", mode: "plan" });
     expect(loadLastEngine({ home })).toBe("claude");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+/** Shell remembers Codex's collaboration mode (Plan / Default) too; saving it, the model or the permission never wipes the others. */
+test("the collaboration mode is saved next to the model and the mode, and none of them erases the others", () => {
+  const home = tempHome();
+  try {
+    saveEngineMode("codex", "never:danger-full-access", { home });
+    saveEngineCollaborationMode("codex", "plan", { home });
+    saveEnginePreference("codex", { model: "gpt-5.6-terra", effort: "high" }, { home });
+    expect(loadEnginePreference("codex", { home })).toEqual({ model: "gpt-5.6-terra", effort: "high", mode: "never:danger-full-access", collaborationMode: "plan" });
+    saveEngineMode("codex", "on-request:workspace-write", { home });
+    expect(loadEnginePreference("codex", { home })).toEqual({ model: "gpt-5.6-terra", effort: "high", mode: "on-request:workspace-write", collaborationMode: "plan" });
+    saveEngineCollaborationMode("codex", "default", { home });
+    expect(loadEnginePreference("codex", { home })?.collaborationMode).toBe("default");
   } finally { rmSync(home, { recursive: true, force: true }); }
 });

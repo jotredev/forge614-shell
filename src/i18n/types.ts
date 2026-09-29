@@ -23,6 +23,7 @@ export type ShellErrorCode =
   | "codex-mode-rejected"
   | "codex-compact-no-conversation"
   | "codex-command-needs-conversation"
+  | "clipboard-unavailable"
   | "codex-refresh-requires-login"
   | "codex-login-not-managed"
   | "codex-turn-busy"
@@ -296,6 +297,8 @@ export interface Catalog {
     searchLabel: string;
     searchPlaceholder: string;
     searchNoMatches: string;
+    /** Group title of the files `@` offers. */
+    filesGroup: string;
   };
   /** Help lines by tone (see `WorkModeTone`); the mode's own name always comes from the assistant's adapter. */
   workMode: {
@@ -308,6 +311,8 @@ export interface Catalog {
     dontAskModeHelp: string;
     engineMode: string;
     shiftTabToCycle: string;
+    /** The help when Shift+Tab switches the assistant's collaboration modes (Codex: Plan ↔ Default) instead of cycling permissions; `modes` are the assistant's own names joined by «↔». */
+    shiftTabCollaboration: (params: { modes: string }) => string;
   };
   claudeChat: {
     cliOptionsUnsupported: string;
@@ -528,6 +533,136 @@ export interface Catalog {
     skillsNone: string;
     skillsHeader: string;
     skillLine: (params: { name: string; description: string }) => string;
+    /** Answer for a Codex command that only exists in Codex's own screen (keyboard, window, desktop, debug), e.g. `/theme`. */
+    screenOnly: (params: { name: string }) => string;
+    /** Said once when the remembered permission mode is no longer offered (e.g. Read Only on macOS) and `mode` was used instead. */
+    retiredModeReplaced: (params: { mode: string }) => string;
+    /** `/experimental`: the new state of the feature just switched. */
+    featureState: (params: { name: string; state: string }) => string;
+    stateOn: string;
+    stateOff: string;
+    /** `/memories`: what was saved, with Codex's own setting names. */
+    memoriesSaved: (params: { use: string; generate: string }) => string;
+    /** `/apps`: the browser could not be opened; the link is shown to open by hand. */
+    appOpenFailed: (params: { url: string }) => string;
+    /** `/review` → custom instructions: the box is prefilled with `/review ` and this says what to do. */
+    reviewCustomHint: string;
+  };
+  /**
+   * Codex's own words for the screens Shell reproduces (`/permissions`, Plan, `/review`, `/fork`, `/apps`,
+   * `/experimental`, `/memories`, `/export`, `/copy`, `/diff`), copied verbatim from Codex 0.159.0's terminal app
+   * (`codex-rs/tui/src`). They are the same in every language on purpose: inside Shell each assistant keeps its
+   * native experience, so these are never translated.
+   */
+  codexNative: {
+    permissionsTitle: string;
+    askForApproval: string;
+    askForApprovalDescription: string;
+    approveForMe: string;
+    approveForMeDescription: string;
+    fullAccess: string;
+    fullAccessDescription: string;
+    permissionsUpdated: (params: { label: string }) => string;
+    fullAccessTitle: string;
+    fullAccessBody: string;
+    fullAccessAccept: string;
+    fullAccessAcceptDescription: string;
+    fullAccessCancel: string;
+    fullAccessCancelDescription: string;
+    planModeIndicator: string;
+    collaborationDisabled: string;
+    collaborationDisabledHint: string;
+    planUnavailable: string;
+    planTitle: string;
+    planYes: string;
+    planYesDescription: string;
+    planClear: string;
+    planClearFresh: string;
+    planClearUsage: (params: { label: string }) => string;
+    planNo: string;
+    planNoDescription: string;
+    planDefaultUnavailable: string;
+    planNoApprovedPlan: string;
+    reviewTitle: string;
+    reviewBaseBranch: string;
+    reviewBaseBranchDescription: string;
+    reviewUncommitted: string;
+    reviewCommit: string;
+    reviewCustom: string;
+    reviewBranchTitle: string;
+    reviewCurrentBranch: (params: { branch: string }) => string;
+    reviewDetachedHead: string;
+    reviewCommitTitle: string;
+    reviewStarted: (params: { hint: string }) => string;
+    reviewFinished: string;
+    forkCreated: string;
+    forkNameFailed: (params: { error: string }) => string;
+    forkFailed: (params: { error: string }) => string;
+    appsTitle: string;
+    appsHint: string;
+    appsInstalledCount: (params: { installed: number; total: number }) => string;
+    appInstalled: string;
+    appInstalledDisabled: string;
+    appCanInstall: string;
+    appManage: string;
+    appInstall: string;
+    appLinkUnavailable: (params: { status: string }) => string;
+    appsNone: string;
+    experimentalTitle: string;
+    experimentalHelp: string;
+    experimentalNone: string;
+    experimentalUnavailable: string;
+    experimentalOverridden: string;
+    experimentalSaveFailed: string;
+    memoriesTitle: string;
+    memoriesHelp: string;
+    useMemories: string;
+    useMemoriesDescription: string;
+    generateMemories: string;
+    generateMemoriesDescription: string;
+    resetMemories: string;
+    resetMemoriesDescription: string;
+    resetTitle: string;
+    resetHelp: string;
+    resetConfirmDescription: string;
+    resetBack: string;
+    resetBackDescription: string;
+    resetDone: string;
+    resetFailed: (params: { error: string }) => string;
+    memoriesSaveFailed: (params: { error: string }) => string;
+    memoriesOverridden: (params: { message: string }) => string;
+    memoryModeFailed: (params: { error: string }) => string;
+    enableMemoriesTitle: string;
+    enableMemoriesSubtitle: string;
+    enableYes: string;
+    enableYesDescription: string;
+    enableNo: string;
+    enableNoDescription: string;
+    memoriesEnabled: string;
+    memoriesEnableOverridden: (params: { message: string }) => string;
+    memoriesEnableFailed: (params: { error: string }) => string;
+    overriddenFallback: string;
+    exportTitle: string;
+    exportHelp: string;
+    exportCopy: string;
+    exportCopyDescription: string;
+    exportSave: string;
+    exportSaveDescription: string;
+    exportSaved: (params: { path: string }) => string;
+    exportFailed: (params: { error: string }) => string;
+    exportNoConversation: string;
+    copyTitle: string;
+    copyWhole: string;
+    copyCode: (params: { language: string }) => string;
+    copyCodeBlock: string;
+    copyQuote: string;
+    copyConversation: string;
+    copied: (params: { label: string }) => string;
+    copyFailed: (params: { error: string }) => string;
+    copyNoResponse: string;
+    diffNoChanges: string;
+    diffNotRepo: string;
+    diffFailed: (params: { error: string }) => string;
   };
   codexChat: {
     compacted: string;

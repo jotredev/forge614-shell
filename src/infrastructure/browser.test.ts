@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { openLoginBrowser } from "./browser.ts";
+import { openLink, openLoginBrowser } from "./browser.ts";
 
 test("browser launch passes the OAuth URL as one argument without shell interpolation", async () => {
   const url = "https://auth.openai.com/oauth/authorize?state=a&code_challenge=b";
@@ -32,4 +32,16 @@ test("Google login is allowed only on its official OAuth endpoint", async () => 
     expect(await openLoginBrowser(invalid, "darwin", run)).toBe(false);
   }
   expect(calls).toEqual([[url]]);
+});
+
+/** `/apps` opens an app's page like Codex does: any https page, passed as one argument; anything else (other schemes, embedded credentials, odd ports) is refused and nothing runs. */
+test("openLink() opens only plain https pages, as a single argument", async () => {
+  const calls: unknown[] = [];
+  const run = async (command: string, args: string[]) => { calls.push([command, args]); };
+  const url = "https://chatgpt.com/apps/github/gh?ref=a&x=b";
+  expect(await openLink(url, "darwin", run)).toBe(true);
+  for (const invalid of ["http://chatgpt.com/apps/github/gh", "file:///etc/passwd", "https://user@chatgpt.com/apps", "https://chatgpt.com:444/apps", "not a url"]) {
+    expect(await openLink(invalid, "darwin", run)).toBe(false);
+  }
+  expect(calls).toEqual([["/usr/bin/open", [url]]]);
 });
