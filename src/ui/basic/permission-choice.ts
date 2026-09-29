@@ -7,7 +7,7 @@ import type { ForgeComposer } from "./composer.ts";
  * The permission question of both assistants: two rows with words — «Sí» and «No» (or «Yes» and «No») — the approving
  * one first and marked, so Enter alone approves; the arrow (or the row's first letter) picks «No», and so does Esc. No
  * numbers, no slash commands, and one footer that says how to cancel the turn. Resolves `true` only for «Sí»; every
- * other way out (Esc, a typed `/no`, the turn being cancelled) is `false`. Typed `/yes` and `/no` still answer through
+ * other way out (Esc, a typed `/f614:no`, the turn being cancelled) is `false`. Typed `/f614:yes` and `/f614:no` still answer through
  * the chat's own command handling, which is not part of this selector.
  */
 export async function askPermission(input: ForgeComposer, locale: Locale): Promise<boolean> {

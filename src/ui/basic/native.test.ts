@@ -57,7 +57,7 @@ test("model picker applies arrow selection, cancels unchanged and never sends a 
     enter("/model"); await tick(); terminal.input("\x1b[A"); terminal.input("\x1b"); await tick();
     expect(session.visual().model).toBe("beta");
     expect(rpc.calls.some(call => call.method === "turn/start")).toBe(false);
-  } finally { enter("/quit!"); await ui; }
+  } finally { enter("/f614:quit"); await ui; }
 });
 
 /** Idea 26: `/permissions` offers only a mode Codex itself allows (here a single restriction, in the protocol's own values), with the name Codex's macOS menu uses. */
@@ -74,7 +74,7 @@ test("/permissions offers only the modes Codex allows, with the names Codex uses
     expect(text).toContain("1. Ask for approval");
     expect(text).not.toContain("Full Access");
     expect(text).not.toContain("Read Only");
-  } finally { terminal.input("\x1b"); terminal.input("/quit!"); terminal.input("\r"); await ui; }
+  } finally { terminal.input("\x1b"); terminal.input("/f614:quit"); terminal.input("\r"); await ui; }
 });
 
 /**
@@ -136,7 +136,7 @@ test("Shift+Tab during a Codex turn switches to Plan and says it applies from th
     expect(plain()).not.toContain("Finish or /stop");
     rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
     await tick();
-  } finally { enter("/quit!"); await ui; }
+  } finally { enter("/f614:quit"); await ui; }
 });
 
 /** Idea 1: with a permission question still open, Shift+Tab is not swallowed by it. */
@@ -148,10 +148,10 @@ test("Shift+Tab works while a Codex permission question is pending", async () =>
     await tick();
     terminal.input("\x1b[Z"); await tick();
     expect(session().collaborationMode()).toBe("plan");
-    enter("/no"); expect(await answer).toEqual({ decision: "decline" });
+    enter("/f614:no"); expect(await answer).toEqual({ decision: "decline" });
     rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
     await tick();
-  } finally { enter("/quit!"); await ui; }
+  } finally { enter("/f614:quit"); await ui; }
 });
 
 /** Idea 23: `/compact` reaches Codex's own compaction and the person is told when it is done. */
@@ -167,7 +167,7 @@ test("/compact with Codex calls thread/compact/start and reports the result", as
     await tick();
     expect(plain()).toContain(getCatalog("en").codexChat.compacted);
     expect(plain()).not.toContain("Unknown command");
-  } finally { enter("/quit!"); await ui; }
+  } finally { enter("/f614:quit"); await ui; }
 });
 
 /** Idea 23: a native command Shell cannot pass to Codex gets an honest one-line answer instead of «Unknown command». */
@@ -184,7 +184,7 @@ test("a command Shell cannot pass to Codex says so honestly, in English and in S
       const text = stripVTControlCharacters(terminal.output);
       expect(text).toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/recap" }));
       expect(text).not.toContain(getCatalog(locale).chat.unknownCommand({ name: "/recap" }));
-    } finally { terminal.input("/quit!"); terminal.input("\r"); await ui; }
+    } finally { terminal.input("/f614:quit"); terminal.input("\r"); await ui; }
   }
 });
 
@@ -198,7 +198,7 @@ test("the Codex permission and collaboration mode, including full access, are sa
     expect(savedPreferences().codex.mode).toBe("never:danger-full-access");
     terminal.input("\x1b[Z"); await tick();
     expect(savedPreferences().codex).toEqual({ mode: "never:danger-full-access", collaborationMode: "plan" });
-  } finally { enter("/quit!"); await ui; }
+  } finally { enter("/f614:quit"); await ui; }
 });
 
 /** Idea 7: opening Shell again puts the saved mode back without asking, even the full-access one. */
@@ -209,7 +209,7 @@ test("Codex reopens in the saved work mode without asking", async () => {
   try {
     await tick();
     expect(session().workMode()).toBe("never:danger-full-access");
-  } finally { enter("/quit!"); await ui; }
+  } finally { enter("/f614:quit"); await ui; }
 });
 
 /** Idea 7: a saved mode Codex no longer has (it changed version) comes back as «Ask for approval», with no error on screen. */
@@ -222,7 +222,7 @@ test("a saved Codex mode that no longer exists comes back as Ask for approval wi
     expect(session().workMode()).toBe("on-request:workspace-write");
     expect(plain()).not.toContain("Error");
     expect(plain()).not.toContain("Choose a mode");
-  } finally { enter("/quit!"); await ui; }
+  } finally { enter("/f614:quit"); await ui; }
 });
 
 test("local logout waits for consent and never calls native account logout", async () => {
@@ -238,16 +238,16 @@ test("local logout waits for consent and never calls native account logout", asy
     expect(terminal.output).toContain("SESSION");
     expect(terminal.output).toContain("F614");
     expect(terminal.output).toContain("╭─");
-    expect(terminal.output).toContain("Connect with /login");
+    expect(terminal.output).toContain("Connect with /f614:login");
     expect(terminal.output).not.toContain("Ask anything, or / for commands…");
     expect(terminal.output).toContain("only in this Forge614-Shell session");
     expect(rpc.calls.some(c => c.method === "account/logout")).toBe(false);
     enter("/f614:stop"); await tick();
     expect(rpc.calls.some(c => c.method === "account/logout")).toBe(false);
-    enter("/logout"); await tick(); enter("/yes"); await tick();
+    enter("/logout"); await tick(); enter("/f614:yes"); await tick();
     expect(rpc.calls.filter(c => c.method === "account/logout")).toHaveLength(0);
     expect(terminal.output).toContain("Disconnected locally");
-  } finally { enter("/quit!"); await ui; }
+  } finally { enter("/f614:quit"); await ui; }
 });
 
 test("native UI reports backgroundActivitySupported as true and shows idle text when the session implements backgroundActivity()", async () => {
@@ -269,7 +269,7 @@ test("native UI reports backgroundActivitySupported as true and shows idle text 
     // The sidebar rail is narrower than the full idle sentence, so it truncates mid-word with "…" —
     // assert a safe leading fragment (still sourced from the real catalog string) instead.
     expect(terminal.output).toContain(getCatalog("en").backgroundActivity.idle.slice(0, 16));
-  } finally { terminal.input("/quit!"); terminal.input("\r"); await ui; }
+  } finally { terminal.input("/f614:quit"); terminal.input("\r"); await ui; }
 });
 
 test("native UI reports backgroundActivitySupported as false when the session has no backgroundActivity()", async () => {
@@ -287,7 +287,7 @@ test("native UI reports backgroundActivitySupported as false when the session ha
     await tick();
     // Same truncation caveat as the idle-text test above — assert a safe leading fragment.
     expect(terminal.output).toContain(getCatalog("en").backgroundActivity.notReportedByEngine.slice(0, 20));
-  } finally { terminal.input("/quit!"); terminal.input("\r"); await ui; }
+  } finally { terminal.input("/f614:quit"); terminal.input("\r"); await ui; }
 });
 
 test("native chat waits for input and warns instead of quitting an active turn", async () => {
@@ -305,10 +305,10 @@ test("native chat waits for input and warns instead of quitting an active turn",
   await tick(); expect(received).toBe("");
   terminal.input("hello"); terminal.input("\r"); await tick(); expect(received).toBe("hello");
   const permission = approve("Write a file", new AbortController().signal);
-  terminal.input("/no"); terminal.input("\r"); expect(await permission).toBe(false);
+  terminal.input("/f614:no"); terminal.input("\r"); expect(await permission).toBe(false);
   terminal.input("/quit"); terminal.input("\r"); await tick();
   expect(closed).toBe(false); expect(terminal.output).toContain("Nothing was stopped");
-  terminal.input("/quit!"); terminal.input("\r"); await ui;
+  terminal.input("/f614:quit"); terminal.input("\r"); await ui;
   expect(closed).toBe(true); expect(terminal.stopped).toBe(true);
 });
 
@@ -334,7 +334,7 @@ test("the working indicator names the running command for a native session, and 
     terminal.output = ""; activity = undefined;
     await new Promise(resolve => setTimeout(resolve, 600));
     expect(stripVTControlCharacters(terminal.output)).toMatch(/Working · \d+s/);
-  } finally { terminal.input("/quit!"); terminal.input("\r"); await ui; }
+  } finally { terminal.input("/f614:quit"); terminal.input("\r"); await ui; }
 });
 
 /** Doble de sesión con tres conversaciones del mismo título (como «Color favorito» ×3), entregadas de la más vieja a la más nueva a propósito, para comprobar que el selector las reordena y que se distinguen. Sin cuenta ni disco reales. */
@@ -370,7 +370,7 @@ test("/resume opens a selector with the newest first and Enter resumes the highl
     expect(resumed).toEqual([]);
     terminal.input("\r"); await tick();
     expect(resumed).toEqual(["thread-new"]);
-  } finally { enter("/quit!"); await ui; }
+  } finally { enter("/f614:quit"); await ui; }
 });
 
 /** Mejora 8: escribir filtra (sin mayúsculas ni acentos, también por primer mensaje) y Esc cancela sin retomar nada ni cambiar la conversación. */
@@ -386,7 +386,7 @@ test("/resume filters by what is typed and Esc cancels without resuming anything
     enter("/resume"); await tick(); terminal.input("\x1b"); await tick();
     expect(resumed).toEqual(["thread-mid"]);
     expect(stripVTControlCharacters(terminal.output).split("History restored")).toHaveLength(2);
-  } finally { enter("/quit!"); await ui; }
+  } finally { enter("/f614:quit"); await ui; }
 });
 
 /** Mejora 8, punto 3: quien ya usaba `/resume <número>` (sobre el orden que ve en pantalla) o `/resume <id>` sigue igual; y sin sesiones sale el mensaje de siempre. */
@@ -400,13 +400,13 @@ test("/resume <number> and /resume <id> keep working and an empty list keeps its
     expect(resumed).toEqual(["thread-mid"]);
     enter("/resume some-native-id"); await tick();
     expect(resumed).toEqual(["thread-mid", "some-native-id"]);
-  } finally { enter("/quit!"); await ui; }
+  } finally { enter("/f614:quit"); await ui; }
   const emptyTerminal = new TestTerminal();
   const emptyUi = runNativeUI("codex", "/project", () => ({ ...sessionWithThreeSameTitle([]), async listSessions() { return []; } }), emptyTerminal);
   try {
     await tick(); emptyTerminal.input("/resume"); emptyTerminal.input("\r"); await tick();
     expect(stripVTControlCharacters(emptyTerminal.output)).toContain(getCatalog("en").chat.noSessionsFound);
-  } finally { emptyTerminal.input("/quit!"); emptyTerminal.input("\r"); await emptyUi; }
+  } finally { emptyTerminal.input("/f614:quit"); emptyTerminal.input("\r"); await emptyUi; }
 });
 
 /**
@@ -462,7 +462,7 @@ test("each Codex command of this part sends the protocol's method and parameters
       expect(h.plain(), item.line).toContain(item.shows(getCatalog("en").codexCommands));
       expect(h.plain(), item.line).not.toContain("Unknown command");
       expect(h.plain(), item.line).not.toContain(getCatalog("en").codexChat.commandNotAllowed({ name: item.line.split(" ")[0]! }));
-    } finally { h.enter("/quit!"); await h.ui; }
+    } finally { h.enter("/f614:quit"); await h.ui; }
   }
 });
 
@@ -474,7 +474,7 @@ test("/pwd and /cwd show the working folder without calling Codex", async () => 
     h.enter("/pwd"); await tick(); h.enter("/cwd"); await tick();
     expect(h.plain().split(getCatalog("en").codexCommands.pwd({ path: "/project" }))).toHaveLength(3);
     expect(h.rpc.calls.length).toBe(before);
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** `/rename` with no name says how to use it and calls nothing; with no conversation open there is nothing to rename and the person is told. */
@@ -485,13 +485,13 @@ test("/rename without a name shows its usage and without a conversation says the
     h.enter("/rename"); await tick();
     expect(h.plain()).toContain(getCatalog("en").codexCommands.renameUsage);
     expect(h.rpc.calls.some(call => call.method === "thread/name/set")).toBe(false);
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
   const empty = codexUi("en", rpc => rpc.replies.set("thread/name/set", {}));
   try {
     await tick(); empty.enter("/rename Something"); await tick();
     expect(empty.plain()).toContain(describeError(new ShellError("codex-command-needs-conversation"), "en"));
     expect(empty.rpc.calls.some(call => call.method === "thread/name/set")).toBe(false);
-  } finally { empty.enter("/quit!"); await empty.ui; }
+  } finally { empty.enter("/f614:quit"); await empty.ui; }
 });
 
 /** `/delete` is forever, so it asks first: the first choice is «No», Enter on it (or Esc) calls nothing, and only «Yes» calls `thread/delete` (`v2/ThreadDeleteParams.ts`). */
@@ -510,7 +510,7 @@ test("/delete asks first and calls thread/delete only when the person says Yes",
       const calls = h.rpc.calls.filter(call => call.method === "thread/delete");
       if (deleted) { expect(calls).toEqual([{ method: "thread/delete", params: { threadId: "t" } }]); expect(h.plain()).toContain(c.deleted); }
       else { expect(calls).toHaveLength(0); expect(h.plain()).toContain(c.deleteKept); }
-    } finally { h.enter("/quit!"); await h.ui; }
+    } finally { h.enter("/f614:quit"); await h.ui; }
   }
 });
 
@@ -532,7 +532,7 @@ test("/stop with Codex stops background terminals and leaves the turn alone; /f6
     expect(h.plain()).toContain(getCatalog("en").codexChat.cancellationRequested.slice(0, 22)); // the message wraps on screen; its start is enough
     h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "interrupted" } });
     await tick();
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** While Codex works, the commands Codex allows then (`/rename`) run, and the ones it does not (`/clear`) wait instead of starting a second thread. */
@@ -547,7 +547,7 @@ test("during a turn /rename runs and /clear waits, as Codex's available_during_t
     expect(h.plain()).toContain(getCatalog("en").codexChat.waitForEngine.slice(0, 20)); // the message wraps on screen; its start is enough
     h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
     await tick();
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** The menu offers Codex's commands with Codex's own descriptions (Shell's own ones sit under FORGE614, `/f614:stop` among them), and hides what Codex's macOS menu hides. */
@@ -580,7 +580,7 @@ test("an official but unconnected command is answered honestly and a made-up one
       h.enter("/nope"); await tick();
       expect(h.plain()).toContain(getCatalog(locale).chat.unknownCommand({ name: "/nope" }));
       expect(h.plain()).not.toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/nope" }));
-    } finally { h.enter("/quit!"); await h.ui; }
+    } finally { h.enter("/f614:quit"); await h.ui; }
   }
 });
 
@@ -593,7 +593,7 @@ test("Codex command results are shown in Spanish when Shell's language is Spanis
     expect(h.plain()).toContain(getCatalog("es").codexCommands.pwd({ path: "/project" }));
     expect(h.plain()).toContain(getCatalog("es").codexCommands.psNone);
     expect(getCatalog("es").codexCommands.psNone).not.toBe(getCatalog("en").codexCommands.psNone);
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /**
@@ -620,7 +620,7 @@ for (const key of ["\r", "\t"]) {
       ]);
       h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
       await tick();
-    } finally { h.enter("/quit!"); await h.ui; }
+    } finally { h.enter("/f614:quit"); await h.ui; }
   });
 }
 
@@ -633,7 +633,7 @@ test("the $ list reads «HABILIDADES DE CODEX» and «Habilidades · 1–1 de 1�
     expect(h.plain()).toContain("Habilidades · 1–1 de 1");
     expect(h.plain()).not.toContain("Comandos · 1");
     h.terminal.input("\x1b"); for (let i = 0; i < 4; i++) h.terminal.input("\x7f"); await tick();
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /**
@@ -658,7 +658,7 @@ test("/compact shows «Compacting context · Making room to continue · Ns» at 
     const after = stripVTControlCharacters(h.terminal.output.slice(finished));
     expect(after).toContain("Conversation compacted.");
     expect(after).toContain(getCatalog("en").chat.statusReady);
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** The same in Spanish, in the words of Shell's catalog (only command and mode names stay as in Codex). */
@@ -672,7 +672,7 @@ test("/compact says «Compactando el contexto · Haciendo espacio para continuar
     h.rpc.onNotification("turn/started", { threadId: "t", turn: { id: "c1" } });
     h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "c1", status: "completed" } });
     await tick(); await tick();
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /**
@@ -692,7 +692,7 @@ test("/f614:stop when Codex says there is no active turn frees the box and says 
     expect(shown).toContain("Codex dice que no había ningún turno en marcha");
     expect(shown).not.toContain(getCatalog("es").codexChat.cancellationRequested.slice(0, 22));
     expect(shown).toContain(getCatalog("es").chat.statusReady);
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /**
@@ -718,7 +718,7 @@ test("/resume draws each old message with the time of its turn and no time when 
     expect(shown).toContain("Here is the plan");
     expect(shown).toContain(roles.assistant);
     expect(shown).not.toContain(`${roles.assistant} · `);
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /**
@@ -748,7 +748,7 @@ test("/permissions shows exactly Codex's macOS names, never Read Only, and appli
     expect(h.session().workMode()).toBe("on-request:workspace-write:auto_review");
     expect(h.plain()).toContain("Permissions updated to Approve for me");
     expect(savedPreferences().codex.mode).toBe("on-request:workspace-write:auto_review");
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** Full Access asks first with Codex's own confirmation (`open_full_access_confirmation`); «Cancel» goes back to the menu and changes nothing. */
@@ -765,7 +765,7 @@ test("Full Access asks with Codex's confirmation and Cancel changes nothing", as
     expect(h.session().workMode()).toBeUndefined();
     expect(stripVTControlCharacters(h.terminal.output.slice(beforeCancel))).toContain("Update Model Permissions");
     h.terminal.input("\x1b"); await tick();
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** A remembered Read Only (gone from Codex's macOS menu) comes back as «Ask for approval» with one notice; the next opening says nothing, because the replacement was saved. */
@@ -779,13 +779,13 @@ test("a remembered Read Only is restored as Ask for approval and the notice is s
     expect(first.session().workMode()).toBe("on-request:workspace-write");
     expect(first.plain()).toContain(notice);
     expect(savedPreferences().codex.mode).toBe("on-request:workspace-write");
-  } finally { first.enter("/quit!"); await first.ui; }
+  } finally { first.enter("/f614:quit"); await first.ui; }
   const second = codexUi();
   try {
     await tick();
     expect(second.session().workMode()).toBe("on-request:workspace-write");
     expect(second.plain()).not.toContain(notice);
-  } finally { second.enter("/quit!"); await second.ui; }
+  } finally { second.enter("/f614:quit"); await second.ui; }
 });
 
 /**
@@ -810,7 +810,7 @@ test("Shift+Tab with Codex switches Plan and Default, keeps the permission, and 
     h.terminal.input("\x1b[Z"); await tick();
     expect(h.session().collaborationMode()).toBe("default");
     expect(h.session().workMode()).toBe("never:danger-full-access");
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** Shell remembers the collaboration mode too and puts it back on opening, without asking. */
@@ -821,7 +821,7 @@ test("Codex reopens in the saved collaboration mode", async () => {
   try {
     await tick();
     expect(h.session().collaborationMode()).toBe("plan");
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** `/model` and `/resume` are `available_during_task` in Codex: they run while it works instead of asking to wait. */
@@ -841,7 +841,7 @@ test("/model and /resume run during a Codex turn", async () => {
     expect(h.plain()).not.toContain(getCatalog("en").codexChat.waitForEngine.slice(0, 20));
     h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
     await tick();
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** A command that only exists in Codex's own screen gets its own answer; one from part 3 keeps the honest «not from Shell yet». Both languages. */
@@ -855,7 +855,7 @@ test("screen-only Codex commands and part-3 commands answer with their own messa
       expect(h.plain()).toContain(getCatalog(locale).codexCommands.screenOnly({ name: "/rollout" }));
       expect(h.plain()).toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/approve" }));
       expect(h.plain()).not.toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/theme" }));
-    } finally { h.enter("/quit!"); await h.ui; }
+    } finally { h.enter("/f614:quit"); await h.ui; }
   }
   expect(getCatalog("en").codexCommands.screenOnly({ name: "/theme" })).toBe("/theme only exists in Codex's own screen.");
   expect(getCatalog("es").codexCommands.screenOnly({ name: "/theme" })).toBe("/theme solo existe en la pantalla de Codex.");
@@ -874,7 +874,7 @@ test("/init sends Codex's init prompt verbatim as a normal turn", async () => {
     expect(CODEX_INIT_PROMPT.split("\n")).toHaveLength(42);
     h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
     await tick();
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** `/diff` shows the local git diff with untracked files (`get_git_diff.rs`), and Codex's words when there is no repository or no change. */
@@ -891,7 +891,7 @@ test("/diff shows the local diff, and Codex's messages outside a repository or w
       await tick(); h.enter("/diff"); await tick();
       expect(h.plain()).toContain(expected);
       expect(h.rpc.calls.some(call => call.method === "command/exec")).toBe(false);
-    } finally { h.enter("/quit!"); await h.ui; }
+    } finally { h.enter("/f614:quit"); await h.ui; }
   }
 });
 
@@ -911,7 +911,7 @@ test("/apps lists the apps with Codex's words and Enter opens the app page", asy
     h.terminal.input("\r"); await tick();
     expect(h.local.opened).toEqual(["https://chatgpt.com/apps/github/gh"]);
     expect(h.plain()).toContain("Manage this app in your browser.");
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** `/experimental` lists only Codex's beta features; Enter switches the chosen one, saves it with `config/batchWrite` and shows its new state. */
@@ -933,7 +933,7 @@ test("/experimental switches the chosen beta feature and shows its new state", a
     h.terminal.input("\r"); await tick(); await tick();
     expect(h.rpc.calls.filter(call => call.method === "config/batchWrite").map(call => call.params)).toEqual([{ edits: [{ keyPath: "features.\"fast_mode\"", value: true, mergeStrategy: "replace" }], reloadUserConfig: true }]);
     expect(h.plain()).toContain(getCatalog("en").codexCommands.featureState({ name: "Fast mode", state: getCatalog("en").codexCommands.stateOn }));
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** «Reset all memories» deletes for good, so it asks with «Go back» first: saying no calls nothing; only the explicit choice calls `memory/reset`. */
@@ -960,7 +960,7 @@ test("/memories reset asks first, calls nothing on No and memory/reset only on Y
     h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
     expect(h.rpc.calls.filter(call => call.method === "memory/reset")).toEqual([{ method: "memory/reset", params: {} }]);
     expect(h.plain()).toContain("Reset local memories.");
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** With memories off, Codex asks «Enable memories?» with «Yes, enable» first (`open_feature_enable_prompt`) and saves the feature for new threads. */
@@ -978,7 +978,7 @@ test("/memories with the feature off offers to enable it, Yes first", async () =
     h.terminal.input("\r"); await tick();
     expect(h.rpc.calls.find(call => call.method === "config/batchWrite")?.params.edits.map((edit: any) => edit.keyPath)).toEqual(["features.memories", "features.memory_tool"]);
     expect(h.plain()).toContain("Memories setting saved on the server for new threads.");
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** `/review` offers Codex's four presets in its order (`review_popups.rs`); each target reaches `review/start`, and `/review text` goes straight in as custom instructions. */
@@ -1001,7 +1001,7 @@ test("/review sends each preset's target, and /review with text sends custom ins
       expect(h.rpc.calls.filter(call => call.method === "review/start").map(call => call.params)).toEqual([{ threadId: "t", target, delivery: "inline" }]);
       h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "r", status: "completed" } });
       await tick();
-    } finally { h.enter("/quit!"); await h.ui; }
+    } finally { h.enter("/f614:quit"); await h.ui; }
   }
   const h = codexUi("en", rpc => rpc.replies.set("review/start", { turn: { id: "r", status: "inProgress" }, reviewThreadId: "t" }));
   try {
@@ -1010,7 +1010,7 @@ test("/review sends each preset's target, and /review with text sends custom ins
     expect(h.rpc.calls.filter(call => call.method === "review/start").map(call => call.params)).toEqual([{ threadId: "t", target: { type: "custom", instructions: "focus on security" }, delivery: "inline" }]);
     h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "r", status: "completed" } });
     await tick();
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** `/fork name` copies the conversation (`thread/fork`), names the copy and continues there, with Codex's message. */
@@ -1026,7 +1026,7 @@ test("/fork with a name forks, names the copy and says so", async () => {
     expect(h.rpc.calls.find(call => call.method === "thread/name/set")?.params).toEqual({ threadId: "f", name: "Other idea" });
     expect(h.session().sessionId).toBe("f");
     expect(h.plain()).toContain("Fork created. You can continue here.");
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /**
@@ -1056,7 +1056,7 @@ test("/plan switches to Plan, /plan text sends it in Plan, and a finished plan o
     expect(next.params.collaborationMode.mode).toBe("default");
     h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
     await tick();
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** `/export` reads the whole thread and, like Codex, copies the Markdown or saves it as `codex-session-<id>.md` in the folder. */
@@ -1075,7 +1075,7 @@ test("/export copies the Markdown or saves it as codex-session-<id>.md", async (
     h.enter("/export"); await tick(); h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
     expect(h.local.saved).toEqual([["/project/codex-session-t.md", markdown]]);
     expect(h.plain()).toContain("Saved conversation to /project/codex-session-t.md");
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** `/copy` offers the whole last answer and each code block or quote in it (`chatwidget/copy_picker.rs`), and copies the one chosen. */
@@ -1093,7 +1093,7 @@ test("/copy offers the whole answer and its code blocks and copies the chosen on
     h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
     expect(h.local.copied).toEqual(["let answer = 42;\n"]);
     expect(h.plain()).toContain("Copied rust code to clipboard");
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
 /** `/mention` puts «@» in the box; typing searches with `fuzzyFileSearch`; the chosen path replaces the token as plain text and travels in `turn/start` as Codex sends it (`chat_composer.rs` `insert_selected_path`). */
@@ -1111,15 +1111,18 @@ test("/mention inserts @, searches files and the chosen path travels as text", a
     expect(h.rpc.calls.find(call => call.method === "turn/start")?.params.input.at(-1)).toEqual({ type: "text", text: "src/session.ts explain" });
     h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
     await tick();
-  } finally { h.enter("/quit!"); await h.ui; }
+  } finally { h.enter("/f614:quit"); await h.ui; }
 });
+/** The start of «Unknown command: <name>.» without the hint that follows (it wraps on screen, and the hint has its own exact-value check). */
+const unknownStart = (locale: "en" | "es", name: string) => getCatalog(locale).chat.unknownCommand({ name }).replace(/ (Use|Usa) .*$/, "");
 
 /**
- * In Codex `/exit` and `/quit` are the same command («exit Codex»), so with Codex `/exit` closes Shell exactly like `/quit`:
- * the same refusal while work is in progress and the same `/exit!` (like `/quit!`) to stop and leave. It exists because `/exit`
- * used to answer «Codex doesn't allow /exit from Shell yet».
+ * In Codex `/exit` and `/quit` are the same command («exit Codex»), so with Codex both close Shell the same way: they refuse
+ * while work is in progress and leave when idle. Leaving at once, stopping what runs, is Shell's own `/f614:quit`; the old
+ * `/quit!` and `/exit!` no longer exist. It exists because 1.12.0 moved the forced exit out of the unprefixed names and Codex's
+ * own `/quit` and `/exit` must keep working exactly as in Codex's terminal.
  */
-test("/exit with Codex behaves like /quit and /exit! like /quit!", async () => {
+test("/exit and /quit with Codex refuse while work runs and leave when idle; /f614:quit leaves at once; /quit! and /exit! are unknown", async () => {
   const terminal = new TestTerminal(); let closed = false; let finishTurn: (() => void) | undefined;
   const session = {
     busy: false, models: [],
@@ -1131,18 +1134,125 @@ test("/exit with Codex behaves like /quit and /exit! like /quit!", async () => {
   };
   const ui = runNativeUI("codex", "/project", () => session, terminal);
   await tick();
+  // The old forced exits are unknown commands (checked idle: while Codex works, any name that is not Codex's asks to wait first).
+  for (const name of ["/exit!", "/quit!"]) {
+    terminal.output = ""; terminal.input(name); terminal.input("\r"); await tick();
+    expect(closed, name).toBe(false);
+    expect(stripVTControlCharacters(terminal.output), name).toContain(unknownStart("en", name));
+  }
   terminal.input("hello"); terminal.input("\r"); await tick();
-  terminal.input("/exit"); terminal.input("\r"); await tick();
-  expect(closed).toBe(false); expect(terminal.output).toContain("Nothing was stopped");
-  expect(terminal.output).not.toContain(getCatalog("en").codexChat.commandNotAllowed({ name: "/exit" }));
-  terminal.input("/exit!"); terminal.input("\r"); await ui;
+  const refusal = getCatalog("en").codexChat.workOrLoginActive;
+  for (const name of ["/exit", "/quit"]) {
+    terminal.output = ""; terminal.input(name); terminal.input("\r"); await tick();
+    expect(closed, name).toBe(false);
+    expect(stripVTControlCharacters(terminal.output), name).toContain("Nothing was stopped");
+    expect(stripVTControlCharacters(terminal.output), name).not.toContain(getCatalog("en").codexChat.commandNotAllowed({ name }));
+  }
+  // The refusal names the command that leaves anyway, with its prefix.
+  expect(refusal).toBe("Work or login is active. Use /f614:quit to stop it and exit. Nothing was stopped.");
+  terminal.input("\x03"); await tick();
+  expect(closed).toBe(false); // Ctrl+C is Codex's «exit» too: it refuses while work runs
+  terminal.input("/f614:quit"); terminal.input("\r"); await ui;
   expect(closed).toBe(true); expect(terminal.stopped).toBe(true);
-  // Idle: plain `/exit` leaves too.
-  const idleTerminal = new TestTerminal(); let idleClosed = false;
-  const idle = { ...session, busy: false, close() { idleClosed = true; } };
-  const idleUi = runNativeUI("codex", "/project", () => idle, idleTerminal);
-  await tick(); idleTerminal.input("/exit"); idleTerminal.input("\r"); await idleUi;
-  expect(idleClosed).toBe(true);
+  // Idle: plain `/exit`, plain `/quit`, Ctrl+D and `/f614:quit` all leave.
+  for (const keys of [["/exit", "\r"], ["/quit", "\r"], ["\x04"], ["/f614:quit", "\r"]]) {
+    const idleTerminal = new TestTerminal(); let idleClosed = false;
+    const idle = { ...session, busy: false, close() { idleClosed = true; } };
+    const idleUi = runNativeUI("codex", "/project", () => idle, idleTerminal);
+    await tick(); for (const key of keys) idleTerminal.input(key); await idleUi;
+    expect(idleClosed, keys.join("")).toBe(true);
+  }
+});
+
+/**
+ * Every Shell command with Codex answers to `/f614:<name>` and does what its unprefixed name did before 1.12.0: `/f614:login`
+ * connects the account (there is no `/login` in Codex), `/f614:refresh` asks Codex for the quotas again, `/f614:help` and
+ * `/f614:commands` open Shell's command menu, `/f614:yes` and `/f614:no` answer a pending permission.
+ */
+test("with Codex each Shell command answers to /f614:<name> and does what the old name did", async () => {
+  const h = codexUi("en", rpc => rpc.replies.set("account/rateLimits/read", { rateLimits: { primary: { usedPercent: 12, resetsAt: 1_800_000_000 } } }));
+  try {
+    await tick();
+    h.enter("/f614:login"); await tick(); await tick();
+    expect(h.plain()).toContain(getCatalog("en").codexSession.connectedExistingAccount.slice(0, 40));
+    const before = h.rpc.calls.filter(call => call.method === "account/rateLimits/read").length;
+    h.enter("/f614:refresh"); await tick(); await tick();
+    expect(h.rpc.calls.filter(call => call.method === "account/rateLimits/read")).toHaveLength(before + 1);
+    for (const name of ["/f614:help", "/f614:commands"]) {
+      h.terminal.output = ""; h.enter(name); await tick();
+      expect(h.plain(), name).toContain("Commands · 1–5 of");
+      h.terminal.input("\x1b"); await tick();
+    }
+    h.enter("work please"); await tick();
+    const allowed = h.rpc.onRequest("item/commandExecution/requestApproval", { threadId: "t", turnId: "u", itemId: "i", command: "touch x" });
+    await tick(); h.enter("/f614:yes");
+    expect(await allowed).toEqual({ decision: "accept" });
+    const denied = h.rpc.onRequest("item/commandExecution/requestApproval", { threadId: "t", turnId: "u", itemId: "j", command: "touch y" });
+    await tick(); h.enter("/f614:no");
+    expect(await denied).toEqual({ decision: "decline" });
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+    await tick();
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/**
+ * With Codex a slash command without prefix is Codex's or nothing: the names Shell used to answer (`/login`, `/refresh`,
+ * `/yes`, `/no`, `/commands`, `/help`, `/quit!`, `/exit!`, `/forge614-status`) and the ones Codex does not have (`/effort` and
+ * `/thinking`: the effort lives inside `/model`) are unknown commands, and none of them reaches Codex. It exists so that no
+ * silent alias survives the move to `/f614:`. `/f614:status` is Claude Code's own telemetry and does not exist with Codex,
+ * whose `/status` is already Codex's.
+ */
+test("with Codex the old unprefixed Shell names are unknown commands and call nothing", async () => {
+  for (const locale of ["en", "es"] as const) {
+    const h = codexUi(locale);
+    try {
+      await tick();
+      const calls = h.rpc.calls.length;
+      for (const name of ["/login", "/refresh", "/yes", "/no", "/commands", "/help", "/quit!", "/exit!", "/forge614-status", "/effort", "/thinking", "/f614:status"]) {
+        h.terminal.output = ""; h.enter(name); await tick();
+        expect(h.plain(), `${locale} ${name}`).toContain(unknownStart(locale, name));
+        expect(h.plain(), `${locale} ${name}`).not.toContain(getCatalog(locale).codexChat.commandNotAllowed({ name }));
+      }
+      expect(h.rpc.calls).toHaveLength(calls);
+    } finally { h.enter("/f614:quit"); await h.ui; }
+  }
+  expect(getCatalog("en").chat.unknownCommand({ name: "/help" })).toBe("Unknown command: /help. Use /f614:help.");
+  expect(getCatalog("es").chat.unknownCommand({ name: "/help" })).toBe("Comando desconocido: /help. Usa /f614:help.");
+});
+
+/** Codex's own commands keep working without a prefix, and `/status` is still Codex's (folder, work mode and conversation). */
+test("with Codex /status and /new stay Codex's own, without a prefix", async () => {
+  const h = codexUi();
+  try {
+    await withConversation(h);
+    h.terminal.output = ""; h.enter("/status"); await tick();
+    expect(h.plain()).toContain(getCatalog("en").codexSession.folderLine({ path: "/project" }));
+    h.enter("/new"); await tick();
+    expect(h.plain()).not.toContain(getCatalog("en").chat.unknownCommand({ name: "/new" }));
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/**
+ * The `/` menu with Codex: what Codex has goes under CODEX without any Shell name in it, and the FORGE614 group has only
+ * `/f614:` commands. Typing `/f614:` lists exactly those five; typing `/l` or `/re` does not offer the old `/login` or `/refresh`.
+ */
+test("the / menu with Codex lists only /f614: commands under FORGE614 and no old Shell name", async () => {
+  const h = codexUi();
+  try {
+    await tick();
+    h.terminal.output = ""; h.terminal.input("/f614:"); await tick();
+    for (const name of ["/f614:login", "/f614:refresh", "/f614:commands", "/f614:stop", "/f614:quit"]) expect(h.plain(), name).toContain(name);
+    expect(h.plain()).toContain("FORGE614 ");
+    expect(h.plain()).toContain(getCatalog("en").chat.commandConnectAccount);
+    expect(h.plain()).toContain("Refresh plan usage");
+  } finally { h.terminal.input("\x1b"); h.terminal.input("\x03"); await h.ui; } // Ctrl+C quits without typing into the box that still holds the text
+  for (const [typed, hidden] of [["/l", "/login"], ["/re", "/refresh"], ["/q", "/quit!"], ["/e", "/effort"], ["/h", "/help"], ["/c", "/commands"]] as const) {
+    const other = codexUi();
+    try {
+      await tick(); other.terminal.output = ""; other.terminal.input(typed); await tick();
+      expect(other.plain(), typed).not.toContain(hidden);
+    } finally { other.terminal.input("\x1b"); other.terminal.input("\x03"); await other.ui; }
+  }
 });
 
 /** A `commandExecution` item and its approval request, with the shape of the generated protocol (`v2/ThreadItem.ts`, `v2/CommandExecutionRequestApprovalParams.ts`). */
@@ -1181,7 +1291,7 @@ for (const locale of ["es", "en"] as const) {
       expect(await answer).toEqual({ decision: "accept" });
       rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
       await tick();
-    } finally { enter("/quit!"); await ui; }
+    } finally { enter("/f614:quit"); await ui; }
   });
 }
 
@@ -1198,6 +1308,6 @@ for (const [name, keys] of [["Esc", ["\x1b"]], ["the down arrow and Enter", ["\x
       expect(await answer).toEqual({ decision: "decline" });
       rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
       await tick();
-    } finally { enter("/quit!"); await ui; }
+    } finally { enter("/f614:quit"); await ui; }
   });
 }

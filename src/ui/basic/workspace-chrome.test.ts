@@ -7,6 +7,7 @@ import { renderLayoutFrame } from "../../../node_modules/@earendil-works/pi-tui/
 import { ChatText, accent, muted, warning } from "./theme.ts";
 import { workspaceLayout, IndependentScrollView, attachJumpToLatest } from "./workspace.ts";
 import { ShellSidebar } from "./sidebar.ts";
+import { ShellState } from "./shell-state.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Component, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
 
@@ -96,12 +97,29 @@ test("command menu describes commands and returns the keyboard selection", async
   const { input } = createComposer();
   const selection = input.chooseCommand();
   const menu = plain(input.render(90)).join("\n");
-  expect(menu).toContain("Select model");
-  expect(menu).toContain("/refresh");
-  expect(menu).toContain("Commands · 1–5 of");
+  expect(menu).toContain("Refresh plan usage (supported engines)");
+  expect(menu).toContain("/f614:stop");
+  expect(menu).toContain("Commands · 1–3 of 3");
   input.handleInput("\r");
-  expect(await selection).toBe("/model");
-  expect(plain(input.render(90)).join("\n")).toContain("/help or /commands");
+  expect(await selection).toBe("/f614:refresh");
+  expect(plain(input.render(90)).join("\n")).toContain("/f614:help or /f614:commands");
+});
+
+/**
+ * Before an assistant hands over its own list, the composer's menu is Shell's own group and nothing else: every command in it
+ * carries `/f614:`, with the names and labels 1.12.0 gives them. It exists because the default list used to mix the
+ * assistants' commands (`/model`, `/login`, `/status`…) under the FORGE614 title.
+ */
+test("the default command menu is only Shell's own /f614: commands", () => {
+  const { input } = createComposer();
+  void input.chooseCommand();
+  const menu = plain(input.render(100)).join("\n").split("╭")[0]!; // the rows above the input box, not the hint line inside it
+  expect(menu.match(/\/f614:[a-z]+/g)).toEqual(["/f614:refresh", "/f614:stop", "/f614:quit"]);
+  for (const old of ["/model", "/effort", "/resume", "/new", "/login", "/logout", "/status", "/help", "/commands", "/quit"]) expect(menu, old).not.toMatch(new RegExp(`${old}(?![\\w:])`));
+  input.cancelChoice();
+  const typed = createComposer().input;
+  for (const key of "/f614:") typed.handleInput(key);
+  expect(plain(typed.render(100)).join("\n").split("╭")[0]!.match(/\/f614:[a-z]+/g)).toEqual(["/f614:refresh", "/f614:stop", "/f614:help", "/f614:commands", "/f614:quit"]);
 });
 
 test("command menu visibly groups provider commands before Forge614 controls", () => {
@@ -142,10 +160,10 @@ test("slash suggestions filter, navigate and submit a command without a model me
   const { input } = createComposer();
   let submitted = "";
   input.onSubmit = value => { submitted = value; };
-  input.handleInput("/"); input.handleInput("m");
-  expect(plain(input.render(72)).join("\n")).toContain("Select model");
+  for (const key of "/f614:s") input.handleInput(key);
+  expect(plain(input.render(72)).join("\n")).toContain("Cancel current operation; keep Shell open");
   input.handleInput("\r");
-  expect(submitted).toBe("/model");
+  expect(submitted).toBe("/f614:stop");
 });
 
 test("choice picker numbers rows and marks the active value with a checkmark, even after the cursor moves away", async () => {
@@ -201,7 +219,7 @@ test("Forge composer is a framed writing surface instead of a highlighted placeh
   expect(lines[1]).toContain("  ● Ready  ");
   expect(lines[2]!.replaceAll("│", "").trim()).toBe("");
   expect(lines[4]!.replaceAll("│", "").trim()).toBe("");
-  expect(lines[5]).toContain("/help or /commands");
+  expect(lines[5]).toContain("/f614:help or /f614:commands");
   expect(lines[6]).toContain("╰");
   expect(lines.join("\n")).not.toContain("Ask anything");
 });
@@ -378,4 +396,19 @@ test("status bar still tells the person when the account is disconnected", () =>
   const bar = new ShellStatusBar(() => ({ account: "disconnected", provider: "Claude Code" }));
   expect(plain(bar.render(80))[0]).toContain("Disconnected");
   expect(plain(bar.render(80))[0]).toContain("/login");
+});
+
+/**
+ * The command that reconnects depends on the assistant: Claude Code's own `/login`, and with Codex (which has no `/login`)
+ * Shell's `/f614:login`. The screen hands its command to the state, and the status bar and the sidebar both name that one.
+ */
+test("status bar and sidebar name the login command the assistant's screen gave them", () => {
+  const codex = new ShellState("Codex", "/f614:login");
+  expect(plain(new ShellStatusBar(() => codex.snapshot()).render(80))[0]).toContain("/f614:login");
+  expect(stripVTControlCharacters(new ShellSidebar(() => codex.snapshot()).render(38).join("\n"))).toContain("/f614:login to connect an account");
+  expect(getCatalog("en").sidebar.connectFirst({ command: codex.snapshot().loginCommand! })).toBe("Connect with /f614:login first.");
+  const claude = new ShellState("Claude Code");
+  expect(plain(new ShellStatusBar(() => claude.snapshot()).render(80))[0]).toContain("/login");
+  expect(plain(new ShellStatusBar(() => claude.snapshot()).render(80))[0]).not.toContain("/f614:login");
+  expect(getCatalog("es").sidebar.loginToConnect({ command: "/f614:login" })).toBe("/f614:login para conectar una cuenta");
 });

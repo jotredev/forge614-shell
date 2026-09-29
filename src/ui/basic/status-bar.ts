@@ -40,7 +40,7 @@ export class ShellStatusBar implements Component {
     const snapshot = this.getSnapshot();
     const details = snapshot.account === "connected"
       ? [backgroundActivityLabel(snapshot, this.locale)].filter((part): part is string => Boolean(part))
-      : snapshot.account === "checking" ? [t.checkingAccount] : [snapshot.account === "unknown" ? t.accountUnverified : t.disconnected, "/login"];
+      : snapshot.account === "checking" ? [t.checkingAccount] : [snapshot.account === "unknown" ? t.accountUnverified : t.disconnected, snapshot.loginCommand ?? "/login"];
     const projectInfo = this.getProject?.();
     const project = this.cwd ? [
       muted(homeRelativePath(this.cwd, this.home)),

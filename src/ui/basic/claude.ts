@@ -8,6 +8,7 @@ import type { EffortLevel, ModelInfo, SDKMessage } from "@anthropic-ai/claude-ag
 import { claudeEnvironment, claudeLoginState, findClaude, officialLogin } from "../../engines/claude/auth.ts";
 import { confirmedLogout } from "../../engines/logout.ts";
 import { ClaudeSession } from "../../engines/claude/session.ts";
+import { isUnconnectedClaudeCommand } from "../../engines/claude/commands.ts";
 import { emptyTelemetry, telemetryLines, updateTelemetry } from "../../engines/claude/telemetry.ts";
 import { createComposer } from "./composer.ts";
 import { askPermission } from "./permission-choice.ts";
@@ -146,14 +147,21 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const syncCommandGroups = () => {
     const native = session.commands.map(command => ({ value: `/${command.name}`, label: command.description || command.argumentHint || t.genericCommandLabel }));
     const names = new Set(native.map(command => command.value));
+    // The commands Shell carries out with Claude Code's own meaning; `/status` and `/help` are not here because Shell has not connected them.
     const providerControls = [
-      ["/model", t.commandSelectModel], ["/effort", t.commandSelectReasoning], ["/resume", t.commandChatHistory], ["/new", t.commandNewConversation], ["/login", t.commandConnectAccount], ["/logout", t.commandDisconnectLocally], ["/status", t.commandSessionDetails], ["/f614:stop", t.commandCancelActiveTurn],
+      ["/model", t.commandSelectModel], ["/effort", t.commandSelectReasoning], ["/resume", t.commandChatHistory], ["/new", t.commandNewConversation], ["/login", t.commandConnectAccount], ["/logout", t.commandDisconnectLocally], ["/exit", t.commandExitShell],
     ].map(([value, label]) => ({ value: value!, label: label! })).filter(command => !names.has(command.value));
+    // Under FORGE614 only Shell's own commands, every one with the `/f614:` prefix.
     input.setCommandGroups([
       { title: "CLAUDE CODE", items: [...native, ...providerControls] },
-      { title: "FORGE614", items: [{ value: "/refresh", label: t.commandRefreshPlanUsage }, { value: "/commands", label: t.commandBrowseCommands }, { value: "/quit", label: t.commandExitShell }] },
+      { title: "FORGE614", items: [
+        { value: "/f614:refresh", label: t.commandRefreshPlanUsage }, { value: "/f614:status", label: t.commandSessionDetails },
+        { value: "/f614:commands", label: t.commandBrowseCommands }, { value: "/f614:stop", label: t.commandCancelActiveTurn },
+        { value: "/f614:quit", label: t.commandExitShell },
+      ] },
     ]);
   };
+  syncCommandGroups(); // from the start, so the menu already tells Claude Code's commands from Shell's before the catalog arrives
 
   const write = (text: string): ChatText => {
     const component = new ChatText(clean(text));
@@ -197,7 +205,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     }
     sidebar.invalidate();
     const working = turnStartedAt !== undefined ? workingStatus(t.statusWorking, toolTracker.currentActivity(), (Date.now() - turnStartedAt) / 1000) : t.statusWorking;
-    input.setStatus(commandBusy || session.busy ? working : shellState.snapshot().account === "connected" ? t.statusReady : shellState.snapshot().account === "checking" ? tc.statusCheckingAccount : t.statusConnectWithLogin);
+    input.setStatus(commandBusy || session.busy ? working : shellState.snapshot().account === "connected" ? t.statusReady : shellState.snapshot().account === "checking" ? tc.statusCheckingAccount : t.statusConnectWithLogin({ command: "/login" }));
     input.setWorkModeHint(session.workModes().find(mode => mode.id === session.workMode()));
     statusBar.invalidate();
     tui.requestRender();
@@ -314,32 +322,40 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     if (event.type === "result" && event.is_error) writeError(tc.claudeError({ message: event.subtype === "success" ? event.result : event.errors.join("\n") }));
     refresh();
   };
+  /**
+   * Leaves Shell. Claude Code's own `/exit` (alias `/quit`) and Ctrl+C/Ctrl+D refuse while a turn or a login is in progress and say
+   * which command leaves anyway; Shell's `/f614:quit` (`force`) leaves at once, stopping what runs.
+   */
+  const quit = async (force: boolean) => {
+    if (!force && (session.busy || loginAbort)) write(tc.workOrAuthActive);
+    else await shutdown();
+  };
   const command = async (value: string) => {
-    if (value.trim() === "/refresh") { await sidebar.refreshUsage(); return; }
     const [name, ...rest] = value.trim().split(/\s+/);
     const argument = rest.join(" ");
+    // Every command of Shell's own starts with `/f614:`; without it a name is Claude Code's (or unknown), never a silent alias of Shell's.
+    if (name === "/f614:refresh") { await sidebar.refreshUsage(); return; }
     // These commands have a Shell picker, but their catalog and selected value
     // remain entirely Claude-native.  Handle them before the general native
     // command forwarding below so `/effort` cannot become a chat turn.
-    if (name && !["/model", "/effort", "/thinking"].includes(name) && session.commands.some(command => `/${command.name}` === name || command.aliases?.some(alias => `/${alias}` === name))) {
+    if (name && !["/model", "/effort"].includes(name) && session.commands.some(command => `/${command.name}` === name || command.aliases?.some(alias => `/${alias}` === name))) {
       if (session.busy) throw new Error(tc.finishOrStopFirst);
       writeChat("user", value); telemetry = { ...emptyTelemetry(), quotas: telemetry.quotas };
       beginTurn();
       activeTurn = session.send(value, onEvent, approve).catch(error => { writeError(t.turnStopped({ message: describeError(error, locale) })); }).finally(() => { activeTurn = undefined; endTurn(); refresh(); });
       refresh(); return;
     }
-    if (name === "/yes" || name === "/no") {
+    if (name === "/f614:yes" || name === "/f614:no") {
       if (!approvals[0]) throw new Error(t.noPermissionPending);
-      approvals[0].finish(name === "/yes"); return;
+      approvals[0].finish(name === "/f614:yes"); return;
     }
     if (name === "/f614:stop") { loginAbort?.abort(); session.stop(); return; }
-    if (name === "/quit" || name === "/quit!") {
-      if ((session.busy || loginAbort) && name !== "/quit!") write(tc.workOrAuthActive);
-      else await shutdown();
-      return;
-    }
-    if (name === "/status" || name === "/forge614-status") { write(telemetryLines(telemetry, locale).join("\n")); return; }
-    if (name === "/help" || name === "/commands") {
+    if (name === "/exit" || name === "/quit") { await quit(false); return; }
+    if (name === "/f614:quit") { await quit(true); return; }
+    // Shell's own session telemetry. Claude Code's `/status` (and `/help`) are its own, which Shell has not connected: said honestly.
+    if (name === "/f614:status") { write(telemetryLines(telemetry, locale).join("\n")); return; }
+    if (isUnconnectedClaudeCommand(name)) { write(tc.commandNotAllowed({ name: name ?? "" })); return; }
+    if (name === "/f614:help" || name === "/f614:commands") {
       if (approvals.length) { write(t.answerPendingPermissionFirst); return; }
       const selected = await input.chooseCommand();
       if (selected) input.onSubmit?.(selected);
@@ -397,7 +413,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         if (session.models.length && !session.models.some(model => model.value === argument || model.resolvedModel === argument)) throw new Error(tc.chooseModelFromCommand);
         session.model = argument; telemetry = { ...telemetry, model: undefined }; persistPreference(); write(tc.requestedModel({ model: argument }));
       }
-    } else if (name === "/effort" || name === "/thinking") {
+    } else if (name === "/effort") {
       if (!session.models.length && accountConnected && !disconnected) await loadCatalog();
       if (!argument) {
         const model = session.models.find(model => model.value === session.model || model.resolvedModel === telemetry.model);
@@ -453,7 +469,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   input.onSubmit = value => {
     if (closed || !value.trim()) return;
     input.setValue("");
-    if (["/yes", "/no", "/f614:stop", "/quit", "/quit!", "/status", "/help", "/commands", "/refresh"].includes(value.trim())) {
+    if (["/f614:yes", "/f614:no", "/f614:stop", "/exit", "/quit", "/f614:quit", "/status", "/help", "/f614:status", "/f614:help", "/f614:commands", "/f614:refresh"].includes(value.trim())) {
       void command(value).catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))).finally(refresh); return;
     }
     if (commandBusy) { writeError(t.waitForCurrentOperation); return; }
@@ -485,7 +501,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       return { consume: true };
     }
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) {
-      void command("/quit");
+      // Like Claude Code's own `/exit`: refused while work is in progress, `/f614:quit` leaves anyway.
+      void quit(false);
       return { consume: true };
     }
     return undefined;

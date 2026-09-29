@@ -140,7 +140,7 @@ const en: Catalog = {
     engineSpecifiedTwice: "Specify --engine only once.",
   },
   logout: {
-    confirmPrompt: ({ engine }) => `Disconnect ${engine} only in this Forge614-Shell session? Your native account, Orca, other terminals and saved chats will not be changed. Use /login here to reconnect with your existing account.`,
+    confirmPrompt: ({ engine, loginCommand }) => `Disconnect ${engine} only in this Forge614-Shell session? Your native account, Orca, other terminals and saved chats will not be changed. Use ${loginCommand} here to reconnect with your existing account.`,
     disconnectFailed: "Could not disconnect Shell. No native logout was requested.",
   },
   errors: {
@@ -160,15 +160,15 @@ const en: Catalog = {
     "codex-compact-no-conversation": () => "There is no conversation to compact yet. Send a message first.",
     "codex-command-needs-conversation": () => "There is no conversation yet. Send a message first.",
     "clipboard-unavailable": () => "This system has no built-in clipboard command Shell can use; nothing was copied.",
-    "codex-refresh-requires-login": () => "Connect with /login before refreshing usage.",
+    "codex-refresh-requires-login": () => "Connect with /f614:login before refreshing usage.",
     "codex-login-not-managed": () => "Codex did not return a managed ChatGPT login.",
     "codex-turn-busy": () => "Finish or /f614:stop the active turn first.",
     "codex-model-unknown": () => "Choose an available model from /model.",
     "codex-effort-unknown": () => "Choose a supported reasoning level shown by /model.",
     "codex-session-foreign-project": () => "This session belongs to another project.",
     "codex-session-active-elsewhere": () => "This session is active in another client. Stop it there first.",
-    "codex-requires-login-to-send": () => "Use /login to reconnect this Shell session before sending a message.",
-    "codex-requires-login-no-fallback": () => "Use /login with ChatGPT before sending a message. No API fallback was used.",
+    "codex-requires-login-to-send": () => "Use /f614:login to reconnect this Shell session before sending a message.",
+    "codex-requires-login-no-fallback": () => "Use /f614:login with ChatGPT before sending a message. No API fallback was used.",
     "codex-unexpected-provider": () => "Expected the official OpenAI provider; refusing to send a prompt.",
     "codex-unsupported-request": () => "Unsupported engine request.",
     "engines-invalid-detection": () => "Forge614 Engines returned an invalid detection result.",
@@ -213,7 +213,7 @@ Usage: forge614-shell [--engine claude|codex]
 Every interactive startup asks for visual interface, then installed AI engine.
 Basic is available; Full — Coming later is disabled.
 Selections are not saved. Even a single available option waits for confirmation.
-The selected native CLI must already be installed. /login uses its official account flow.
+The selected native CLI must already be installed. Sign-in (/login in Claude Code, /f614:login in Codex) uses its official account flow.
 Shell does not store subscription credentials or manage billing.
 
   --engine <name>      Legacy option; does not bypass interactive selectors
@@ -229,7 +229,8 @@ The first interactive run asks for a language (Español/English) and remembers i
 without saving. --help, --version, update, and uninstall never open the selector, but they
 do use a saved or overridden language for their own text when one is already known.
 
-Native chat: /login, /logout, /resume, /new, /model, /effort, /status, /f614:stop, /quit
+Native chat: a command without a prefix is the selected assistant's own and works as in its terminal (/model, /resume, /new, /status, /logout, /quit, /exit; in Claude Code also /login and /effort).
+Shell's own commands start with /f614: — /f614:login (Codex), /f614:status (Claude Code), /f614:refresh, /f614:stop, /f614:quit, /f614:commands, /f614:help, /f614:yes, /f614:no.
 /logout disconnects only the current Shell session; native accounts and other apps are unchanged.
 Claude sessions: managed by Claude Code, shared with its native history.
 Codex: native history, model catalog, reasoning and reported account limits.
@@ -270,12 +271,12 @@ The selected engine's project settings and permissions apply. This is not a sand
     awaitingPermission: "Awaiting permission",
     noPermissionPending: "No permission request is pending.",
     answerPendingPermissionFirst: "Answer the pending permission with the selector first.",
-    unknownCommand: ({ name }) => `Unknown command: ${name}. Use /help.`,
+    unknownCommand: ({ name }) => `Unknown command: ${name}. Use /f614:help.`,
     workModeNextTurn: ({ mode }) => `${mode} will apply from the next turn.`,
     commandCompact: "Compact the conversation",
     statusWorking: "Working",
     statusReady: "Ready",
-    statusConnectWithLogin: "Connect with /login",
+    statusConnectWithLogin: ({ command }) => `Connect with ${command}`,
     waitForCurrentOperation: "Wait for the current operation, or use /f614:stop.",
     turnAlreadyRunning: "A turn is already running. Wait, or use /f614:stop.",
     reconnectBeforeMessage: "Use /login to reconnect this Shell session before sending a message.",
@@ -283,7 +284,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     turnStopped: ({ message }) => `Turn stopped: ${message}`,
     resumeUseNumber: "Use /resume <number>. This loads history and waits for your next message.",
     noSessionsFound: "No sessions found for this project.",
-    quitConfirmActiveWork: "Work or authentication is active. Use /quit! to stop it and exit, or keep working. Nothing was stopped.",
+    quitConfirmActiveWork: "Work or authentication is active. Use /f614:quit to stop it and exit, or keep working. Nothing was stopped.",
     historyRestored: "History restored. Waiting for your next message; no work was started.",
     nativeCliOptionsUnsupported: ({ id }) => `${id} mode accepts no CLI options yet. Use the in-chat commands.`,
     nativeRequiresInteractiveTerminal: "Native chat requires an interactive terminal.",
@@ -291,7 +292,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     commandRefreshPlanUsageEngines: "Refresh plan usage (supported engines)",
     commandCancelKeepOpen: "Cancel current operation; keep Shell open",
     commandBrowseAllCommands: "Browse all commands",
-    helpOrCommandsHint: "/help or /commands · Browse commands",
+    helpOrCommandsHint: "/f614:help or /f614:commands · Browse commands",
     shiftEnterNewline: "Shift+Enter newline",
     commandsFallbackTitle: "Commands",
     menuFooter: ({ title, from, to, total }) => `${title} · ${from}–${to} of ${total} · ↑/↓ choose · Enter confirm · Esc cancel`,
@@ -322,7 +323,8 @@ The selected engine's project settings and permissions apply. This is not a sand
     questionnaireUnsupported: "Claude requested a questionnaire. This first connector does not support questionnaire forms yet; ask Claude to put its question in the chat.",
     claudeError: ({ message }) => `Claude error: ${message}`,
     finishOrStopFirst: "Finish or /f614:stop the current turn first.",
-    workOrAuthActive: "Work or authentication is active. Use /quit! to stop it and exit, or keep working. Nothing was stopped.",
+    commandNotAllowed: ({ name }) => `Claude Code doesn't allow ${name} from Shell yet.`,
+    workOrAuthActive: "Work or authentication is active. Use /f614:quit to stop it and exit, or keep working. Nothing was stopped.",
     checkingAccount: "Checking your Claude account…",
     connectedExistingAccount: "Connected to Claude in Shell using your existing account. No new login is needed.",
     signInRequired: "Claude sign-in is required. Opening the official login flow; return here after completing it.",
@@ -387,13 +389,13 @@ The selected engine's project settings and permissions apply. This is not a sand
   },
   sidebar: {
     refreshNotSupported: "Usage refresh is not supported by this engine.",
-    connectFirst: "Connect with /login first.",
+    connectFirst: ({ command }) => `Connect with ${command} first.`,
     usageUpdated: "Usage updated",
     refreshFailed: "Refresh failed · try again",
     checking: "Checking…",
     unverified: "Unverified",
     disconnected: "Disconnected",
-    loginToConnect: "/login to connect an account",
+    loginToConnect: ({ command }) => `${command} to connect an account`,
     checkingNativeAccount: "Checking native account",
     headingSession: "SESSION",
     headingContext: "CONTEXT",
@@ -453,20 +455,20 @@ The selected engine's project settings and permissions apply. This is not a sand
     noDetailsReported: "no details were reported.",
   },
   codexSession: {
-    notLoggedIn: "Not logged in. Use /login.",
+    notLoggedIn: "Not logged in. Use /f614:login.",
     quotaNotReported: "Quota: not reported",
     tokensNotReported: "Tokens / context: not reported",
     chatgptAccount: ({ plan }) => `ChatGPT account · ${plan}`,
     planNotReported: "plan not reported",
-    chatgptLoginRequired: "ChatGPT login required; API-key mode is not used. Type /login.",
+    chatgptLoginRequired: "ChatGPT login required; API-key mode is not used. Type /f614:login.",
     connectedExistingAccount: "Connected to Codex in Shell using your existing ChatGPT account. No new login is needed.",
     openingLoginBrowser: ({ url }) => `Opening the official ChatGPT login in your default browser…\nIf it does not open, use this link:\n${url}\nCredentials remain managed by Codex. /f614:stop cancels this login.`,
     browserLaunchRequested: "Browser launch requested. Complete login there; Shell is waiting for Codex confirmation.",
     browserOpenFailed: "Could not open your browser automatically. Open the link above manually, or use /f614:stop to cancel.",
     logoutCancelled: "Logout cancelled. No account changes were requested.",
-    disconnectedLocally: "Disconnected locally from Codex in this Shell session. Your native account and other applications are unchanged. Use /login to reconnect.",
-    disconnectedShort: "Disconnected locally · use /login to reconnect Shell",
-    disconnectedStatus: "Disconnected locally · use /login to reconnect Shell. Native account unchanged.",
+    disconnectedLocally: "Disconnected locally from Codex in this Shell session. Your native account and other applications are unchanged. Use /f614:login to reconnect.",
+    disconnectedShort: "Disconnected locally · use /f614:login to reconnect Shell",
+    disconnectedStatus: "Disconnected locally · use /f614:login to reconnect Shell. Native account unchanged.",
     modelEffortLine: ({ model, effort }) => `Model: ${model} · effort: ${effort}`,
     engineDefault: "engine default",
     costNotReported: "Cost: not reported by the engine; plan billing remains with OpenAI.",
@@ -690,12 +692,11 @@ The selected engine's project settings and permissions apply. This is not a sand
     compactingTitle: "Compacting context",
     compactingDetail: "Making room to continue",
     commandNotAllowed: ({ name }) => `Codex doesn't allow ${name} from Shell yet.`,
-    workOrLoginActive: "Work or login is active. Use /quit! to stop it and exit. Nothing was stopped.",
-    cancellationRequested: "Cancellation requested. Use /quit! if the engine does not respond.",
+    workOrLoginActive: "Work or login is active. Use /f614:quit to stop it and exit. Nothing was stopped.",
+    cancellationRequested: "Cancellation requested. Use /f614:quit if the engine does not respond.",
     logoutUnavailable: "Logout is unavailable for this connector.",
     selectedModel: ({ model }) => `Selected model: ${model}`,
-    useLoginForCatalog: "Use /login to load the native model catalog.",
-    noReasoningOptionsForModel: "This engine has not reported reasoning options for the selected model.",
+    useLoginForCatalog: "Use /f614:login to load the native model catalog.",
     noSessionsFound: "No sessions found for this project.",
     chooseSessionOrId: "Choose a listed session number or provide its native ID.",
     waitForEngine: "Wait for the engine, or finish /f614:stop the active operation first.",

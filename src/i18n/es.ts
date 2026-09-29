@@ -140,7 +140,7 @@ const es: Catalog = {
     engineSpecifiedTwice: "Especifica --engine solo una vez.",
   },
   logout: {
-    confirmPrompt: ({ engine }) => `¿Desconectar ${engine} solo en esta sesión de Forge614-Shell? Tu cuenta nativa, Orca, otras terminales y los chats guardados no cambiarán. Usa /login aquí para reconectar con tu cuenta existente.`,
+    confirmPrompt: ({ engine, loginCommand }) => `¿Desconectar ${engine} solo en esta sesión de Forge614-Shell? Tu cuenta nativa, Orca, otras terminales y los chats guardados no cambiarán. Usa ${loginCommand} aquí para reconectar con tu cuenta existente.`,
     disconnectFailed: "No se pudo desconectar Shell. No se solicitó ningún cierre de sesión nativo.",
   },
   errors: {
@@ -160,15 +160,15 @@ const es: Catalog = {
     "codex-compact-no-conversation": () => "Todavía no hay conversación que compactar. Envía un mensaje primero.",
     "codex-command-needs-conversation": () => "Todavía no hay conversación. Envía un mensaje primero.",
     "clipboard-unavailable": () => "Este sistema no tiene un comando de portapapeles incluido que Shell pueda usar; no se copió nada.",
-    "codex-refresh-requires-login": () => "Conecta con /login antes de actualizar el uso.",
+    "codex-refresh-requires-login": () => "Conecta con /f614:login antes de actualizar el uso.",
     "codex-login-not-managed": () => "Codex no devolvió un inicio de sesión administrado de ChatGPT.",
     "codex-turn-busy": () => "Termina o usa /f614:stop en el turno activo primero.",
     "codex-model-unknown": () => "Elige un modelo disponible desde /model.",
     "codex-effort-unknown": () => "Elige un nivel de razonamiento compatible mostrado por /model.",
     "codex-session-foreign-project": () => "Esta sesión pertenece a otro proyecto.",
     "codex-session-active-elsewhere": () => "Esta sesión está activa en otro cliente. Detenla ahí primero.",
-    "codex-requires-login-to-send": () => "Usa /login para reconectar esta sesión de Shell antes de enviar un mensaje.",
-    "codex-requires-login-no-fallback": () => "Usa /login con ChatGPT antes de enviar un mensaje. No se usó ningún respaldo de API.",
+    "codex-requires-login-to-send": () => "Usa /f614:login para reconectar esta sesión de Shell antes de enviar un mensaje.",
+    "codex-requires-login-no-fallback": () => "Usa /f614:login con ChatGPT antes de enviar un mensaje. No se usó ningún respaldo de API.",
     "codex-unexpected-provider": () => "Se esperaba el proveedor oficial de OpenAI; se rechaza enviar el mensaje.",
     "codex-unsupported-request": () => "Solicitud del motor no compatible.",
     "engines-invalid-detection": () => "Forge614 Engines devolvió un resultado de detección inválido.",
@@ -213,7 +213,7 @@ Uso: forge614-shell [--engine claude|codex]
 Cada arranque interactivo pregunta primero por la interfaz visual y luego por el motor de IA instalado.
 Basic está disponible; Full — Próximamente está deshabilitado.
 Las selecciones no se guardan. Incluso con una sola opción disponible se espera confirmación.
-El CLI nativo seleccionado debe estar ya instalado. /login usa su flujo oficial de cuenta.
+El CLI nativo seleccionado debe estar ya instalado. El inicio de sesión (/login en Claude Code, /f614:login en Codex) usa su flujo oficial de cuenta.
 Shell no guarda credenciales de suscripción ni administra facturación.
 
   --engine <nombre>    Opción heredada; no evita los selectores interactivos
@@ -229,7 +229,8 @@ El primer arranque interactivo pregunta el idioma (Español/English) y lo recuer
 ejecución sin guardarlo. --help, --version, update y uninstall nunca abren el selector, pero
 sí usan un idioma guardado o forzado para su propio texto cuando ya se conoce.
 
-Chat nativo: /login, /logout, /resume, /new, /model, /effort, /status, /f614:stop, /quit
+Chat nativo: un comando sin prefijo es del asistente elegido y funciona como en su terminal (/model, /resume, /new, /status, /logout, /quit, /exit; en Claude Code también /login y /effort).
+Los comandos propios de Shell empiezan con /f614: — /f614:login (Codex), /f614:status (Claude Code), /f614:refresh, /f614:stop, /f614:quit, /f614:commands, /f614:help, /f614:yes, /f614:no.
 /logout desconecta solo la sesión actual de Shell; las cuentas nativas y otras apps no cambian.
 Sesiones de Claude: administradas por Claude Code, compartidas con su historial nativo.
 Codex: historial nativo, catálogo de modelos, razonamiento y límites de cuenta reportados.
@@ -270,12 +271,12 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     awaitingPermission: "Esperando permiso",
     noPermissionPending: "No hay ninguna solicitud de permiso pendiente.",
     answerPendingPermissionFirst: "Responde primero el permiso pendiente con el selector.",
-    unknownCommand: ({ name }) => `Comando desconocido: ${name}. Usa /help.`,
+    unknownCommand: ({ name }) => `Comando desconocido: ${name}. Usa /f614:help.`,
     workModeNextTurn: ({ mode }) => `${mode} se aplicará desde el siguiente turno.`,
     commandCompact: "Compactar la conversación",
     statusWorking: "Trabajando",
     statusReady: "Listo",
-    statusConnectWithLogin: "Conecta con /login",
+    statusConnectWithLogin: ({ command }) => `Conecta con ${command}`,
     waitForCurrentOperation: "Espera a que termine la operación actual, o usa /f614:stop.",
     turnAlreadyRunning: "Ya hay un turno en curso. Espera, o usa /f614:stop.",
     reconnectBeforeMessage: "Usa /login para reconectar esta sesión de Shell antes de enviar un mensaje.",
@@ -283,7 +284,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     turnStopped: ({ message }) => `Turno detenido: ${message}`,
     resumeUseNumber: "Usa /resume <número>. Esto carga el historial y espera tu siguiente mensaje.",
     noSessionsFound: "No se encontraron sesiones para este proyecto.",
-    quitConfirmActiveWork: "Hay trabajo o autenticación en curso. Usa /quit! para detenerlo y salir, o sigue trabajando. No se detuvo nada.",
+    quitConfirmActiveWork: "Hay trabajo o autenticación en curso. Usa /f614:quit para detenerlo y salir, o sigue trabajando. No se detuvo nada.",
     historyRestored: "Historial restaurado. Esperando tu siguiente mensaje; no se inició ningún trabajo.",
     nativeCliOptionsUnsupported: ({ id }) => `El modo ${id} todavía no acepta opciones de línea de comandos. Usa los comandos dentro del chat.`,
     nativeRequiresInteractiveTerminal: "El chat nativo requiere una terminal interactiva.",
@@ -291,7 +292,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     commandRefreshPlanUsageEngines: "Actualizar uso del plan (motores compatibles)",
     commandCancelKeepOpen: "Cancelar la operación actual; mantener Shell abierto",
     commandBrowseAllCommands: "Explorar todos los comandos",
-    helpOrCommandsHint: "/help o /commands · Explorar comandos",
+    helpOrCommandsHint: "/f614:help o /f614:commands · Explorar comandos",
     shiftEnterNewline: "Shift+Enter nueva línea",
     commandsFallbackTitle: "Comandos",
     menuFooter: ({ title, from, to, total }) => `${title} · ${from}–${to} de ${total} · ↑/↓ elegir · Enter confirmar · Esc cancelar`,
@@ -322,7 +323,8 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     questionnaireUnsupported: "Claude solicitó un cuestionario. Este primer conector todavía no soporta formularios de cuestionario; pide a Claude que ponga su pregunta en el chat.",
     claudeError: ({ message }) => `Error de Claude: ${message}`,
     finishOrStopFirst: "Termina o usa /f614:stop en el turno actual primero.",
-    workOrAuthActive: "Hay trabajo o autenticación en curso. Usa /quit! para detenerlo y salir, o sigue trabajando. No se detuvo nada.",
+    commandNotAllowed: ({ name }) => `Claude Code no permite ${name} desde Shell todavía.`,
+    workOrAuthActive: "Hay trabajo o autenticación en curso. Usa /f614:quit para detenerlo y salir, o sigue trabajando. No se detuvo nada.",
     checkingAccount: "Verificando tu cuenta de Claude…",
     connectedExistingAccount: "Conectado a Claude en Shell usando tu cuenta existente. No se necesita un nuevo inicio de sesión.",
     signInRequired: "Se requiere iniciar sesión en Claude. Abriendo el flujo oficial de inicio de sesión; regresa aquí al terminar.",
@@ -387,13 +389,13 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
   },
   sidebar: {
     refreshNotSupported: "Este motor no admite actualizar el uso.",
-    connectFirst: "Conecta con /login primero.",
+    connectFirst: ({ command }) => `Conecta con ${command} primero.`,
     usageUpdated: "Uso actualizado",
     refreshFailed: "Falló la actualización · intenta de nuevo",
     checking: "Verificando…",
     unverified: "Sin verificar",
     disconnected: "Desconectado",
-    loginToConnect: "/login para conectar una cuenta",
+    loginToConnect: ({ command }) => `${command} para conectar una cuenta`,
     checkingNativeAccount: "Verificando cuenta nativa",
     headingSession: "SESIÓN",
     headingContext: "CONTEXTO",
@@ -453,20 +455,20 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     noDetailsReported: "no se reportaron detalles.",
   },
   codexSession: {
-    notLoggedIn: "No has iniciado sesión. Usa /login.",
+    notLoggedIn: "No has iniciado sesión. Usa /f614:login.",
     quotaNotReported: "Cuota: no reportada",
     tokensNotReported: "Tokens / contexto: no reportado",
     chatgptAccount: ({ plan }) => `Cuenta de ChatGPT · ${plan}`,
     planNotReported: "plan no reportado",
-    chatgptLoginRequired: "Se requiere iniciar sesión en ChatGPT; el modo de clave de API no se usa. Escribe /login.",
+    chatgptLoginRequired: "Se requiere iniciar sesión en ChatGPT; el modo de clave de API no se usa. Escribe /f614:login.",
     connectedExistingAccount: "Conectado a Codex en Shell usando tu cuenta existente de ChatGPT. No se necesita un nuevo inicio de sesión.",
     openingLoginBrowser: ({ url }) => `Abriendo el inicio de sesión oficial de ChatGPT en tu navegador predeterminado…\nSi no se abre, usa este enlace:\n${url}\nLas credenciales siguen siendo administradas por Codex. /f614:stop cancela este inicio de sesión.`,
     browserLaunchRequested: "Se solicitó abrir el navegador. Completa el inicio de sesión ahí; Shell está esperando la confirmación de Codex.",
     browserOpenFailed: "No se pudo abrir tu navegador automáticamente. Abre el enlace de arriba manualmente, o usa /f614:stop para cancelar.",
     logoutCancelled: "Se canceló el cierre de sesión. No se solicitó ningún cambio de cuenta.",
-    disconnectedLocally: "Se desconectó localmente de Codex en esta sesión de Shell. Tu cuenta nativa y otras aplicaciones no cambiaron. Usa /login para reconectar.",
-    disconnectedShort: "Desconectado localmente · usa /login para reconectar Shell",
-    disconnectedStatus: "Desconectado localmente · usa /login para reconectar Shell. La cuenta nativa no cambió.",
+    disconnectedLocally: "Se desconectó localmente de Codex en esta sesión de Shell. Tu cuenta nativa y otras aplicaciones no cambiaron. Usa /f614:login para reconectar.",
+    disconnectedShort: "Desconectado localmente · usa /f614:login para reconectar Shell",
+    disconnectedStatus: "Desconectado localmente · usa /f614:login para reconectar Shell. La cuenta nativa no cambió.",
     modelEffortLine: ({ model, effort }) => `Modelo: ${model} · razonamiento: ${effort}`,
     engineDefault: "predeterminado del motor",
     costNotReported: "Costo: no reportado por el motor; la facturación del plan sigue con OpenAI.",
@@ -690,12 +692,11 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     compactingTitle: "Compactando el contexto",
     compactingDetail: "Haciendo espacio para continuar",
     commandNotAllowed: ({ name }) => `Codex no permite ${name} desde Shell todavía.`,
-    workOrLoginActive: "Hay trabajo o inicio de sesión en curso. Usa /quit! para detenerlo y salir. No se detuvo nada.",
-    cancellationRequested: "Se solicitó la cancelación. Usa /quit! si el motor no responde.",
+    workOrLoginActive: "Hay trabajo o inicio de sesión en curso. Usa /f614:quit para detenerlo y salir. No se detuvo nada.",
+    cancellationRequested: "Se solicitó la cancelación. Usa /f614:quit si el motor no responde.",
     logoutUnavailable: "El cierre de sesión no está disponible para este conector.",
     selectedModel: ({ model }) => `Modelo seleccionado: ${model}`,
-    useLoginForCatalog: "Usa /login para cargar el catálogo nativo de modelos.",
-    noReasoningOptionsForModel: "Este motor todavía no ha reportado opciones de razonamiento para el modelo seleccionado.",
+    useLoginForCatalog: "Usa /f614:login para cargar el catálogo nativo de modelos.",
     noSessionsFound: "No se encontraron sesiones para este proyecto.",
     chooseSessionOrId: "Elige un número de sesión de la lista o proporciona su ID nativo.",
     waitForEngine: "Espera al motor, o termina con /f614:stop la operación activa primero.",

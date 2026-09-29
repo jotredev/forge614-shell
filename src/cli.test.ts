@@ -48,3 +48,23 @@ test("without a real terminal, init refuses at once (it never starts the screens
     expect(result.stdout + result.stderr).not.toContain("La entrada interactiva se cerró");
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+/**
+ * The real `--help` a person reads, in both languages: it names Shell's own commands with `/f614:` (login, status, refresh, stop,
+ * quit, commands, help) and none of the old unprefixed names. It exists because the help is the first place the commands are
+ * listed and the catalog test only sees the text, not what the program prints.
+ */
+test("--help prints Shell commands with the /f614: prefix in both languages", () => {
+  const home = mkdtempSync(join(tmpdir(), "forge614-shell-cli-help-"));
+  try {
+    for (const locale of ["en", "es"]) {
+      const result = spawnSync("bun", [new URL("./cli.ts", import.meta.url).pathname, "--help"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000,
+        env: { PATH: process.env.PATH, HOME: home, FORGE614_HOME: join(home, "forge614"), FORGE614_SHELL_LOCALE: locale },
+      });
+      expect(result.status, locale).toBe(0);
+      for (const name of ["login", "status", "refresh", "stop", "quit", "commands", "help"]) expect(result.stdout, `${locale} /f614:${name}`).toContain(`/f614:${name}`);
+      for (const old of ["/refresh", "/yes", "/no", "/commands", "/help", "/quit!", "/exit!", "/forge614-status"]) expect(result.stdout, `${locale} ${old}`).not.toMatch(new RegExp(`(?<![\\w:/.-])${old}(?![\\w:-])`));
+    }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});

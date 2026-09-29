@@ -29,6 +29,6 @@ forge614-shell init --product engram
 
 ## Inicio y errores frecuentes
 
-Shell consulta Engines y solo ofrece Claude Code y Codex con adaptador de chat. Si Engines falta o no es compatible, reinstala Shell para repararlo; no intentes sustituirlo con detección manual. Si Claude o Codex no está autenticado, usa `/login` en Shell y completa el flujo oficial. Si el comando no se encuentra tras instalar, abre una terminal nueva y verifica que la línea de `PATH` añadida por el instalador se haya cargado.
+Shell consulta Engines y solo ofrece Claude Code y Codex con adaptador de chat. Si Engines falta o no es compatible, reinstala Shell para repararlo; no intentes sustituirlo con detección manual. Si Claude o Codex no está autenticado, usa `/login` (Claude Code) o `/f614:login` (Codex) en Shell y completa el flujo oficial. Si el comando no se encuentra tras instalar, abre una terminal nueva y verifica que la línea de `PATH` añadida por el instalador se haya cargado.
 
 Para inicializar Engram y su integración de memoria con los asistentes, consulta [07](07-inicializacion-engram-y-mcp.md). Para diagnóstico completo, consulta [08](08-diagnostico-y-limites.md).

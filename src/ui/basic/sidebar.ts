@@ -32,7 +32,7 @@ export class ShellSidebar implements Component {
     const t = getCatalog(this.locale).sidebar;
     if (this.refreshing) return;
     if (!this.refreshAction) throw new Error(t.refreshNotSupported);
-    if (this.getSnapshot().account !== "connected") throw new Error(t.connectFirst);
+    if (this.getSnapshot().account !== "connected") throw new Error(t.connectFirst({ command: this.getSnapshot().loginCommand ?? "/login" }));
     this.refreshing = true; this.refreshMessage = ""; this.repaint();
     try { this.refreshMessage = await this.refreshAction() || t.usageUpdated; }
     catch { this.refreshMessage = t.refreshFailed; }
@@ -72,7 +72,7 @@ export class ShellSidebar implements Component {
     const heading = (title: string) => [line(mint(`// ${title}`)), border("─".repeat(Math.max(0, width)))];
     if (snapshot.account !== "connected") {
       const label = snapshot.account === "checking" ? t.checking : snapshot.account === "unknown" ? t.unverified : t.disconnected;
-      return [...heading(t.headingSession), line(`${t.fieldAccount}  ${amber(label)}`), "", ...(snapshot.account === "checking" ? [line(muted(t.checkingNativeAccount))] : [line(mint(t.loginToConnect))])];
+      return [...heading(t.headingSession), line(`${t.fieldAccount}  ${amber(label)}`), "", ...(snapshot.account === "checking" ? [line(muted(t.checkingNativeAccount))] : [line(mint(t.loginToConnect({ command: snapshot.loginCommand ?? "/login" })))])];
     }
 
     const lines = [...heading(t.headingSession), line(`${t.fieldAccount}  ${mint(t.fieldConnected)}`), line(`${muted(t.fieldProvider)}  ${snapshot.provider}`)];
