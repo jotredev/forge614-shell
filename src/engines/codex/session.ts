@@ -8,6 +8,7 @@ import { markdownTranscript } from "./transcript.ts";
 import type { CodexWorkMode } from "./work-modes.ts";
 import { openLoginBrowser } from "../../infrastructure/browser.ts";
 import { confirmedLogout } from "../logout.ts";
+import { formatCodexPermission } from "../permission-text.ts";
 import { engramToolLabel } from "../mcp-labels.ts";
 import type { getStartupContext } from "../../infrastructure/forge614-engram.ts";
 import { ShellError } from "../../shell-error.ts";
@@ -852,8 +853,10 @@ export class CodexSession implements NativeSession {
   private async request(method: string, params: any): Promise<any> {
     const scoped = this.busy && params.threadId === this.sessionId && (!this.turnId || params.turnId === this.turnId);
     if (["item/commandExecution/requestApproval", "item/fileChange/requestApproval"].includes(method)) {
-      const details = JSON.stringify({ ...params, item: this.items.get(params.itemId) }, null, 2);
-      const allowed = scoped && details.length <= 20000 && await this.approve(`${method}\n${details}`, this.aborted.signal);
+      const item = this.items.get(params.itemId);
+      // The size guard measures the whole event, as it always did (see `permissionTooLarge`); what the person reads is the plain-words text.
+      const size = JSON.stringify({ ...params, item }, null, 2).length;
+      const allowed = scoped && size <= 20000 && await this.approve(formatCodexPermission(method, params, item, this.locale), this.aborted.signal);
       return { decision: allowed && !this.aborted.signal.aborted ? "accept" : "decline" };
     }
     if (method === "item/permissions/requestApproval") return { permissions: {}, scope: "turn" };

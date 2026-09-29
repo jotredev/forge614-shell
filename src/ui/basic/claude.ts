@@ -10,6 +10,8 @@ import { confirmedLogout } from "../../engines/logout.ts";
 import { ClaudeSession } from "../../engines/claude/session.ts";
 import { emptyTelemetry, telemetryLines, updateTelemetry } from "../../engines/claude/telemetry.ts";
 import { createComposer } from "./composer.ts";
+import { askPermission } from "./permission-choice.ts";
+import { formatClaudePermission } from "../../engines/permission-text.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { readRuntimeResources } from "../../infrastructure/runtime-resources.ts";
@@ -234,10 +236,9 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     if (!approval) return;
     writeActivity(t.permissionRequestedTitle, approval.label, true);
     input.setStatus(t.awaitingPermission);
-    void input.choose(t.permissionFooter, [
-      { value: "/no", label: t.denyLabel }, { value: "/yes", label: t.allowOnceLabel },
-    ]).then(value => approval.finish(value === "/yes"));
+    void askPermission(input, locale).then(allowed => approval.finish(allowed));
   };
+  /** A tool permission request, shown in plain words (`formatClaudePermission`) instead of the tool's JSON input. */
   const approve = (tool: string, value: Record<string, unknown>, signal: AbortSignal): Promise<boolean> => {
     const details = JSON.stringify(value, null, 2);
     if (details.length > 20000) {
@@ -248,9 +249,13 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       write(tc.questionnaireUnsupported);
       return Promise.resolve(false);
     }
+    return askApproval(formatClaudePermission(tool, value, { locale, cwd }), signal);
+  };
+  /** Puts `label` (already in words the person reads) in the permission queue and resolves when they answer it; answers one at a time, in order. */
+  const askApproval = (label: string, signal: AbortSignal): Promise<boolean> => {
     return new Promise(resolve => {
       const approval = {
-        label: `${t.permissionRequestedTitle}: ${tool}\n${details}\n${t.permissionInlineLegend}`,
+        label,
         finish: (allowed: boolean) => {
           const index = approvals.indexOf(approval);
           if (index === -1) return;
@@ -365,7 +370,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     } else if (name === "/logout") {
       loginAbort = new AbortController();
       try {
-        const done = await confirmedLogout("Claude Code", (warning, signal) => approve("Sign out", { warning }, signal), loginAbort.signal,
+        const done = await confirmedLogout("Claude Code", askApproval, loginAbort.signal,
           async () => { disconnected = true; accountConnected = false; accountChecked = true; accountUnknown = false; }, locale);
         if (done) {
           session.reset(); session.models = []; session.model = undefined; session.effort = undefined;

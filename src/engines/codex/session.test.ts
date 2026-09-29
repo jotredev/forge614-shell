@@ -1242,3 +1242,43 @@ test("lastResponse() is the last completed agent message", async () => {
   await pending;
   expect(session.lastResponse()).toBe("Here it is");
 });
+
+/**
+ * What Codex's session hands the screen when Codex asks for permission: plain words in the session's language, never the
+ * event. It feeds it real-shaped requests (`v2/CommandExecutionRequestApprovalParams.ts`, `v2/FileChangeRequestApprovalParams.ts`
+ * and the `item/started` items of `v2/ThreadItem.ts`, with their `null`s and ids) and compares the exact text. It exists
+ * because the session used to call `approve` with the method name plus `JSON.stringify` of the whole event.
+ */
+test("a Codex permission request reaches the screen as plain words, never as the event's JSON", async () => {
+  const rpc = turnFixture(null); const asked: string[] = [];
+  const session = new CodexSession(rpc, "/project", () => {}, async description => { asked.push(description); return true; }, undefined, undefined, "es");
+  await session.initialize();
+  const pending = session.send("hello");
+  await new Promise(resolve => setImmediate(resolve));
+  rpc.onNotification("item/started", { threadId: "t", turnId: "u", item: {
+    type: "commandExecution", id: "c1", command: "touch example", cwd: "/project", processId: null, source: "agent", status: "inProgress",
+    commandActions: [{ type: "unknown", command: "touch example" }], aggregatedOutput: null, exitCode: null, durationMs: null, pluginId: null,
+  } });
+  rpc.onNotification("item/started", { threadId: "t", turnId: "u", item: {
+    type: "fileChange", id: "f1", status: "inProgress", changes: [
+      { path: "/project/a.ts", kind: { type: "update", move_path: null }, diff: "@@ -1 +1 @@\n-a\n+b" },
+      { path: "/project/b.ts", kind: { type: "add" }, diff: "+b" },
+    ],
+  } });
+  const command = await rpc.onRequest("item/commandExecution/requestApproval", {
+    kind: "command", threadId: "t", turnId: "u", itemId: "c1", startedAtMs: 1790000000000, approvalId: null, environmentId: null,
+    reason: "Necesita crear un archivo", networkApprovalContext: null, command: "touch example", cwd: "/project",
+    commandActions: [{ type: "unknown", command: "touch example" }], proposedExecpolicyAmendment: null, proposedNetworkPolicyAmendments: null,
+  });
+  const files = await rpc.onRequest("item/fileChange/requestApproval", {
+    threadId: "t", turnId: "u", itemId: "f1", startedAtMs: 1790000000000, reason: null, grantRoot: null,
+  });
+  expect(command).toEqual({ decision: "accept" });
+  expect(files).toEqual({ decision: "accept" });
+  expect(asked).toEqual([
+    "Necesita crear un archivo\n\nCarpeta: /project\n\n    touch example",
+    "Cambiar 2 archivos\n\nArchivos:\n- Editar: /project/a.ts\n- Crear: /project/b.ts",
+  ]);
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await pending;
+});

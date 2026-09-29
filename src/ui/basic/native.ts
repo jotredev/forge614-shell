@@ -3,6 +3,7 @@ import { Container, HStack, ProcessTerminal, ScrollView, Text, TuiAltScreen, VSt
 import type { Terminal } from "@earendil-works/pi-tui";
 import type { Approve, Emit, NativeEvent, NativeId, NativeSession, NativeSessionInfo } from "../../engines/types.ts";
 import { createComposer } from "./composer.ts";
+import { askPermission } from "./permission-choice.ts";
 import { resumeChoice, sortRecentFirst } from "./resume-picker.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
@@ -152,11 +153,10 @@ export async function runNativeUI(
   const showApproval = () => {
     const item = approvals[0];
     if (!item) return;
-    write(item.description);
+    transcript.addChild(new ActivityCard(t.permissionRequestedTitle, "", clean(item.description), true));
+    tui.requestRender();
     input.setStatus(t.awaitingPermission);
-    void input.choose(t.permissionFooter, [
-      { value: "/no", label: t.denyLabel }, { value: "/yes", label: t.allowOnceLabel },
-    ]).then(value => item.answer(value === "/yes"));
+    void askPermission(input, locale).then(allowed => item.answer(allowed));
   };
   const approve: Approve = (description, signal) => new Promise(resolve => {
     if (closed || signal.aborted) { resolve(false); return; }
