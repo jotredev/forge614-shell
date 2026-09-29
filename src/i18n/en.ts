@@ -136,7 +136,7 @@ const en: Catalog = {
     startFailed: ({ message }) => `forge614-shell init could not start the interactive terminal session: ${message}`,
   },
   options: {
-    engineInvalidValue: "--engine must be claude, codex or pi.",
+    engineInvalidValue: "--engine must be claude or codex.",
     engineSpecifiedTwice: "Specify --engine only once.",
   },
   logout: {
@@ -203,7 +203,7 @@ const en: Catalog = {
     engineNotOnPath: ({ engine }) => `${engine} is not installed on PATH.`,
     help: ({ version }) => `Forge614-Shell ${version}
 
-Usage: forge614-shell [--engine claude|codex|pi]
+Usage: forge614-shell [--engine claude|codex]
 
 Every interactive startup asks for visual interface, then installed AI engine.
 Basic is available; Full — Coming later is disabled.
@@ -212,7 +212,6 @@ The selected native CLI must already be installed. /login uses its official acco
 Shell does not store subscription credentials or manage billing.
 
   --engine <name>      Legacy option; does not bypass interactive selectors
-  --engine pi          Legacy Pi automation in non-interactive mode only
   --version, -v       Show the Shell version
   update              Download and activate the latest stable release, and refresh Forge614 Engines (and Engram, if installed)
   uninstall           Remove Forge614 Shell from this computer
@@ -231,8 +230,6 @@ Claude sessions: managed by Claude Code, shared with its native history.
 Codex: native history, model catalog, reasoning and reported account limits.
 Login reuses existing accounts.
 Headless uses native permissions, with no interactive tool approvals.
-Pi profile only: ~/.forge614-shell/agent (FORGE614_SHELL_HOME override)
-Pass Pi-specific options after --engine pi.
 
 The selected engine's project settings and permissions apply. This is not a sandbox.`,
   },
@@ -318,7 +315,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     shiftTabToCycle: "Shift+Tab to cycle",
   },
   claudeChat: {
-    cliOptionsUnsupported: "Claude mode currently accepts no CLI options. Use the in-chat commands, or --engine pi for Pi options.",
+    cliOptionsUnsupported: "Claude mode currently accepts no CLI options. Use the in-chat commands.",
     requiresInteractiveTerminal: "Claude chat requires an interactive terminal.",
     catalogLoadFailed: "Could not load the native model catalog. Use /model to retry. Your account remains connected.",
     permissionTooLarge: ({ tool }) => `Denied ${tool}: permission details are too large to display safely. Ask Claude to split the operation.`,

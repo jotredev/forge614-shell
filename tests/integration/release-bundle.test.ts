@@ -27,6 +27,10 @@ if [[ "\${1:-}" == "detect" ]]; then
   echo '{"schemaVersion":1,"agents":[]}'
   exit 0
 fi
+if [[ "\${1:-}" == "capabilities" ]]; then
+  echo '{"schemaVersion":1,"id":"claude-code","supportsMcp":true,"fullySupported":true}'
+  exit 0
+fi
 exit 64
 `);
     await chmod(enginesExecutable, 0o755);

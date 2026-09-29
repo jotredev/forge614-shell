@@ -16,8 +16,8 @@ Forge614-Shell is Forge614's terminal workspace with AI-assisted programming cha
 - Shell is not a sandbox (an environment that independently prevents dangerous changes); permissions come from the selected client.
 - Shell is not a project, tab, or worktree manager (a Git-separated working copy manager). Each instance works from its own directory.
 - Shell does not store subscription credentials or revoke external accounts. `/logout` disconnects only the Shell session.
-- Gemini and Antigravity are unsupported. Pi remains only for legacy non-interactive automation.
-- Cursor can receive Engram MCP configuration, but cannot be launched as Shell chat.
+- Gemini and Antigravity are unsupported.
+- Shell lists only the assistants Forge614 Engines reports as fully supported — today Claude Code and Codex. Assistants Engines does not fully support are not offered, neither for chat nor for Engram setup.
 
 ## Ecosystem relationship
 

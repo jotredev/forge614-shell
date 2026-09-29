@@ -21,13 +21,13 @@ Claude Code usa su flujo oficial de suscripción y Codex usa `app-server` con in
 
 Shell tiene dos adaptadores de chat para la conversación interactiva: Claude Code (que usa el SDK oficial de Anthropic) y Codex (que usa JSON-RPC sobre `app-server`). Shell nunca lanza el binario real de un cliente nativo entregándole la terminal — ni durante `init --product engram`, ni para la verificación del hook de memoria, ni en ningún otro lugar. Si la evidencia de tiempo de ejecución de un hook de memoria realmente se observó es información de estado que reporta Engines, nunca algo que Shell fuerce lanzando un proceso nativo; ver el [documento 07](07-inicializacion-engram-y-mcp.md).
 
-## Pi, Cursor y motores retirados
+## Qué asistentes lista Shell
 
-`--engine pi` es una ruta heredada para automatización no interactiva. Cursor no es un chat de Shell, aunque Engines puede reportarlo para MCP. Gemini y Antigravity ya no tienen directorios, procesos, autenticación ni selector en Shell.
+Toda lista de asistentes que muestra Shell contiene solo los asistentes que Engines informa como de soporte completo (`fullySupported: true` en `capabilities --agent <id>`); hoy Claude Code y Codex. Decide Engines, nunca Shell. Gemini y Antigravity ya no tienen directorios, procesos, autenticación ni selector en Shell.
 
 ## Regla para asistentes nuevos
 
-La llegada de un asistente nuevo a Forge614 Engines activa tres capacidades distintas. Primero, si Engines informa `installed` y `supportsMcp: true`, Shell lo descubre y puede ofrecerle el MCP de Engram automáticamente: no hay lista permitida ni cambio de código de Shell. Segundo, poder conversar con él exige siempre un adaptador de chat nuevo (capa que traduce su protocolo a la interfaz): sesión, autenticación, modelos, cancelación, reanudación y una entrada explícita en la lista de adaptadores de Shell. MCP no sustituye ese trabajo.
+La llegada de un asistente nuevo a Forge614 Engines activa tres capacidades distintas. Primero, si Engines lo informa `installed` y `fullySupported: true`, Shell lo descubre y puede ofrecerle la configuración de Engram automáticamente: no hay lista permitida ni cambio de código de Shell. Si `capabilities` no trae `fullySupported` como booleano, el Engines instalado es demasiado viejo y Shell pide `forge614-shell update`; si la llamada misma falla, ese asistente simplemente no se lista. Segundo, poder conversar con él exige siempre un adaptador de chat nuevo (capa que traduce su protocolo a la interfaz): sesión, autenticación, modelos, cancelación, reanudación y una entrada explícita en la lista de adaptadores de Shell; el selector de chat exige el adaptador y el soporte completo. MCP no sustituye ese trabajo.
 
 Tercero, el indicador de herramientas durante el chat solo existe después de tener ese adaptador. Cada protocolo expresa las llamadas de herramientas de una forma propia; se debe investigar en vivo su formato real con Engram configurado antes de escribir la traducción. No existe una detección genérica y segura para todos los asistentes. La regla completa para asistentes de programación está en [`AGENTS.md`](../../AGENTS.md).
 

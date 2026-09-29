@@ -532,8 +532,9 @@ function detectPayload(agents: { id: string; label: string; executable: string }
   return { schemaVersion: 1, agents: agents.map(a => ({ ...a, installed: true })) };
 }
 
+/** Real-shaped `capabilities --agent` payload of Engines 1.14.0: `fullySupported` is true for Claude Code and Codex and false for Cursor, which still reports `supportsMcp: true`. */
 function capabilitiesPayload(agentId: string) {
-  return { schemaVersion: 1, id: agentId, label: agentId, supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true };
+  return { schemaVersion: 1, id: agentId, label: agentId, supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true, fullySupported: agentId !== "cursor" };
 }
 
 function planPayload(agentId: string, opts: {
@@ -668,37 +669,31 @@ test("Claude Code and Codex both plan, apply, and verify to a complete memory in
   expect(terminal.output).toContain("Close and reopen each configured assistant's session so it loads the new MCP server and memory instructions.");
 });
 
-test("Cursor's memory integration is reported partial, never as fully complete", async () => {
+/**
+ * With only Cursor installed, init offers no assistant and makes no plan, apply or verify call.
+ * Exists because Cursor reports `supportsMcp: true` but Engines marks it `fullySupported: false`, and only fully supported assistants are listed.
+ */
+test("Cursor is not offered by init: with only Cursor installed there is no assistant to configure", async () => {
   const terminal = new TestTerminal();
+  const enginesCalls: string[][] = [];
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
-    enginesRun: async (_command, args) => {
+    enginesRun: async (command, args) => {
+      enginesCalls.push([command, ...args]);
       if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "cursor", label: "Cursor", executable: "/Applications/Cursor.app/Contents/MacOS/Cursor" }])), stderr: "" };
       if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("cursor")), stderr: "" };
-      if (args[0] === "plan") {
-        return {
-          status: 0,
-          stdout: JSON.stringify(planPayload("cursor", {
-            instructionsStatus: { kind: "unsupported", reason: "Cursor has no officially supported mechanism to auto-load global instructions." },
-            overallStatus: "partial",
-          })),
-          stderr: "",
-        };
-      }
-      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-cursor")), stderr: "" };
-      // Engines' own verify semantics: Cursor's instructions are structurally unsupported, so a
-      // present MCP entry is "the complete achievable state for this agent" — Shell must not
-      // pass this "complete" straight through.
-      return { status: 0, stdout: JSON.stringify(verifyPayload("cursor", { instructionsSupported: false, instructionsPresent: false, overallStatus: "complete" })), stderr: "" };
+      return { status: 0, stdout: "{}", stderr: "" };
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); await tick(); // check Cursor, submit
-  terminal.input("\r"); // preview: Confirm
   await run;
-  expect(terminal.output).toContain("Cursor: partially configured — Cursor has no built-in way to automatically load memory instructions yet; the MCP server and memory search still work.");
-  expect(terminal.output).not.toContain("Cursor: configured");
+  expect(enginesCalls).toEqual([
+    ["/Users/tester/.forge614/engines/bin/forge614-engines", "detect"],
+    ["/Users/tester/.forge614/engines/bin/forge614-engines", "capabilities", "--agent", "cursor"],
+  ]);
+  expect(terminal.output).toContain("No compatible AI assistants were found to configure with memory integration.");
+  expect(terminal.output).not.toContain("Cursor");
 });
 
 test("a conflict on every component makes no apply call and reports the conflict", async () => {
@@ -920,43 +915,43 @@ test("an assistant whose plan is already complete and needs no writes is reporte
   expect(afterAltScreenExit).toContain("Claude Code: configured");
 });
 
-test("a plan that claims complete while the instructions are unsupported is still never reported as fully configured", async () => {
+/**
+ * With Claude Code and Cursor installed, only Claude Code is offered and only Claude Code is planned.
+ * Exists because the picker must hide a non-fully-supported assistant even when a fully supported one sits next to it.
+ * (The local defense for an unsupported-instructions plan claiming "complete" stays covered by the `classifyMemoryOutcome` unit test.)
+ */
+test("init offers Claude Code and hides Cursor when both are installed", async () => {
   const terminal = new TestTerminal();
+  const enginesCalls: string[][] = [];
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
-    enginesRun: async (_command, args) => {
-      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "cursor", label: "Cursor", executable: "/Applications/Cursor.app/Contents/MacOS/Cursor" }])), stderr: "" };
-      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("cursor")), stderr: "" };
-      if (args[0] === "plan") {
-        // Engines is not expected to send this combination; Shell defends the invariant locally.
+    enginesRun: async (command, args) => {
+      enginesCalls.push([command, ...args]);
+      if (args[0] === "detect") {
         return {
           status: 0,
-          stdout: JSON.stringify(planPayload("cursor", {
-            noop: true,
-            mcpStatus: { kind: "noop" },
-            instructionsStatus: { kind: "unsupported", reason: "Cursor has no officially supported mechanism to auto-load global instructions." },
-            overallStatus: "complete",
-          })),
+          stdout: JSON.stringify(detectPayload([
+            { id: "cursor", label: "Cursor", executable: "/Applications/Cursor.app/Contents/MacOS/Cursor" },
+            { id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" },
+          ])),
           stderr: "",
         };
       }
-      return {
-        status: 0,
-        stdout: JSON.stringify(verifyPayload("cursor", {
-          instructionsSupported: false, instructionsPresent: false,
-          hookSupported: false, hookRuntimeStatus: { kind: "unsupported" },
-          overallStatus: "complete",
-        })),
-        stderr: "",
-      };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload(agentIdFrom(args))), stderr: "" };
+      if (args[0] === "plan") return { status: 0, stdout: JSON.stringify(planPayload(agentIdFrom(args))), stderr: "" };
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload(args[args.indexOf("--plan-id") + 1]!)), stderr: "" };
+      return { status: 0, stdout: JSON.stringify(verifyPayload(agentIdFrom(args))), stderr: "" };
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); // check Cursor, submit
+  terminal.input(" "); terminal.input("\r"); await tick(); // check the only listed assistant, submit
+  terminal.input("\r"); // preview: Confirm
   await run;
-  expect(terminal.output).toContain("Cursor: partially configured — Cursor has no built-in way to automatically load memory instructions yet; the MCP server and memory search still work.");
-  expect(terminal.output).not.toContain("Cursor: configured");
+  expect(enginesCalls.filter(c => c[1] === "plan" || c[1] === "apply" || c[1] === "verify").some(c => c.includes("cursor"))).toBe(false);
+  expect(enginesCalls.filter(c => c[2] === "memory-install").map(c => agentIdFrom(c))).toEqual(["claude-code"]);
+  expect(terminal.output).toContain("Claude Code: configured");
+  expect(terminal.output).not.toContain("Cursor");
 });
 
 test("a PostgreSQL connection string never reaches the screen or the log through the whole memory-integration flow", async () => {
@@ -1208,44 +1203,27 @@ test("a genuine hook conflict is reported blocked even when MCP and instructions
   expect(terminal.output).not.toMatch(/Claude Code:\s*(configured|ready)/);
 });
 
-test("Cursor never appears as a complete automatic memory integration, even with the hook component present", async () => {
+/**
+ * Init on a computer whose Engines is older than 1.14.0 (no `fullySupported` in capabilities) stops with an update request.
+ * Exists because guessing the missing field would either offer partially supported assistants or hide supported ones.
+ */
+test("init asks to update Engines when capabilities has no fullySupported field", async () => {
   const terminal = new TestTerminal();
+  const enginesCalls: string[][] = [];
   const run = runInitCommand(["--product", "engram"], {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
-    enginesRun: async (_command, args) => {
-      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "cursor", label: "Cursor", executable: "/Applications/Cursor.app/Contents/MacOS/Cursor" }])), stderr: "" };
-      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("cursor")), stderr: "" };
-      if (args[0] === "plan") {
-        return {
-          status: 0,
-          stdout: JSON.stringify(planPayload("cursor", {
-            instructionsStatus: { kind: "unsupported", reason: "Cursor has no officially supported mechanism to auto-load global instructions." },
-            hookStatus: { kind: "unsupported", reason: "Cursor has no officially supported, stable session-start hook mechanism this installer configures" },
-            hookRuntimeStatus: { kind: "unsupported" },
-            overallStatus: "partial",
-          })),
-          stderr: "",
-        };
-      }
-      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-cursor")), stderr: "" };
-      return {
-        status: 0,
-        stdout: JSON.stringify(verifyPayload("cursor", {
-          instructionsSupported: false, instructionsPresent: false,
-          hookSupported: false, hookRuntimeStatus: { kind: "unsupported" },
-          overallStatus: "complete",
-        })),
-        stderr: "",
-      };
+    enginesRun: async (command, args) => {
+      enginesCalls.push([command, ...args]);
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }])), stderr: "" };
+      const { fullySupported: _omitted, ...legacy } = capabilitiesPayload("claude-code");
+      return { status: 0, stdout: JSON.stringify(legacy), stderr: "" };
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); await tick(); // check Cursor, submit
-  terminal.input("\r"); // preview: Confirm
   await run;
-  expect(terminal.output).not.toContain("Cursor: configured");
-  expect(terminal.output).toContain("Cursor: partially configured — Cursor has no built-in way to automatically load memory instructions yet; the MCP server and memory search still work.");
+  expect(enginesCalls.some(c => c[1] === "plan" || c[1] === "apply")).toBe(false);
+  expect(terminal.output).toContain('Run "forge614-shell update"');
 });
 
 test("no run of this flow ever prints a PostgreSQL connection string, a token, or an afterContent/beforeHash value, across every log line and every terminal frame", async () => {

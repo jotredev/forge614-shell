@@ -31,21 +31,81 @@ const report = {
   ],
 };
 
-test("uses the published Engines detect contract and maps only Shell chat adapters", async () => {
-  const calls: string[][] = [];
-  const engines = await discoverSelectableEngines({
-    home: "/Users/tester",
-    run: async (command, args) => {
-      calls.push([command, ...args]);
-      return { status: 0, stdout: JSON.stringify(report), stderr: "" };
-    },
-  });
+const BIN = "/Users/tester/.forge614/engines/bin/forge614-engines";
 
-  expect(calls).toEqual([["/Users/tester/.forge614/engines/bin/forge614-engines", "detect"]]);
+/** Builds an Engines `run` double: `detect` returns `detectReport`, `capabilities --agent <id>` returns `capsFor(id)` and every call is recorded in `calls`. */
+function enginesDouble(detectReport: unknown, capsFor: (id: string) => Record<string, unknown>, calls: string[][] = []) {
+  return async (command: string, args: string[]) => {
+    calls.push([command, ...args]);
+    if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectReport), stderr: "" };
+    const id = args[args.indexOf("--agent") + 1] as string;
+    return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, id, label: id, supportsMcp: true, ...capsFor(id) }), stderr: "" };
+  };
+}
+
+/** Fully-supported map as Engines 1.14.0 reports it today: Claude Code and Codex yes, Cursor no. */
+const fullySupportedToday = (id: string) => ({ fullySupported: id !== "cursor" });
+
+/**
+ * The chat selector offers only what Engines calls `fullySupported` AND Shell has an adapter for.
+ * Exists because the owner's rule is that Engines, never Shell, decides which assistants are listed.
+ */
+test("the chat selector keeps only installed agents Engines reports fullySupported that Shell has an adapter for", async () => {
+  const calls: string[][] = [];
+  const engines = await discoverSelectableEngines({ home: "/Users/tester", run: enginesDouble(report, fullySupportedToday, calls) });
+
+  expect(calls).toEqual([
+    [BIN, "detect"],
+    [BIN, "capabilities", "--agent", "claude-code"],
+    [BIN, "capabilities", "--agent", "codex"],
+  ]);
   expect(engines).toEqual([
     { id: "claude", label: "Claude Code", executable: "/usr/local/bin/claude" },
     { id: "codex", label: "Codex", executable: "/usr/local/bin/codex" },
   ]);
+});
+
+/**
+ * An installed agent with `fullySupported: false` is dropped silently from the chat selector.
+ * Exists so a partially supported assistant Shell can already chat with never shows up as a full one.
+ */
+test("the chat selector excludes an installed chat-capable agent whose fullySupported is false, without error", async () => {
+  const engines = await discoverSelectableEngines({
+    home: "/Users/tester",
+    run: enginesDouble(report, id => ({ fullySupported: id !== "codex" })),
+  });
+  expect(engines).toEqual([{ id: "claude", label: "Claude Code", executable: "/usr/local/bin/claude" }]);
+});
+
+/**
+ * The chat selector INTERSECTS Engines' full-support verdict with `supportedShellAdapters`.
+ * Exists because a future fullySupported agent without a Shell chat adapter must not be offered as chat.
+ */
+test("the chat selector still excludes a fullySupported agent that has no Shell chat adapter", async () => {
+  const withNewAgent = { schemaVersion: 1, agents: [...report.agents, { id: "gemini", label: "Gemini", installed: true, executable: "/usr/local/bin/gemini" }] };
+  const calls: string[][] = [];
+  const engines = await discoverSelectableEngines({ home: "/Users/tester", run: enginesDouble(withNewAgent, () => ({ fullySupported: true }), calls) });
+  expect(engines.map(engine => engine.id)).toEqual(["claude", "codex"]);
+  expect(calls.some(call => call.includes("gemini"))).toBe(false);
+});
+
+/**
+ * Capabilities without a boolean `fullySupported` means an Engines older than 1.14.0; the chat selector must ask for an update.
+ * Exists because guessing (true or false) would either show a partial assistant or hide a supported one; versions are never compared.
+ */
+test("the chat selector reports engines-outdated when capabilities has no boolean fullySupported", async () => {
+  const error = await discoverSelectableEngines({
+    home: "/Users/tester",
+    run: enginesDouble(report, () => ({})),
+  }).catch((thrown: unknown) => thrown);
+  expect(error).toBeInstanceOf(ShellError);
+  expect((error as ShellError).code).toBe("engines-outdated");
+
+  const notBoolean = await discoverSelectableEngines({
+    home: "/Users/tester",
+    run: enginesDouble(report, () => ({ fullySupported: "yes" })),
+  }).catch((thrown: unknown) => thrown);
+  expect((notBoolean as ShellError).code).toBe("engines-outdated");
 });
 
 test("rejects an unavailable or incompatible Engines installation instead of falling back to local discovery", async () => {
@@ -64,40 +124,64 @@ test("rejects malformed detect output", async () => {
   })).rejects.toThrow("invalid detection result");
 });
 
-test("discoverMcpCapableAgents checks capabilities per installed agent and keeps only supportsMcp:true", async () => {
+/**
+ * `init --product engram` lists agents by Engines' `fullySupported`, not by `supportsMcp`.
+ * Exists because Cursor reports `supportsMcp: true` yet is not fully supported, so it must not be offered.
+ */
+test("discoverMcpCapableAgents checks capabilities per installed agent and keeps only fullySupported:true", async () => {
   const calls: string[][] = [];
   const agents = await discoverMcpCapableAgents({
     home: "/Users/tester",
-    run: async (command, args) => {
-      calls.push([command, ...args]);
-      if (args[0] === "detect") {
-        return {
-          status: 0,
-          stdout: JSON.stringify({
-            schemaVersion: 1,
-            agents: [
-              { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude", configDir: "/x", configFound: true },
-              { id: "codex", label: "Codex", installed: true, executable: "/usr/local/bin/codex", configDir: "/x", configFound: true },
-              { id: "cursor", label: "Cursor", installed: false, executable: undefined, configDir: "/x", configFound: false },
-            ],
-          }),
-          stderr: "",
-        };
-      }
-      const agentId = args[args.indexOf("--agent") + 1];
-      return {
-        status: 0,
-        stdout: JSON.stringify({ schemaVersion: 1, id: agentId, label: agentId, supportsMcp: agentId === "claude-code", supportsHooks: true, supportsHeadlessExec: true }),
-        stderr: "",
-      };
-    },
+    run: enginesDouble(
+      {
+        schemaVersion: 1,
+        agents: [
+          { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude", configDir: "/x", configFound: true },
+          { id: "codex", label: "Codex", installed: true, executable: "/usr/local/bin/codex", configDir: "/x", configFound: true },
+          { id: "cursor", label: "Cursor", installed: true, executable: "/Applications/Cursor.app/Contents/MacOS/Cursor", configDir: "/x", configFound: true },
+          { id: "gemini", label: "Gemini", installed: false, executable: undefined, configDir: "/x", configFound: false },
+        ],
+      },
+      fullySupportedToday,
+      calls,
+    ),
   });
   expect(calls).toEqual([
-    ["/Users/tester/.forge614/engines/bin/forge614-engines", "detect"],
-    ["/Users/tester/.forge614/engines/bin/forge614-engines", "capabilities", "--agent", "claude-code"],
-    ["/Users/tester/.forge614/engines/bin/forge614-engines", "capabilities", "--agent", "codex"],
+    [BIN, "detect"],
+    [BIN, "capabilities", "--agent", "claude-code"],
+    [BIN, "capabilities", "--agent", "codex"],
+    [BIN, "capabilities", "--agent", "cursor"],
   ]);
-  expect(agents).toEqual([{ id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" }]);
+  expect(agents).toEqual([
+    { id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" },
+    { id: "codex", label: "Codex", executable: "/usr/local/bin/codex" },
+  ]);
+});
+
+/**
+ * An installed agent with `fullySupported: false` is not offered by init, even with `supportsMcp: true`.
+ * Exists as the direct guard against going back to filtering by `supportsMcp`.
+ */
+test("discoverMcpCapableAgents excludes an installed agent with fullySupported:false even when supportsMcp is true", async () => {
+  const agents = await discoverMcpCapableAgents({
+    home: "/Users/tester",
+    run: enginesDouble(report, () => ({ supportsMcp: true, fullySupported: false })),
+  });
+  expect(agents).toEqual([]);
+});
+
+/**
+ * Capabilities without a boolean `fullySupported` (Engines older than 1.14.0) makes init fail with `engines-outdated`.
+ * Exists because treating a missing field as true would offer partial assistants; the message asks for `forge614-shell update`.
+ */
+test("discoverMcpCapableAgents reports engines-outdated when capabilities has no fullySupported field", async () => {
+  const error = await discoverMcpCapableAgents({
+    home: "/Users/tester",
+    run: enginesDouble(report, () => ({ supportsMcp: true })),
+  }).catch((thrown: unknown) => thrown);
+  expect(error).toBeInstanceOf(ShellError);
+  expect((error as ShellError).code).toBe("engines-outdated");
+  expect(describeError(error, "en")).toContain("forge614-shell update");
 });
 
 test("discoverMcpCapableAgents excludes an agent whose capabilities lookup fails, instead of crashing", async () => {

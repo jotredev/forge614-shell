@@ -8,7 +8,7 @@ Three separate concerns. Do not conflate them — each requires a different (or 
 
 ### 1. MCP capability detection & configuration — automatic, zero Shell code changes
 
-`discoverMcpCapableAgents` (`src/infrastructure/forge614-engines.ts`) has no agent-id allowlist. It shows — and lets the person configure — the `forge614-engram` MCP server for whatever Engines' `detect` + `capabilities --agent <id>` reports as `installed && supportsMcp`. A new Engines-side agent appears automatically in the `forge614-shell init --product engram` MCP picker. Nothing to build here.
+`discoverMcpCapableAgents` (`src/infrastructure/forge614-engines.ts`) has no agent-id allowlist. It shows — and lets the person configure — the `forge614-engram` MCP server for whatever Engines' `detect` + `capabilities --agent <id>` reports as installed and `fullySupported: true` (not `supportsMcp`: the owner's rule is that every assistant list in Shell shows only what Engines fully supports). A new Engines-side agent appears automatically in the `forge614-shell init --product engram` picker once it is installed and `fullySupported`; a `capabilities` response without a boolean `fullySupported` means an outdated Engines (`engines-outdated`); if the call itself fails, that agent is simply not listed. Nothing to build here. Chatting with it additionally needs its adapter in Shell (section 2): the chat selector intersects `fullySupported` with `supportedShellAdapters`.
 
 ### 2. Chat adapter (talking to the assistant live, from inside Shell) — always requires new code, independent of MCP/memory
 

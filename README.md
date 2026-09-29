@@ -6,8 +6,8 @@ Shell is a TypeScript application run with Bun and Node.js 22.19+. It is the hum
 
 ## Boundaries
 
-- Interactive chat adapters exist for Claude Code and OpenAI Codex. Pi remains a legacy non-interactive path only.
-- Cursor can be configured with Engram's MCP server when Engines reports MCP support, but its memory instructions cannot: Cursor has no official mechanism to auto-load global instructions, so Shell reports it as partially configured and never as complete. Shell also has no Cursor chat adapter.
+- Interactive chat adapters exist for Claude Code and OpenAI Codex.
+- Every assistant list Shell shows contains only the assistants Forge614 Engines reports as fully supported (`fullySupported`); today that is Claude Code and Codex. Engines decides, never Shell, and Shell asks you to run `forge614-shell update` if the installed Engines is too old to say.
 - Gemini and Antigravity are not supported by Shell.
 - Shell never falls back to scanning `PATH` itself when Forge614 Engines is missing or incompatible.
 - Shell does not store subscription credentials, revoke external accounts, create projects during Engram initialization, or display MCP configuration-file contents.

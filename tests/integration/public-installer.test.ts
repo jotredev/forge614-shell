@@ -29,10 +29,21 @@ async function createRelease(root: string) {
   };
 }
 
-function enginesBinaryScript(schemaVersion = 1): string {
+/**
+ * Fake Engines binary. By default it behaves like Engines 1.14.0 (`capabilities` reports a boolean `fullySupported`);
+ * `fullySupported: false` in the options models an older Engines whose capabilities lack the field.
+ */
+function enginesBinaryScript(schemaVersion = 1, withFullySupportedField = true): string {
+  const capabilities = withFullySupportedField
+    ? `{"schemaVersion":1,"id":"claude-code","supportsMcp":true,"fullySupported":true}`
+    : `{"schemaVersion":1,"id":"claude-code","supportsMcp":true}`;
   return `#!/usr/bin/env bash
 if [[ "\${1:-}" == "detect" ]]; then
   echo '{"schemaVersion":${schemaVersion},"agents":[]}'
+  exit 0
+fi
+if [[ "\${1:-}" == "capabilities" ]]; then
+  echo '${capabilities}'
   exit 0
 fi
 exit 64
@@ -183,6 +194,45 @@ test.skipIf(process.platform === "win32")("an already compatible Engines install
       });
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Using compatible Forge614 Engines");
+    } finally {
+      server.stop(true);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * An installed Engines whose `capabilities` lacks the boolean `fullySupported` (older than 1.14.0) is NOT reused: the installer fetches the latest one.
+ * Exists because Shell's assistant lists depend on that field, so a schema-compatible but old Engines would break `init` and the chat selector.
+ */
+test.skipIf(process.platform === "win32")("an Engines installation without fullySupported is replaced by the latest one", async () => {
+  const root = await mkdtemp(join(tmpdir(), "forge614-public-engines-outdated-"));
+  const home = join(root, "home");
+  const forgeHome = join(home, ".forge614");
+  try {
+    const release = await createRelease(root);
+    const enginesBin = join(forgeHome, "engines", "bin");
+    const enginesExecutable = join(enginesBin, "forge614-engines");
+    await mkdir(enginesBin, { recursive: true });
+    await writeFile(enginesExecutable, enginesBinaryScript(1, false));
+    await chmod(enginesExecutable, 0o755);
+    const server = latestServer(release, release.checksum, enginesInstallerScript());
+    try {
+      const result = await run(["bash", "scripts/install.sh", "--latest"], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: home,
+          SHELL: "/bin/zsh",
+          FORGE614_HOME: forgeHome,
+          FORGE614_RELEASE_API_URL: `${server.url}latest`,
+          FORGE614_ENGINES_INSTALLER_URL: `${server.url}engines-install.sh`,
+        },
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).not.toContain("Using compatible Forge614 Engines");
+      expect(result.stdout).toContain("Installed Forge614 Engines");
     } finally {
       server.stop(true);
     }

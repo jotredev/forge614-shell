@@ -136,7 +136,7 @@ const es: Catalog = {
     startFailed: ({ message }) => `forge614-shell init no pudo iniciar la sesión interactiva de terminal: ${message}`,
   },
   options: {
-    engineInvalidValue: "--engine debe ser claude, codex o pi.",
+    engineInvalidValue: "--engine debe ser claude o codex.",
     engineSpecifiedTwice: "Especifica --engine solo una vez.",
   },
   logout: {
@@ -203,7 +203,7 @@ const es: Catalog = {
     engineNotOnPath: ({ engine }) => `${engine} no está instalado en el PATH.`,
     help: ({ version }) => `Forge614-Shell ${version}
 
-Uso: forge614-shell [--engine claude|codex|pi]
+Uso: forge614-shell [--engine claude|codex]
 
 Cada arranque interactivo pregunta primero por la interfaz visual y luego por el motor de IA instalado.
 Basic está disponible; Full — Próximamente está deshabilitado.
@@ -212,7 +212,6 @@ El CLI nativo seleccionado debe estar ya instalado. /login usa su flujo oficial 
 Shell no guarda credenciales de suscripción ni administra facturación.
 
   --engine <nombre>    Opción heredada; no evita los selectores interactivos
-  --engine pi          Automatización heredada de Pi solo en modo no interactivo
   --version, -v       Muestra la versión de Shell
   update              Descarga y activa la última versión estable, y actualiza Forge614 Engines (y Engram, si está instalado)
   uninstall           Elimina Forge614 Shell de este equipo
@@ -231,8 +230,6 @@ Sesiones de Claude: administradas por Claude Code, compartidas con su historial 
 Codex: historial nativo, catálogo de modelos, razonamiento y límites de cuenta reportados.
 El login reutiliza cuentas existentes.
 El modo headless usa permisos nativos, sin aprobaciones interactivas de herramientas.
-Perfil Pi únicamente: ~/.forge614-shell/agent (anulado por FORGE614_SHELL_HOME)
-Pasa opciones específicas de Pi después de --engine pi.
 
 Se aplican la configuración y los permisos del proyecto del motor seleccionado. Esto no es un sandbox.`,
   },
@@ -318,7 +315,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     shiftTabToCycle: "Shift+Tab para cambiar",
   },
   claudeChat: {
-    cliOptionsUnsupported: "El modo Claude actualmente no acepta opciones de línea de comandos. Usa los comandos dentro del chat, o --engine pi para las opciones de Pi.",
+    cliOptionsUnsupported: "El modo Claude actualmente no acepta opciones de línea de comandos. Usa los comandos dentro del chat.",
     requiresInteractiveTerminal: "El chat de Claude requiere una terminal interactiva.",
     catalogLoadFailed: "No se pudo cargar el catálogo nativo de modelos. Usa /model para reintentar. Tu cuenta sigue conectada.",
     permissionTooLarge: ({ tool }) => `Se denegó ${tool}: los detalles del permiso son demasiado grandes para mostrarse de forma segura. Pide a Claude que divida la operación.`,
