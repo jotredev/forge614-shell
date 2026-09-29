@@ -13,6 +13,7 @@ import { effortDescription, effortLabel } from "./metrics.ts";
 import { ChatText, danger } from "./theme.ts";
 import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
 import { discoverCodexSkills } from "../../engines/codex/skills.ts";
+import { workingStatus } from "./duration.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 import { describeError } from "../../shell-error.ts";
@@ -95,8 +96,8 @@ export async function runNativeUI(
       });
     }
     sidebar.invalidate();
-    const elapsed = turnStartedAt ? ` · ${Math.max(0, Math.floor((Date.now() - turnStartedAt) / 1000))}s` : "";
-    input.setStatus(session.busy || commandBusy ? `${t.statusWorking}${elapsed}` : shellState.snapshot().account === "connected" ? t.statusReady : t.statusConnectWithLogin);
+    const working = turnStartedAt !== undefined ? workingStatus(t.statusWorking, session.currentActivity?.(), (Date.now() - turnStartedAt) / 1000) : t.statusWorking;
+    input.setStatus(session.busy || commandBusy ? working : shellState.snapshot().account === "connected" ? t.statusReady : t.statusConnectWithLogin);
     input.setWorkModeHint(session.workMode?.());
     statusBar.invalidate();
     tui.requestRender();

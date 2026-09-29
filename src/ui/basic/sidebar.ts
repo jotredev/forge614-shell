@@ -1,9 +1,10 @@
-import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
 import type { ShellSnapshot } from "./shell-state.ts";
 import { readProjectInfo, type ProjectInfo } from "../../infrastructure/project-info.ts";
 import { formatMemory } from "../../infrastructure/runtime-resources.ts";
 import { ActivityCard } from "./transcript.ts";
+import { formatDuration } from "./duration.ts";
 
 import { accent as mint, warning as amber, muted, border, success } from "./theme.ts";
 import { compactNumber, contextRing, formatCount, formatUsd, isDisplayableUsage, progressBar, resetLabel, usageTitle } from "./metrics.ts";
@@ -125,11 +126,14 @@ export class ShellSidebar implements Component {
         lines.push(line(muted(ba.idle)));
       } else {
         for (const activity of snapshot.backgroundActivity) {
-          const elapsedMs = (activity.endedAt ?? Date.now()) - activity.startedAt;
-          const elapsed = elapsedMs < 60_000 ? ba.elapsedSeconds({ seconds: Math.max(0, Math.floor(elapsedMs / 1000)) }) : ba.elapsedMinutes({ minutes: Math.max(0, Math.floor(elapsedMs / 60_000)) });
+          const elapsed = formatDuration(((activity.endedAt ?? Date.now()) - activity.startedAt) / 1000);
           const stateLabel = activity.state === "running" ? ba.running : activity.state === "done" ? ba.done : ba.failed;
           const expanded = this.expandedActivityIds.has(activity.id);
-          const card = new ActivityCard(activity.label, `${stateLabel} · ${elapsed}`, (activity.detail ?? "").slice(0, 2000), expanded, undefined, 0);
+          const status = `${stateLabel} · ${elapsed}`;
+          // One row: the title gives way (cut with "…") so the state and time stay visible; expanded, the full title shows.
+          const room = Math.max(1, width - visibleWidth(`• `) - visibleWidth(` · ${status}`));
+          const title = expanded ? activity.label : truncateToWidth(activity.label.replace(/\s+/g, " "), room, "…");
+          const card = new ActivityCard(title, status, (activity.detail ?? "").slice(0, 2000), expanded, undefined, 0, false);
           const cardLines = card.render(width);
           // Collapsed cards render ["", summary, preview?] — the title sits at index 1.
           // Expanded cards render ["", padding, "▾ title", ...body, padding, ""] — the title sits at index 2.

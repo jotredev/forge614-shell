@@ -292,3 +292,32 @@ test("background-activity rows keep their bullet at the left edge of the sidebar
   const row = sidebar.render(36).map(stripVTControlCharacters).find(line => line.includes("Investigar X"));
   expect(row).toStartWith("• Investigar X");
 });
+
+/** Mejora 14: cada tarea de fondo ocupa UN renglón con título, estado y tiempo legible; ya no repite el título en una segunda línea `└` cuando el detalle (la descripción del motor) dice lo mismo. El detalle sigue viéndose al hacer clic. */
+test("a background task is one row with its state and readable time, without repeating its title", () => {
+  const title = "Apply the patch and run verification";
+  const sidebar = new ShellSidebar(() => ({
+    account: "connected", provider: "Claude",
+    backgroundActivitySupported: true,
+    backgroundActivity: [{ id: "t1", kind: "process", label: title, state: "running", startedAt: Date.now() - 503_000, detail: `${title}\nsecond line` }],
+  }));
+  const rows = sidebar.render(60).map(stripVTControlCharacters);
+  const at = rows.findIndex(row => row.includes(title));
+  expect(rows[at]!.trimEnd()).toBe(`• ${title} · running · 8m 23s`);
+  expect(rows.filter(row => row.includes(title))).toHaveLength(1);
+  expect(rows.some(row => row.includes("└"))).toBe(false);
+});
+
+/** En la columna angosta el título largo se recorta con «…» para que el estado y el tiempo (lo que importa a la vista) sigan visibles en el mismo renglón; nunca salta a dos renglones. */
+test("in a narrow sidebar the title is cut, not the state or the time", () => {
+  const sidebar = new ShellSidebar(() => ({
+    account: "connected", provider: "Claude",
+    backgroundActivitySupported: true,
+    backgroundActivity: [{ id: "t1", kind: "agent", label: "Apply the patch and run the whole verification suite", state: "done", startedAt: Date.now() - 3_720_000, endedAt: Date.now() }],
+  }));
+  const rows = sidebar.render(34).map(stripVTControlCharacters);
+  const row = rows.find(line => line.startsWith("• Apply"))!;
+  expect(row.trimEnd()).toMatch(/… · done · 1h 02m$/);
+  expect(visibleWidth(row)).toBeLessThanOrEqual(34);
+  expect(rows.filter(line => line.includes("verification"))).toHaveLength(0);
+});

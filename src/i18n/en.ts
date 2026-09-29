@@ -345,9 +345,9 @@ The selected engine's project settings and permissions apply. This is not a sand
     couldNotVerifyAccount: "Could not verify your Claude account. Use /login to retry.",
     statusCheckingAccount: "Checking account",
     toolRequested: "Requested",
-    toolRunning: ({ seconds }) => `Running · ${seconds}s`,
-    toolCompleted: ({ seconds }) => `Completed · ${seconds}s`,
-    toolFailed: ({ seconds }) => `Failed · ${seconds}s`,
+    toolRunning: ({ duration }) => `Running · ${duration}`,
+    toolCompleted: ({ duration }) => `Completed · ${duration}`,
+    toolFailed: ({ duration }) => `Failed · ${duration}`,
   },
   telemetry: {
     notReported: "not reported",
@@ -444,8 +444,6 @@ The selected engine's project settings and permissions apply. This is not a sand
     failed: "failed",
     idle: "Nothing running in the background right now.",
     notReportedByEngine: "This engine doesn't report background activity.",
-    elapsedSeconds: ({ seconds }) => `${seconds}s`,
-    elapsedMinutes: ({ minutes }) => `${minutes}m`,
     statusBarCount: ({ count }) => `${count} background`,
   },
   update: {

@@ -21,6 +21,8 @@ import { lineDiff } from "./diff.ts";
 import { engramToolLabel, parseClaudeMcpToolName } from "../../engines/mcp-labels.ts";
 import { ChatText, danger } from "./theme.ts";
 import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
+import { workingStatus } from "./duration.ts";
+import { ToolTracker } from "./tool-tracker.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 import { describeError } from "../../shell-error.ts";
@@ -115,7 +117,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   let sessions: Awaited<ReturnType<typeof listSessions>> = [];
   let streaming: ChatText | undefined;
   let streamedText = "";
-  const tools = new Map<string, { card: ActivityCard; startedAt: number; isEdit: boolean }>();
+  const toolTracker = new ToolTracker(card => { transcript.addChild(card); tui.requestRender(); }, tc);
   // Remembers the person's own /model and /effort picks across Shell restarts — the native `claude`
   // CLI remembers its own picks the same way when used directly; Shell keeps its own copy rather
   // than writing into the native CLI's config file, which Shell does not own.
@@ -187,8 +189,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       });
     }
     sidebar.invalidate();
-    const elapsed = turnStartedAt ? ` · ${Math.max(0, Math.floor((Date.now() - turnStartedAt) / 1000))}s` : "";
-    input.setStatus(commandBusy || session.busy ? `${t.statusWorking}${elapsed}` : shellState.snapshot().account === "connected" ? t.statusReady : shellState.snapshot().account === "checking" ? tc.statusCheckingAccount : t.statusConnectWithLogin);
+    const working = turnStartedAt !== undefined ? workingStatus(t.statusWorking, toolTracker.currentActivity(), (Date.now() - turnStartedAt) / 1000) : t.statusWorking;
+    input.setStatus(commandBusy || session.busy ? working : shellState.snapshot().account === "connected" ? t.statusReady : shellState.snapshot().account === "checking" ? tc.statusCheckingAccount : t.statusConnectWithLogin);
     input.setWorkModeHint(session.workMode());
     statusBar.invalidate();
     tui.requestRender();
@@ -206,6 +208,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   };
   const endTurn = () => {
     turnStartedAt = undefined;
+    toolTracker.endTurn();
     clearInterval(turnTicker);
     turnTicker = undefined;
   };
@@ -280,33 +283,22 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         else writeChat("assistant", text);
         streaming = undefined; streamedText = "";
       }
-      for (const block of event.message.content) if (block.type === "tool_use" && !tools.has(block.id)) {
+      for (const block of event.message.content) if (block.type === "tool_use") {
         const edit = editContent(block.name, block.input);
         const parsed = parseClaudeMcpToolName(block.name);
         const label = (parsed && engramToolLabel(parsed.server, parsed.tool)) ?? (edit?.path ? `${block.name} · ${edit.path.split("/").pop()}` : block.name);
         const card = edit
           ? new ActivityCard(label, tc.toolRequested, "", true, lineDiff(edit.before, edit.after))
           : new ActivityCard(label, tc.toolRequested, clean(JSON.stringify(block.input, null, 2)).slice(0, 2000));
-        tools.set(block.id, { card, startedAt: Date.now(), isEdit: Boolean(edit) }); transcript.addChild(card);
+        const description = (block.input as { description?: unknown } | undefined)?.description;
+        if (toolTracker.request(block.id, card, { isEdit: Boolean(edit), title: label, ...(typeof description === "string" && description.trim() ? { activity: description } : {}) })) transcript.addChild(card);
       }
     }
-    if (event.type === "tool_progress") {
-      const tool = tools.get(event.tool_use_id);
-      if (tool) tool.card.update(tc.toolRunning({ seconds: event.elapsed_time_seconds }));
-      else writeActivity(event.tool_name, tc.toolRunning({ seconds: event.elapsed_time_seconds }));
-    }
+    if (event.type === "tool_progress") toolTracker.progress(event.tool_use_id, event.tool_name, event.elapsed_time_seconds);
     if (event.type === "user" && Array.isArray(event.message.content)) {
       for (const block of event.message.content) if (block.type === "tool_result") {
-        const tool = tools.get(block.tool_use_id);
-        if (tool) {
-          const elapsedSeconds = ((Date.now() - tool.startedAt) / 1000).toFixed(1);
-          const status = block.is_error ? tc.toolFailed({ seconds: elapsedSeconds }) : tc.toolCompleted({ seconds: elapsedSeconds });
-          if (tool.isEdit) tool.card.update(status);
-          else {
-            const detail = typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
-            tool.card.update(status, clean(detail).slice(0, 3000));
-          }
-        }
+        const detail = typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
+        toolTracker.finished(block.tool_use_id, Boolean(block.is_error), clean(detail).slice(0, 3000));
       }
     }
     if (event.type === "result" && event.is_error) writeError(tc.claudeError({ message: event.subtype === "success" ? event.result : event.errors.join("\n") }));
