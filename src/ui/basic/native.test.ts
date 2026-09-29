@@ -103,8 +103,9 @@ function localDouble(overrides: Partial<CodexLocalTools> = {}) {
 }
 
 /** A Codex fixture with the native modes available, Codex's two collaboration modes, and a turn that stays open until the test completes it. */
-function codexUi(locale: "en" | "es" = "en", configure: (rpc: FixtureRpc) => void = () => {}, local = localDouble()) {
+function codexUi(locale: "en" | "es" = "en", configure: (rpc: FixtureRpc) => void = () => {}, local = localDouble(), columns = 100) {
   const terminal = new TestTerminal(); const rpc = new FixtureRpc();
+  terminal.columns = columns;
   rpc.replies.set("initialize", {});
   rpc.replies.set("account/read", { account: { type: "chatgpt" }, requiresOpenaiAuth: true });
   rpc.replies.set("configRequirements/read", { requirements: null });
@@ -595,20 +596,128 @@ test("Codex command results are shown in Spanish when Shell's language is Spanis
   } finally { h.enter("/quit!"); await h.ui; }
 });
 
-/** The `$` autocomplete lists Codex's own catalog (`skills/list`), and sending it reaches Codex as a real skill item with its path. */
-test("$ autocompletes from skills/list and the chosen skill is sent as a skill item", async () => {
-  const h = codexUi("en", rpc => rpc.replies.set("skills/list", skillCatalog));
+/**
+ * The `$` autocomplete lists Codex's own catalog (`skills/list`). Choosing a skill with Enter (or Tab) only puts «$review-pr »
+ * in the box, like Codex: the person goes on writing and the next Enter sends the whole message, which reaches Codex as text plus
+ * a real skill item with its path. Changed after the real-account test, where Enter sent «$find-skills» alone at once.
+ */
+for (const key of ["\r", "\t"]) {
+  test(`$ autocompletes from skills/list; ${key === "\r" ? "Enter" : "Tab"} on a skill fills the box and the next Enter sends it as a skill item`, async () => {
+    const h = codexUi("en", rpc => rpc.replies.set("skills/list", skillCatalog));
+    try {
+      await tick(); h.terminal.output = ""; h.terminal.input("$rev"); await tick();
+      expect(h.plain()).toContain("Review a pull request");
+      expect(h.plain()).toContain("CODEX SKILLS");
+      expect(h.plain()).toContain("Skills · 1–1 of 1");
+      h.terminal.input(key); await tick(); await tick();
+      expect(h.rpc.calls.some(call => call.method === "turn/start")).toBe(false);
+      h.terminal.input("check the PR"); await tick();
+      h.terminal.input("\r"); await tick(); await tick();
+      const turn = h.rpc.calls.find(call => call.method === "turn/start")!;
+      expect(turn.params.input).toEqual([
+        { type: "text", text: "$review-pr check the PR" },
+        { type: "skill", name: "review-pr", path: "/project/.agents/skills/review-pr/SKILL.md" },
+      ]);
+      h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+      await tick();
+    } finally { h.enter("/quit!"); await h.ui; }
+  });
+}
+
+/** In Spanish the `$` list is titled and counted as skills («HABILIDADES DE CODEX», «Habilidades · 1–1 de 1»), never «Comandos». */
+test("the $ list reads «HABILIDADES DE CODEX» and «Habilidades · 1–1 de 1» in Spanish", async () => {
+  const h = codexUi("es", rpc => rpc.replies.set("skills/list", skillCatalog));
   try {
     await tick(); h.terminal.output = ""; h.terminal.input("$rev"); await tick();
-    expect(h.plain()).toContain("Review a pull request");
-    h.terminal.input("\r"); await tick(); await tick();
-    const turn = h.rpc.calls.find(call => call.method === "turn/start")!;
-    expect(turn.params.input).toEqual([
-      { type: "text", text: "$review-pr" },
-      { type: "skill", name: "review-pr", path: "/project/.agents/skills/review-pr/SKILL.md" },
-    ]);
-    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+    expect(h.plain()).toContain("HABILIDADES DE CODEX");
+    expect(h.plain()).toContain("Habilidades · 1–1 de 1");
+    expect(h.plain()).not.toContain("Comandos · 1");
+    h.terminal.input("\x1b"); for (let i = 0; i < 4; i++) h.terminal.input("\x7f"); await tick();
+  } finally { h.enter("/quit!"); await h.ui; }
+});
+
+/**
+ * Came out of the real-account test: after typing `/compact` the box said «Ready» for seconds and only later «Working». As Codex does
+ * (`chatwidget/compaction.rs:6-7`, «Compacting context» / «Making room to continue.»), the box says so at once, with the time going
+ * up, until «Conversation compacted.» Codex reports no real progress, so there is no bar.
+ */
+test("/compact shows «Compacting context · Making room to continue · Ns» at once, counting up, until it is done", async () => {
+  const h = codexUi("en", () => {}, localDouble(), 160); // wide enough for the whole line next to the sidebar; narrower boxes drop the middle part (composer.test.ts)
+  try {
+    await withConversation(h);
+    const before = h.terminal.output.length;
+    const since = () => stripVTControlCharacters(h.terminal.output.slice(before));
+    h.enter("/compact"); await tick();
+    expect(since()).toContain("Compacting context · Making room to continue · 0s");
+    for (let i = 0; i < 80 && !since().includes("Making room to continue · 1s"); i++) await tick();
+    expect(since()).toContain("Compacting context · Making room to continue · 1s");
+    const finished = h.terminal.output.length;
+    h.rpc.onNotification("turn/started", { threadId: "t", turn: { id: "c1" } });
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "c1", status: "completed" } });
+    await tick(); await tick();
+    const after = stripVTControlCharacters(h.terminal.output.slice(finished));
+    expect(after).toContain("Conversation compacted.");
+    expect(after).toContain(getCatalog("en").chat.statusReady);
+  } finally { h.enter("/quit!"); await h.ui; }
+});
+
+/** The same in Spanish, in the words of Shell's catalog (only command and mode names stay as in Codex). */
+test("/compact says «Compactando el contexto · Haciendo espacio para continuar» in Spanish", async () => {
+  const h = codexUi("es", () => {}, localDouble(), 160);
+  try {
+    await withConversation(h);
+    const before = h.terminal.output.length;
+    h.enter("/compact"); await tick();
+    expect(stripVTControlCharacters(h.terminal.output.slice(before))).toContain("Compactando el contexto · Haciendo espacio para continuar · 0s");
+    h.rpc.onNotification("turn/started", { threadId: "t", turn: { id: "c1" } });
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "c1", status: "completed" } });
+    await tick(); await tick();
+  } finally { h.enter("/quit!"); await h.ui; }
+});
+
+/**
+ * Came out of the real-account test: `/f614:stop` on a stuck turn waited for `turn/interrupt` to time out. When Codex says there is
+ * no active turn, Shell ends the turn on its side, says so once (in the person's language) and does not add «cancellation requested».
+ */
+test("/f614:stop when Codex says there is no active turn frees the box and says so once", async () => {
+  const h = codexUi("es");
+  try {
+    await tick(); h.enter("trabajo largo"); await tick();
+    expect(h.session().busy).toBe(true);
+    h.rpc.handler = async method => { if (method === "turn/interrupt") throw new Error("no active turn to interrupt"); throw new Error(`Unexpected ${method}`); };
+    const before = h.terminal.output.length;
+    h.enter("/f614:stop"); await tick(); await tick();
+    const shown = stripVTControlCharacters(h.terminal.output.slice(before));
+    expect(h.session().busy).toBe(false);
+    expect(shown).toContain("Codex dice que no había ningún turno en marcha");
+    expect(shown).not.toContain(getCatalog("es").codexChat.cancellationRequested.slice(0, 22));
+    expect(shown).toContain(getCatalog("es").chat.statusReady);
+  } finally { h.enter("/quit!"); await h.ui; }
+});
+
+/**
+ * Came out of the real-account test: after `/resume` every old message carried the time of now. Each one shows its turn's time from the protocol
+ * (`v2/Turn.ts` `startedAt` for what the person wrote); an answer whose time Codex did not give shows none.
+ */
+test("/resume draws each old message with the time of its turn and no time when Codex gave none", async () => {
+  const startedAt = Math.floor(new Date(2026, 8, 29, 11, 52).getTime() / 1000);
+  const h = codexUi("en", rpc => rpc.replies.set("thread/read", { thread: { id: "old", cwd: "/project", status: { type: "idle" }, turns: [{
+    id: "a", items: [
+      { type: "userMessage", id: "i1", clientId: null, content: [{ type: "text", text: "Plan a hello.sh script", text_elements: [] }] },
+      { type: "agentMessage", id: "i2", text: "Here is the plan", phase: null, memoryCitation: null, delivery: null, questions: null },
+    ], itemsView: "full", status: "interrupted", error: null, startedAt, completedAt: null, durationMs: null,
+  }] } }));
+  try {
     await tick();
+    const before = h.terminal.output.length;
+    h.enter("/resume old"); await tick(); await tick();
+    const shown = stripVTControlCharacters(h.terminal.output.slice(before));
+    const roles = getCatalog("en").chatRoles;
+    expect(shown).toContain(`${roles.you} · ${new Date(startedAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+    expect(shown).toContain("Plan a hello.sh script");
+    expect(shown).toContain("Here is the plan");
+    expect(shown).toContain(roles.assistant);
+    expect(shown).not.toContain(`${roles.assistant} · `);
   } finally { h.enter("/quit!"); await h.ui; }
 });
 

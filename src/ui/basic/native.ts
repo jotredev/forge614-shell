@@ -78,18 +78,19 @@ export async function runNativeUI(
   const write = (text: string) => { const component = new ChatText(clean(text)); transcript.addChild(component); tui.requestRender(); return component; };
   /** Red, so an error reads as an error at a glance instead of blending into a normal reply. */
   const writeError = (text: string) => { const component = new ChatText(clean(text), danger); transcript.addChild(component); tui.requestRender(); return component; };
-  const writeChat = (role: "user" | "assistant" | "system", text: string) => write(chatMessage(role, clean(text), locale));
+  /** `at` is the time of a message replayed from history (`null`: unknown, no time shown); a live message leaves it out and takes the time of now. */
+  const writeChat = (role: "user" | "assistant" | "system", text: string, at?: number | null) => write(chatMessage(role, clean(text), locale, at));
   const writeActivity = (title: string, detail: string, expanded = false) => {
     const card = new ActivityCard(title, "", clean(detail), expanded);
     transcript.addChild(card); tui.requestRender();
     return card;
   };
-  const writeEngineText = (text: string) => {
-    if (text.startsWith("You: ")) writeChat("user", text.slice(5));
+  const writeEngineText = (text: string, at?: number | null) => {
+    if (text.startsWith("You: ")) writeChat("user", text.slice(5), at);
     else if (text.startsWith("Tool:")) {
       const [title, ...detail] = text.slice(5).trim().split("\n");
       writeActivity(title || tc.toolFallbackTitle, detail.join("\n") || tc.toolFallbackDetail);
-    } else writeChat("assistant", text);
+    } else writeChat("assistant", text, at);
   };
   const refresh = () => {
     if (!session || closed) return;
@@ -113,7 +114,10 @@ export async function runNativeUI(
       });
     }
     sidebar.invalidate();
-    const working = turnStartedAt !== undefined ? workingStatus(t.statusWorking, session.currentActivity?.(), (Date.now() - turnStartedAt) / 1000) : t.statusWorking;
+    const elapsed = turnStartedAt !== undefined ? (Date.now() - turnStartedAt) / 1000 : 0;
+    // `/compact` shows Codex's own words for it (title, detail, time) from the moment it is typed; Codex reports no real progress, so there is no bar.
+    const working = compacting ? workingStatus(tc.compactingTitle, tc.compactingDetail, elapsed)
+      : turnStartedAt !== undefined ? workingStatus(t.statusWorking, session.currentActivity?.(), elapsed) : t.statusWorking;
     input.setStatus(session.busy || commandBusy ? working : shellState.snapshot().account === "connected" ? t.statusReady : t.statusConnectWithLogin);
     const collaborationModes = session.collaborationModes?.() ?? [];
     input.setWorkModeHint(session.workModes?.().find(mode => mode.id === session.workMode?.()), collaborationModes.length ? { modes: collaborationModes, active: session.collaborationMode?.() } : undefined);
@@ -123,6 +127,8 @@ export async function runNativeUI(
   // See claude.ts for why this ticker exists: without it the status line only moves when an SDK
   // event happens to arrive, which can go quiet during tool execution and reads as "it froze".
   let turnStartedAt: number | undefined;
+  /** Whether `/compact` is running, so the status line names it instead of the generic «Working». */
+  let compacting = false;
   let turnTicker: ReturnType<typeof setInterval> | undefined;
   const beginTurn = () => {
     turnStartedAt = Date.now();
@@ -141,7 +147,7 @@ export async function runNativeUI(
     if (closed) return;
     if (event.type === "planReady") { pendingPlan = event.text; return; }
     if (event.type === "reset") { transcript.clear(); streaming.clear(); }
-    else if (event.type === "text") writeEngineText(event.text);
+    else if (event.type === "text") writeEngineText(event.text, event.at);
     else if (event.type === "delta") {
       const key = event.id ?? "message";
       let entry = streaming.get(key);
@@ -279,7 +285,8 @@ export async function runNativeUI(
       approvals[0].answer(name === "/yes"); return;
     }
     // Shell's own «cancel the answer in progress». Plain `/stop` is Codex's «stop all background terminals».
-    if (name === "/f614:stop") { await session.cancel(); write(tc.cancellationRequested); return; }
+    // When Codex did not confirm, the session already told the person (once) that Shell ended the turn on its side: «requested» would be untrue.
+    if (name === "/f614:stop") { const outcome = await session.cancel(); if (!outcome || outcome === "requested") write(tc.cancellationRequested); return; }
     if (name === "/help" || name === "/commands") {
       if (approvals.length) { write(t.answerPendingPermissionFirst); return; }
       const selected = await input.chooseCommand();
@@ -328,7 +335,11 @@ export async function runNativeUI(
         }
       } else if (name === "/compact") {
         if (!session.compact) write(tc.commandNotAllowed({ name }));
-        else { await session.compact(); write(tc.compacted); }
+        else {
+          compacting = true; beginTurn(); refresh();
+          try { await session.compact(); write(tc.compacted); }
+          finally { compacting = false; endTurn(); }
+        }
       } else if (name === "/new") { session.reset(); transcript.clear(); streaming.clear(); }
       // A command on Codex's list that Shell has not connected yet: say so honestly, not «unknown». A name that is not Codex's at all is unknown.
       else if (official) write(tc.commandNotAllowed({ name: name ?? "" }));

@@ -3,6 +3,7 @@ import { stripVTControlCharacters } from "node:util";
 import { ActivityCard, chatMessage } from "./transcript.ts";
 import { ChatText } from "./theme.ts";
 import { lineDiff } from "./diff.ts";
+import { getCatalog } from "../../i18n/index.ts";
 
 test("chat messages render a role label separate from their content", () => {
   const message = stripVTControlCharacters(chatMessage("assistant", "I will inspect the workspace."));
@@ -92,4 +93,20 @@ test("an indent of zero keeps the bullet at the edge and indented lines still fi
       expect(stripVTControlCharacters(line).length).toBeLessThanOrEqual(width);
     }
   }
+});
+
+/**
+ * Came out of the real-account test: after `/resume` or `/fork` every old message carried the time of now (12:05 p.m.) instead of
+ * its own (11:52…). A message from a saved conversation is drawn with the time the protocol gave for it, and with none when it
+ * gave none; only a live message (no time passed) takes the time of now.
+ */
+test("a message header shows the time it is given, no time when it is unknown, and now only when none is passed", () => {
+  const at = new Date(2026, 8, 29, 11, 52).getTime();
+  const you = getCatalog("en").chatRoles.you;
+  const header = (text: string) => stripVTControlCharacters(text).split("\n")[0];
+  expect(header(chatMessage("user", "hello", "en", at))).toBe(`## ${you} · ${new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+  expect(header(chatMessage("user", "hello", "en", at))).toContain("11:52");
+  expect(header(chatMessage("user", "hello", "en", null))).toBe(`## ${you}`);
+  expect(header(chatMessage("user", "hello", "en"))).toBe(`## ${you} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+  expect(chatMessage("user", "hello", "en", null)).toBe(`## ${you}\n\nhello`);
 });

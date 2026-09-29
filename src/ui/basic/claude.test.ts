@@ -171,7 +171,8 @@ else {
  * with a `description`), the screen shows the description, the folder and the command in plain words with «Sí»/«No» and
  * «Sí» marked (no JSON, no `/yes`, no numbers), Enter alone approves and Esc denies, and the fake receives exactly
  * `allow` and then `deny`. It exists because the request used to be printed as `Permiso solicitado: Bash { "command": … }`
- * with «/no» marked first.
+ * with «/no» marked first. The session works in `/tmp` (a short, fixed folder) so the screen never depends on how long the
+ * path of the machine running the test is: in a copy under a long path the folder line used to wrap and the test failed.
  */
 test.skipIf(process.platform === "win32")("Claude UI: a Bash permission reads in plain words, Enter alone approves it and Esc denies it", async () => {
   const root = await mkdtemp(join(tmpdir(), "forge614-permission-ui-"));
@@ -181,6 +182,8 @@ test.skipIf(process.platform === "win32")("Claude UI: a Bash permission reads in
   const plain = () => stripVTControlCharacters(terminal.output);
   const previousForgeHome = process.env.FORGE614_HOME;
   process.env.FORGE614_HOME = join(root, "forge614-home");
+  const previousCwd = process.cwd();
+  process.chdir("/tmp");
   try {
     await writeFile(executable, `#!${process.execPath}
 const fs=require('fs');
@@ -217,7 +220,48 @@ else {
     for (let i = 0; i < 60 && readFileSync(marker, "utf8") === "allow\n"; i++) await tick();
     expect(readFileSync(marker, "utf8")).toBe("allow\ndeny\n");
   } finally {
-    enter("/quit!"); await ui; await rm(root, { recursive: true, force: true });
+    enter("/quit!"); await ui; process.chdir(previousCwd); await rm(root, { recursive: true, force: true });
+    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+  }
+});
+
+/**
+ * Came out of the real-account test: in a copy under a long path the «Carpeta:» line was broken in the middle of a folder name.
+ * The session works in a deep folder of the test's own making, so the screen must show the last folders whole behind «…»
+ * (manual 05: long paths are cut with «…») — the same on every machine, whatever the path above it.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: a long working folder is cut with «…» keeping its last whole folders", async () => {
+  const root = await mkdtemp(join(tmpdir(), "forge614-long-folder-ui-"));
+  const executable = join(root, "claude");
+  const deep = join(root, "a-long-folder-name-for-the-permission-card", "another-long-folder-name-here", "project");
+  mkdirSync(deep, { recursive: true });
+  const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
+  const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+  const plain = () => stripVTControlCharacters(terminal.output);
+  const previousForgeHome = process.env.FORGE614_HOME;
+  process.env.FORGE614_HOME = join(root, "forge614-home");
+  const previousCwd = process.cwd();
+  process.chdir(deep);
+  try {
+    await writeFile(executable, `#!${process.execPath}
+if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
+else {
+  require('readline').createInterface({input:process.stdin}).on('line',line=>{
+    const msg=JSON.parse(line);
+    if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
+    if(msg.type==='user') console.log(JSON.stringify({type:'control_request',request_id:'permission-'+Date.now(),request:{subtype:'can_use_tool',tool_name:'Bash',input:{command:'ls',description:'List the folder'},tool_use_id:'tool-1'}}));
+  });
+}`, { mode: 0o755 });
+    ui = startClaudeUI([], executable, terminal, undefined, "es"); await tick();
+    for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
+    enter("run it"); await tick();
+    for (let i = 0; i < 60 && !plain().includes("› Sí"); i++) await tick();
+    expect(plain()).toContain("Carpeta: …/another-long-folder-name-here/project");
+    expect(plain()).not.toContain("a-long-folder-name-for-the-permission-card");
+    terminal.input("\x1b");
+    await tick();
+  } finally {
+    enter("/quit!"); await ui; process.chdir(previousCwd); await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
   }
 });

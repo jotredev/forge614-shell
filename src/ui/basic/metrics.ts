@@ -1,4 +1,4 @@
-import { accent, border, danger, fit, warning } from "./theme.ts";
+import { accent, border, danger, warning } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -76,16 +76,60 @@ export function progressBar(percent: number, width: number): string {
   return usageColor(percent)("█".repeat(used)) + border("░".repeat(cells - used));
 }
 
-/** Braille cells make a portable terminal ring without image-protocol support. */
+/** Cells the context ring is wide (one more than it used to be, so its middle cell has a whole hole either side), and the cells of its hole in the two rows in the middle: the ones no ring dot touches, where the number is drawn. */
+const RING_COLS = 13;
+const RING_HOLE = { from: 3, width: 7 };
+
+/**
+ * Digits for the number in the middle of the context ring, like a digital clock: two text rows tall, in the solid blocks «█», «▀» and «▄»,
+ * each as its [top row, bottom row]. All are three cells wide except the «1», a one-cell bar; with a cell of space between digits
+ * every number is an odd width, so it sits exactly on the ring's middle cell.
+ */
+const RING_DIGITS: Record<string, [string, string]> = {
+  "0": ["█▀█", "█▄█"], "1": ["█", "█"], "2": ["▀▀█", "█▄▄"], "3": ["▀▀█", "▄▄█"], "4": ["█▄█", "  █"],
+  "5": ["█▀▀", "▄▄█"], "6": ["█▀▀", "█▄█"], "7": ["▀▀█", "  █"], "8": ["█▀█", "███"], "9": ["█▀█", "▀▀█"],
+};
+
+/**
+ * The two rows of the ring's number, `RING_HOLE.width` cells wide and centered in it. The number is capped at 100 and written without «%»:
+ * «N% used» is beside the ring, and a «%» would not fit next to two digits. Only «100» is too wide for the hole with a cell between
+ * its digits, so its two zeros share the column where they meet.
+ */
+function ringNumberRows(percent: number): [string, string] {
+  const glyphs = Array.from(String(Math.max(0, Math.min(100, Math.round(percent))))).map(digit => RING_DIGITS[digit]!);
+  const draw = (share: boolean): [string, string] => {
+    let top = "", bottom = "", previous = 0;
+    glyphs.forEach(([glyphTop, glyphBottom], index) => {
+      const shares = share && previous === 3 && glyphTop.length === 3;
+      top += (index === 0 || shares ? "" : " ") + (shares ? glyphTop.slice(1) : glyphTop);
+      bottom += (index === 0 || shares ? "" : " ") + (shares ? glyphBottom.slice(1) : glyphBottom);
+      previous = glyphTop.length;
+    });
+    return [top, bottom];
+  };
+  const [top, bottom] = draw(false)[0].length > RING_HOLE.width ? draw(true) : draw(false);
+  const left = " ".repeat(Math.floor((RING_HOLE.width - top.length) / 2));
+  const fill = (row: string) => (left + row).padEnd(RING_HOLE.width);
+  return [fill(top), fill(bottom)];
+}
+
+/** Braille cells make a portable terminal ring without image-protocol support; the number in its hole is drawn with solid blocks (see `ringNumberRows`). */
 export function contextRing(percent: number): string[] {
   const bits = [[1, 8], [2, 16], [4, 32], [64, 128]];
   const color = usageColor(percent);
+  const number = ringNumberRows(percent);
   return Array.from({ length: 6 }, (_, row) => {
     const cells: string[] = [];
-    for (let col = 0; col < 12; col++) {
+    for (let col = 0; col < RING_COLS; col++) {
+      const digitRow = number[row - 2];
+      if (digitRow !== undefined && col >= RING_HOLE.from && col < RING_HOLE.from + RING_HOLE.width) {
+        const char = digitRow[col - RING_HOLE.from]!;
+        cells.push(char === " " ? " " : color(char));
+        continue;
+      }
       let mask = 0, filled = 0;
       for (let y = 0; y < 4; y++) for (let x = 0; x < 2; x++) {
-        const dx = (col * 2 + x - 11.5) / 11, dy = (row * 4 + y - 11.5) / 11;
+        const dx = (col * 2 + x - 12.5) / 12, dy = (row * 4 + y - 11.5) / 11;
         const radius = Math.hypot(dx, dy);
         if (radius < 0.72 || radius > 1) continue;
         mask |= bits[y]![x]!;
@@ -93,11 +137,6 @@ export function contextRing(percent: number): string[] {
         if (angle / (Math.PI * 2) < Math.max(0, Math.min(100, percent)) / 100) filled++;
       }
       cells.push((filled ? color : border)(String.fromCharCode(0x2800 + mask)));
-    }
-    if (row === 2) {
-      // Capped at 100% so the label never grows past the ring's fixed width, even if a report is briefly over.
-      const label = `${Math.min(100, Math.round(percent))}%`;
-      cells.splice(3, 6, fit(" ".repeat(Math.max(0, Math.floor((6 - label.length) / 2))) + color(label), 6));
     }
     return cells.join("");
   });

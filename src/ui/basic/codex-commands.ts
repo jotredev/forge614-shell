@@ -40,8 +40,8 @@ export interface CodexCommandScreen {
   clearView(): void;
   /** Asks a Yes/No question with «No» first (so Enter alone keeps things as they are); Esc counts as No. */
   confirm(title: string, no: string, yes: string): Promise<boolean>;
-  /** Opens a selector (see `ForgeComposer.choose`): the chosen row's value, or undefined on Esc. */
-  choose(title: string, items: ComposerChoice[], current?: string, options?: { searchable?: boolean }): Promise<string | undefined>;
+  /** Opens a selector (see `ForgeComposer.choose`): the chosen row's value, or undefined on Esc. `body` is an explanation that lives inside the question and goes away with it. */
+  choose(title: string, items: ComposerChoice[], current?: string, options?: { searchable?: boolean; body?: string }): Promise<string | undefined>;
   /** Replaces what the `$` autocomplete offers. */
   setSkillChoices(skills: ComposerChoice[]): void;
   /** Sends `text` as a normal message of the person, exactly as if it had been typed. */
@@ -260,7 +260,8 @@ function exportPath(cwd: string, requested: string): string {
 /**
  * `/permissions`: Codex's own menu (`chatwidget/permission_popups.rs`) — its title, the modes the adapter lists with
  * their descriptions, the current one marked. A mode that asks first (Full Access) shows Codex's confirmation with
- * «Yes, continue anyway» first, as Codex does; «Cancel» goes back to the menu. The chosen mode is applied, saved and
+ * «Yes, continue anyway» first, as Codex does, and its warning inside the question (never written into the chat, so it goes
+ * away with the question); «Cancel» goes back to the menu. The chosen mode is applied, saved and
  * announced in Codex's words; while a turn runs, Shell also says it applies from the next one.
  */
 async function choosePermissions(screen: CodexCommandScreen): Promise<void> {
@@ -273,11 +274,10 @@ async function choosePermissions(screen: CodexCommandScreen): Promise<void> {
     const mode = modes.find(item => item.id === picked);
     if (!mode) return;
     if (mode.confirm) {
-      write(nt.fullAccessBody);
       const answer = await screen.choose(nt.fullAccessTitle, [
         { value: "yes", display: nt.fullAccessAccept, label: nt.fullAccessAcceptDescription },
         { value: "cancel", display: nt.fullAccessCancel, label: nt.fullAccessCancelDescription },
-      ]);
+      ], undefined, { body: nt.fullAccessBody });
       if (answer === "cancel") continue;
       if (answer !== "yes") return;
     }

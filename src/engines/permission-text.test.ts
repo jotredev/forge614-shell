@@ -300,3 +300,23 @@ test("the same request reads in each language with Shell's words translated and 
     "Because it needs network\n\nFolder: /project\n\n    touch example",
   ]);
 });
+
+/**
+ * Came out of the real-account test: a long «Carpeta:» path was broken in the middle of a folder name by the card that draws
+ * it. The manual (05) says long paths are cut with «…»: a folder longer than 48 characters keeps its last folders, whole,
+ * behind «…» (the end is what tells projects apart); one that fits is left as it is. Same for Claude Code and Codex.
+ */
+test("a folder longer than 48 characters keeps its last whole folders behind an ellipsis, for Claude Code and for Codex", () => {
+  const segment = "abcdefghij";
+  const long = `/${[segment, segment, segment, segment, segment, segment, "last"].join("/")}`;
+  expect(long).toHaveLength(71);
+  const cut = `…/${[segment, segment, segment, "last"].join("/")}`;
+  expect(formatClaudePermission("Bash", { command: "ls" }, { locale: "en", cwd: long })).toBe(`Run a command\n\nFolder: ${cut}\n\n    ls`);
+  expect(formatClaudePermission("Bash", { command: "ls" }, { locale: "es", cwd: long })).toBe(`Ejecutar un comando\n\nCarpeta: ${cut}\n\n    ls`);
+  expect(formatCodexPermission("item/commandExecution/requestApproval", { ...commandParams, cwd: long }, commandItem, "en")).toBe(`Run a command\n\nFolder: ${cut}\n\n    touch example`);
+  const exact = `/${"x".repeat(47)}`;
+  expect(exact).toHaveLength(48);
+  expect(formatClaudePermission("Bash", { command: "ls" }, { locale: "en", cwd: exact })).toBe(`Run a command\n\nFolder: ${exact}\n\n    ls`);
+  const oneName = `/${"y".repeat(60)}`;
+  expect(formatClaudePermission("Bash", { command: "ls" }, { locale: "en", cwd: oneName })).toBe(`Run a command\n\nFolder: …${"y".repeat(47)}\n\n    ls`);
+});

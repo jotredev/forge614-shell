@@ -96,3 +96,90 @@ test("the / and $ menus keep suggesting through digits, hyphens, colons and dots
   type(composer, "$plug:h");
   expect(screen(composer)).toContain("Plugin skill");
 });
+
+/** Skills as `skills/list` rows: the value typed is `$name`, the label is the skill's own description. */
+const skillRows: ComposerChoice[] = [
+  { value: "$find-skills", label: "Find a skill" },
+  { value: "$frontend-design", label: "Design a screen" },
+];
+
+/**
+ * Came out of the real-account test: the `$` list was titled «CODEX SKILLS» and its footer said «Comandos · 1–5 de 56» in
+ * Spanish, as if the rows were commands. The group title and the footer name what is listed — skills — in each language.
+ */
+test("the $ list is titled and counted as skills in the person's language, not as commands", () => {
+  for (const [locale, group, footer] of [["es", "HABILIDADES DE CODEX", "Habilidades · 1–2 de 2"], ["en", "CODEX SKILLS", "Skills · 1–2 of 2"]] as const) {
+    const composer = new ForgeComposer(fakeTui, locale);
+    composer.setSkillChoices(skillRows);
+    type(composer, "$f");
+    const shown = screen(composer);
+    expect(shown).toContain(group);
+    expect(shown).toContain(footer);
+    expect(shown).not.toContain(locale === "es" ? "Comandos" : "Commands");
+  }
+});
+
+/**
+ * Came out of the real-account test: choosing a skill with Enter sent «$find-skills» at once, with none of the message the
+ * person meant to write. Like Codex, Enter and Tab put «$name » in the box and the person goes on writing; the next Enter sends it.
+ */
+test("Enter or Tab on a skill puts «$name » in the box and sends nothing; the next Enter sends the whole message", () => {
+  for (const key of ["\r", "\t"]) {
+    const composer = new ForgeComposer(fakeTui, "en");
+    const sent: string[] = [];
+    composer.onSubmit = value => { sent.push(value); };
+    composer.setSkillChoices(skillRows);
+    type(composer, "$fi");
+    composer.handleInput(key);
+    expect(sent).toEqual([]);
+    expect(composer.getText()).toBe("$find-skills ");
+    expect(screen(composer)).not.toContain("Find a skill");
+    type(composer, "look for a skill");
+    composer.handleInput("\r");
+    expect(sent).toEqual(["$find-skills look for a skill"]);
+  }
+});
+
+/** The `/` menu keeps sending the chosen command on Enter, as before: only the `$` list changed. */
+test("Enter on a command in the / menu still sends it at once", () => {
+  const composer = new ForgeComposer(fakeTui, "en");
+  const sent: string[] = [];
+  composer.onSubmit = value => { sent.push(value); };
+  composer.setCommandGroups([{ title: "X", items: [{ value: "/f614:stop", label: "Cancel the answer" }] }]);
+  type(composer, "/f61");
+  composer.handleInput("\r");
+  expect(sent).toEqual(["/f614:stop"]);
+});
+
+/**
+ * Came out of the real-account test: Codex's full-access warning stayed printed in the chat after «Cancel». A question can carry
+ * its own explanation (`body`): it is drawn under the question's title, wrapped to the screen, and leaves with the question.
+ */
+test("a picker's body is drawn wrapped under its title and disappears when the picker closes", () => {
+  const body = "When Codex runs with full access, it can edit any file on your computer and run commands with network, without your approval. Exercise caution when enabling full access.";
+  const composer = new ForgeComposer(fakeTui, "en");
+  void composer.choose("Enable full access?", [{ value: "yes", display: "Yes, continue anyway", label: "" }, { value: "cancel", display: "Cancel", label: "" }], undefined, { body });
+  const lines = composer.render(60).map(stripVTControlCharacters);
+  expect(lines.every(line => visibleWidth(line) <= 60)).toBe(true);
+  expect(lines.filter(line => line.trim() === "Enable full access?")).toHaveLength(1);
+  expect(lines.join(" ").replace(/\s+/g, " ")).toContain(body);
+  expect(lines.findIndex(line => line.trim() === "Enable full access?")).toBeLessThan(lines.findIndex(line => line.includes("When Codex runs")));
+  expect(lines.findIndex(line => line.includes("Exercise caution"))).toBeLessThan(lines.findIndex(line => line.includes("1. Yes, continue anyway")));
+  composer.cancelChoice();
+  expect(screen(composer, 60)).not.toContain("full access");
+});
+
+/**
+ * Found while testing `/compact` in Spanish: «Compactando el contexto · Haciendo espacio para continuar · 12s» is wider than the box
+ * next to the sidebar, and cutting the end of the line dropped the seconds, the only thing that shows it has not frozen. A busy status
+ * that does not fit gives up its middle part first and keeps the label and the time; one that fits is shown whole.
+ */
+test("a busy status too wide for the box keeps its label and time and drops the middle part", () => {
+  const status = "Compactando el contexto · Haciendo espacio para continuar · 12s";
+  const composer = new ForgeComposer(fakeTui, "es");
+  composer.setStatus(status);
+  expect(screen(composer, 120)).toContain(status);
+  const narrow = screen(composer, 60);
+  expect(narrow).toContain("Compactando el contexto · 12s");
+  expect(narrow).not.toContain("Haciendo espacio");
+});

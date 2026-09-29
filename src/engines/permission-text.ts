@@ -2,7 +2,7 @@ import { getCatalog } from "../i18n/index.ts";
 import type { Locale } from "../i18n/index.ts";
 import { parseClaudeMcpToolName } from "./mcp-labels.ts";
 
-/** Longest a sentence the assistant wrote (a Bash `description`, Codex's `reason`) or a path is shown; the rest is cut with «…». */
+/** Longest a sentence the assistant wrote (a Bash `description`, Codex's `reason`) or a file path is shown; the rest is cut with «…». */
 const DESCRIPTION_LIMIT = 300;
 /** Longest a `field: value` line of a tool without a dedicated layout is shown. */
 const VALUE_LIMIT = 120;
@@ -12,11 +12,23 @@ const FIELD_LIMIT = 5;
 const FILE_LIMIT = 10;
 /** The command is shown whole up to here — the same 20000 characters after which the request is denied unseen (`permissionTooLarge`). */
 const COMMAND_LIMIT = 20000;
+/** Longest the working folder of a request is shown: short enough that the card that draws it never breaks the path in the middle of a name. */
+const FOLDER_LIMIT = 48;
 
 /** One line, with runs of whitespace collapsed. */
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 /** `text` cut to `max` characters, the last one being «…», when it is longer. */
 const clip = (text: string, max: number): string => text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+/**
+ * A folder path within `max` characters: as it is when it fits; otherwise «…» and its last folders, whole (the end is what tells
+ * projects apart), or the last characters of a single name longer than that.
+ */
+const clipFolder = (path: string, max: number = FOLDER_LIMIT): string => {
+  if (path.length <= max) return path;
+  const tail = path.slice(-(max - 1));
+  const boundary = tail.startsWith("/") ? 0 : tail.indexOf("/");
+  return `…${boundary >= 0 ? tail.slice(boundary) : tail}`;
+};
 /** A non-empty string, or nothing: request fields arrive as `string | null | undefined` (or anything, for an open tool input). */
 const text = (value: unknown): string | undefined => typeof value === "string" && value.trim() ? value : undefined;
 /** The command in its own block: every line indented by four spaces, quotes exactly as written. */
@@ -56,7 +68,7 @@ export function formatClaudePermission(tool: string, input: Record<string, unkno
   switch (tool) {
     case "Bash": {
       const description = text(input.description);
-      return sections(description ? clip(oneLine(description), DESCRIPTION_LIMIT) : t.runCommand, options.cwd ? `${t.folder}: ${clip(options.cwd, DESCRIPTION_LIMIT)}` : undefined, commandBlock(text(input.command)));
+      return sections(description ? clip(oneLine(description), DESCRIPTION_LIMIT) : t.runCommand, options.cwd ? `${t.folder}: ${clipFolder(options.cwd)}` : undefined, commandBlock(text(input.command)));
     }
     case "Edit": case "MultiEdit": return sections(t.editFile, filePath(input.file_path));
     case "Write": return sections(t.writeFile, filePath(input.file_path));
@@ -89,7 +101,7 @@ export function formatCodexPermission(method: string, params: Record<string, unk
   const what = (fallback: string) => reason ? clip(oneLine(reason), DESCRIPTION_LIMIT) : fallback;
   if (method === "item/commandExecution/requestApproval") {
     const cwd = text(params.cwd) ?? text(item?.cwd);
-    return sections(what(t.runCommand), cwd ? `${t.folder}: ${clip(cwd, DESCRIPTION_LIMIT)}` : undefined, commandBlock(text(params.command) ?? text(item?.command)));
+    return sections(what(t.runCommand), cwd ? `${t.folder}: ${clipFolder(cwd)}` : undefined, commandBlock(text(params.command) ?? text(item?.command)));
   }
   if (method === "item/fileChange/requestApproval") {
     const changes = (Array.isArray(item?.changes) ? item.changes as Record<string, unknown>[] : []).flatMap(change => {

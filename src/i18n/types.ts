@@ -55,6 +55,7 @@ export type ShellErrorCode =
   | "ENGRAM_GROUP_LIST_INVALID"
   | "ENGRAM_GROUP_RESULT_INVALID"
   | "codex-turn-failed"
+  | "engine-request-timeout"
   | "init-requires-product"
   | "init-unexpected-args"
   | "init-unsupported-product"
@@ -295,6 +296,9 @@ export interface Catalog {
     searchNoMatches: string;
     /** Group title of the files `@` offers. */
     filesGroup: string;
+    /** Group title of the skills `$` offers, and the name its footer counts them by. */
+    skillsGroup: string;
+    skillsFooterTitle: string;
   };
   /** Help lines by tone (see `WorkModeTone`); the mode's own name always comes from the assistant's adapter. */
   workMode: {
@@ -475,6 +479,10 @@ export interface Catalog {
     cancelled: string;
     questionnaireUnsupported: string;
     engineErrorFallback: string;
+    /** What the person is told, once, when `/f614:stop` ends the turn on Shell's side: Codex did not answer in time (the connection is closed), or said no turn was running. */
+    stopNoAnswer: string;
+    stopNoActiveTurn: string;
+    stopNotFinished: string;
     sessionTokensLine: (params: { input: string; cached: string; output: string; lastContext: string; window: string }) => string;
     /** The three lines `/status` adds to match Codex's own: folder, work mode and conversation. */
     folderLine: (params: { path: string }) => string;
@@ -705,6 +713,9 @@ export interface Catalog {
   };
   codexChat: {
     compacted: string;
+    /** The status line while `/compact` runs, as Codex words it: title, then detail, then the time. */
+    compactingTitle: string;
+    compactingDetail: string;
     /** Honest answer for a `/command` Shell cannot pass on to Codex through its app-server. */
     commandNotAllowed: (params: { name: string }) => string;
     workOrLoginActive: string;
