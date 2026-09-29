@@ -1,6 +1,6 @@
 import type { RpcConnection } from "../../infrastructure/rpc.ts";
 import type {
-  Approve, Emit, NativeAccountUsage, NativeApp, NativeBackgroundTerminal, NativeCollaborationMode, NativeConfigWrite, NativeFeature, NativeGoal, NativeHook,
+  Approve, CancelOutcome, Emit, NativeAccountUsage, NativeApp, NativeBackgroundTerminal, NativeCollaborationMode, NativeConfigWrite, NativeFeature, NativeGoal, NativeHook,
   NativeMcpServer, NativeMemorySettings, NativeModel, NativeReviewTarget, NativeSession, NativeSessionInfo, NativeSkill, NativeVisualState, NativeWorkMode, WorkModeChange,
 } from "../types.ts";
 import { buildCodexWorkModes, sandboxPolicyFor } from "./work-modes.ts";
@@ -11,9 +11,28 @@ import { confirmedLogout } from "../logout.ts";
 import { formatCodexPermission } from "../permission-text.ts";
 import { engramToolLabel } from "../mcp-labels.ts";
 import type { getStartupContext } from "../../infrastructure/forge614-engram.ts";
-import { ShellError } from "../../shell-error.ts";
+import { ShellError, describeError } from "../../shell-error.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
+
+/** How long `/f614:stop` waits, first for Codex to answer `turn/interrupt` and then, once it has, for Codex to end the turn (`turn/completed`), before it stops waiting and ends the turn on Shell's side. */
+export const INTERRUPT_TIMEOUT_MS = 5000;
+
+/** Whether an error is the transport's own «request timed out» (`JsonRpcPeer`). */
+const isRequestTimeout = (error: unknown): boolean => error instanceof ShellError && error.code === "engine-request-timeout";
+
+/**
+ * Text without the block Shell puts in front of the first message (`wrapStartupContext`), which Codex records as part of what
+ * «the person wrote» (`v2/Thread.ts` `preview`, `v2/UserInput.ts`). Only a block at the very start is Shell's; one cut short
+ * by the length limit of a preview has no words of the person left, so nothing is returned for it.
+ */
+function withoutMemoryBlock(text: string): string {
+  const rest = text.replace(/^\s*<forge614-engram-memory>[\s\S]*?<\/forge614-engram-memory>\s*/, "");
+  return /^\s*<forge614-engram-memory>/.test(rest) ? "" : rest;
+}
+
+/** A time Codex gives in Unix seconds (`v2/Turn.ts`) as milliseconds since the epoch, or `null` when it does not give one. */
+const secondsToMilliseconds = (seconds: unknown): number | null => typeof seconds === "number" ? seconds * 1000 : null;
 
 /**
  * Defense in depth beyond `forge614-engram.ts`'s own sanitizer: even if a future
@@ -111,8 +130,12 @@ export class CodexSession implements NativeSession {
   /** The collaboration mode the running turn was sent with, and the plan it proposed, for «Implement this plan?». */
   private turnCollaboration?: string;
   private proposedPlan?: string;
-  /** Whether the running turn has produced an answer of its own (so a review's result is not shown twice). */
-  private answeredThisTurn = false;
+  /** Whether a `/review` turn is running: its `turn/started` notifications are not the review's own turn (see `notification`). */
+  private reviewing = false;
+  /** Whether a `turn/interrupt` request is waiting for Codex's answer, so a timeout of that very request is reported by `interruptTurn` and not again by the close handler. */
+  private interrupting = false;
+  /** How long to wait for `turn/completed` after Codex accepted `turn/interrupt`: the same as the request's wait, a field only so tests can shorten it. */
+  private stopWaitMs = INTERRUPT_TIMEOUT_MS;
   /** The last completed answer, for `/copy`. */
   private lastAgentMessage?: string;
   /** «Generate memories» as last read or saved, to know when the open thread must be told (`thread/memoryMode/set`). */
@@ -133,9 +156,17 @@ export class CodexSession implements NativeSession {
     this.tokens = this.t.tokensNotReported;
     rpc.onNotification = (method, params) => this.notification(method, params);
     rpc.onRequest = (method, params) => this.request(method, params);
-    // `error.message` here is whatever the transport (`RpcConnection`) reports for its own close
-    // reason — a real connection/protocol failure, not Shell's own text, so it stays literal.
-    rpc.onClose = error => { this.aborted.abort(); this.loginId = undefined; this.busy = false; this.finishTurn?.(error); this.emit({ type: "text", text: error.message }); };
+    // The reason the transport (`RpcConnection`) closed is shown once: by the turn that was waiting (its rejection reaches the
+    // screen), or here when no turn waits. A Shell error (the request timeout) is written in the person's language; anything
+    // else is the transport's own text and stays literal. The timeout of the stop request itself is left to `interruptTurn`,
+    // which ends the turn quietly and tells the person in its own words.
+    rpc.onClose = error => {
+      const stopTimedOut = this.interrupting && isRequestTimeout(error);
+      const reported = this.finishTurn !== undefined;
+      this.aborted.abort(); this.loginId = undefined; this.busy = false;
+      this.finishTurn?.(stopTimedOut ? undefined : error);
+      if (!reported && !stopTimedOut) this.emit({ type: "text", text: describeError(error, this.locale) });
+    };
   }
 
   private get t() {
@@ -354,18 +385,22 @@ export class CodexSession implements NativeSession {
   reset(): void { this.idle(); this.sessionId = undefined; this.loaded = false; this.tokens = this.t.tokensNotReported; this.context = undefined; }
   /**
    * The project's saved threads for the `/resume` selector: title (name, or the first message when it
-   * has none), first message (`preview`), folder and last update as Codex reports them — a field Codex
-   * does not send is left out. Codex counts `updatedAt` in seconds; the selector wants milliseconds.
+   * has none), first message (`preview`, without the memory block Shell sends in front of it), folder and last
+   * update as Codex reports them — a field Codex does not send is left out. Codex counts `updatedAt` in seconds;
+   * the selector wants milliseconds.
    */
   async listSessions(): Promise<NativeSessionInfo[]> {
     const result = await this.rpc.request("thread/list", { cwd: this.cwd, limit: 100, sortKey: "updated_at" });
-    return result.data.filter((thread: any) => thread.cwd === this.cwd).map((thread: any): NativeSessionInfo => ({
-      id: thread.id,
-      title: thread.name || thread.preview || thread.id,
-      ...(thread.preview ? { firstMessage: String(thread.preview) } : {}),
-      ...(typeof thread.cwd === "string" ? { folder: thread.cwd } : {}),
-      ...(typeof thread.updatedAt === "number" ? { updatedAt: thread.updatedAt < 1e11 ? thread.updatedAt * 1000 : thread.updatedAt } : {}),
-    }));
+    return result.data.filter((thread: any) => thread.cwd === this.cwd).map((thread: any): NativeSessionInfo => {
+      const firstMessage = withoutMemoryBlock(String(thread.preview ?? ""));
+      return {
+        id: thread.id,
+        title: thread.name || firstMessage || thread.id,
+        ...(firstMessage ? { firstMessage } : {}),
+        ...(typeof thread.cwd === "string" ? { folder: thread.cwd } : {}),
+        ...(typeof thread.updatedAt === "number" ? { updatedAt: thread.updatedAt < 1e11 ? thread.updatedAt * 1000 : thread.updatedAt } : {}),
+      };
+    });
   }
   /**
    * `/resume` may be used while Codex works (`available_during_task`): like Codex, the screen moves to the chosen
@@ -381,20 +416,29 @@ export class CodexSession implements NativeSession {
     this.sessionId = id; this.loaded = false; this.tokens = this.t.tokensNotReported; this.proposedPlan = undefined;
     this.showHistory(thread.turns ?? []);
   }
-  /** Replaces the view with a conversation's saved turns (answers, and what the person wrote) and remembers its last answer for `/copy`. */
+  /**
+   * Replaces the view with a conversation's saved turns (answers, and what the person wrote) and remembers its last answer for `/copy`.
+   * Each message carries the time of its turn, since the protocol gives none per item (`v2/Turn.ts`): what the person wrote, the turn's
+   * start; an answer, the turn's completion; `null` (no time shown) when Codex did not give it. Shell's own memory block is not the person's message.
+   */
   private showHistory(turns: any[]): void {
     this.emit({ type: "reset", text: "" });
     this.lastAgentMessage = undefined;
     for (const turn of turns) for (const item of turn.items ?? []) {
-      if (item.type === "agentMessage") { this.lastAgentMessage = item.text; this.emit({ type: "text", text: item.text }); }
-      if (item.type === "userMessage") this.emit({ type: "text", text: `You: ${item.content.filter((part: any) => part.type === "text").map((part: any) => part.text).join("\n")}` });
+      if (item.type === "agentMessage") { this.lastAgentMessage = item.text; this.emit({ type: "text", text: item.text, at: secondsToMilliseconds(turn.completedAt) }); }
+      if (item.type === "userMessage") {
+        const parts = item.content.filter((part: any) => part.type === "text").map((part: any) => withoutMemoryBlock(part.text));
+        const written = parts.filter(Boolean).join("\n");
+        // A message made only of Shell's memory block was never the person's: nothing to show.
+        if (written || !parts.length) this.emit({ type: "text", text: `You: ${written}`, at: secondsToMilliseconds(turn.startedAt) });
+      }
     }
   }
   async send(text: string): Promise<void> {
     this.idle(); if (!text.trim()) return;
     if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
     this.busy = true; this.aborted = new AbortController(); this.streamed.clear(); this.items.clear(); this.runningCommands.clear();
-    this.proposedPlan = undefined; this.answeredThisTurn = false;
+    this.proposedPlan = undefined;
     // The mode this turn is sent with; a change made while it runs is for the next one (see `setWorkMode`).
     const mode = this.selectedMode;
     try {
@@ -419,7 +463,7 @@ export class CodexSession implements NativeSession {
         ...(collaboration ? { collaborationMode: collaboration } : {}),
       });
       this.turnId = result.turn.id;
-      if (this.aborted.signal.aborted) await this.rpc.request("turn/interrupt", { threadId: this.sessionId, turnId: this.turnId });
+      if (this.aborted.signal.aborted) await this.interruptTurn(this.sessionId, this.turnId!);
       await finished;
     } finally { this.busy = false; this.turnId = undefined; this.finishTurn = undefined; this.aborted.abort(); }
   }
@@ -651,21 +695,23 @@ export class CodexSession implements NativeSession {
   /**
    * `/review` → `review/start` with `{ threadId, target, delivery: "inline" }` (`v2/ReviewStartParams.ts`,
    * `app_server_session.rs` `review_start`). The review runs as a turn on the conversation (opened first when
-   * there is none yet), so the session stays busy until it ends and `/f614:stop` can interrupt it.
+   * there is none yet), so the session stays busy until it ends and `/f614:stop` can interrupt it. It ends with the
+   * `turn/completed` of the turn `review/start` answered with (`v2/ReviewStartResponse.ts`): while it runs no
+   * `turn/started` changes which turn that is, because the sub-agent that reviews forwards its own with another id.
    */
   async startReview(target: NativeReviewTarget): Promise<void> {
     this.idle();
     const threadId = await this.ensureThread();
-    this.busy = true; this.aborted = new AbortController(); this.streamed.clear(); this.items.clear(); this.runningCommands.clear();
-    this.proposedPlan = undefined; this.answeredThisTurn = false; this.turnCollaboration = undefined;
+    this.busy = true; this.reviewing = true; this.aborted = new AbortController(); this.streamed.clear(); this.items.clear(); this.runningCommands.clear();
+    this.proposedPlan = undefined; this.turnCollaboration = undefined;
     try {
       const finished = new Promise<void>((resolve, reject) => { this.finishTurn = error => error ? reject(error) : resolve(); });
       void finished.catch(() => {});
       const result = await this.rpc.request("review/start", { threadId, target, delivery: "inline" });
       this.turnId = result?.turn?.id;
-      if (this.aborted.signal.aborted && this.turnId) await this.rpc.request("turn/interrupt", { threadId, turnId: this.turnId });
+      if (this.aborted.signal.aborted && this.turnId) await this.interruptTurn(threadId, this.turnId);
       await finished;
-    } finally { this.busy = false; this.turnId = undefined; this.finishTurn = undefined; this.aborted.abort(); }
+    } finally { this.busy = false; this.reviewing = false; this.turnId = undefined; this.finishTurn = undefined; this.aborted.abort(); }
   }
   /**
    * `/fork [name]` → `thread/fork` (`v2/ThreadForkParams.ts`) with the thread's own settings, then
@@ -779,14 +825,42 @@ export class CodexSession implements NativeSession {
     const response = await this.rpc.request("fuzzyFileSearch", { query, roots: [this.cwd], cancellationToken: null });
     return (response?.files ?? []).map((file: any) => String(file.path));
   }
-  async cancel(): Promise<void> {
+  /** `/f614:stop`: cancels a login in progress, or asks Codex to interrupt the running turn — see `interruptTurn` for how it always frees the session. */
+  async cancel(): Promise<CancelOutcome | void> {
     this.aborted.abort();
     if (this.loginId) {
       try { await this.rpc.request("account/login/cancel", { loginId: this.loginId }); }
       finally { this.loginId = undefined; this.busy = false; }
       return;
     }
-    if (this.turnId) await this.rpc.request("turn/interrupt", { threadId: this.sessionId, turnId: this.turnId });
+    if (this.turnId) return this.interruptTurn(this.sessionId, this.turnId);
+  }
+  /**
+   * `turn/interrupt` (`v2/TurnInterruptParams.ts`), asked with a short timeout instead of the transport's 30 seconds. `/f614:stop`
+   * never waits without limit: if Codex confirms, the turn ends when Codex says so (its `turn/completed`), and if that does not come
+   * within `stopWaitMs` the turn is over on Shell's side (the connection stays open, Codex did answer); if Codex does not answer the
+   * request in time (the transport then closes itself, `rpc.ts`) or says there is no active turn, the turn is over on Shell's side
+   * at once. Each time the person is told once, in their language. Came out of the real-account test, where a stuck review left
+   * the stop waiting.
+   */
+  private async interruptTurn(threadId: string | undefined, turnId: string): Promise<CancelOutcome> {
+    this.interrupting = true;
+    const turnEnd = this.finishTurn;
+    try {
+      await this.rpc.request("turn/interrupt", { threadId, turnId }, INTERRUPT_TIMEOUT_MS);
+      // Codex accepted, but a turn it never completes must not hold Shell: act only if this same turn is still waiting when the time is up.
+      setTimeout(() => {
+        if (!turnEnd || this.finishTurn !== turnEnd) return;
+        this.emit({ type: "text", text: this.t.stopNotFinished });
+        turnEnd();
+      }, this.stopWaitMs).unref?.();
+      return "requested";
+    } catch (error) {
+      const timedOut = isRequestTimeout(error);
+      this.emit({ type: "text", text: timedOut ? this.t.stopNoAnswer : this.t.stopNoActiveTurn });
+      this.finishTurn?.();
+      return timedOut ? "no-answer" : "no-active-turn";
+    } finally { this.interrupting = false; }
   }
   close(): void { this.aborted.abort(); this.rpc.close(); }
   private notification(method: string, params: any): void {
@@ -800,9 +874,10 @@ export class CodexSession implements NativeSession {
     }
     if (method === "account/rateLimits/updated") { this.updateQuotas(params); this.emit({ type: "status", text: "" }); return; }
     if (params.threadId !== this.sessionId) return;
-    if (method === "turn/started") this.turnId = params.turn.id;
+    // During a review the turn to follow is the one `review/start` answered with: the `turn/started` that arrives belongs to the reviewing sub-agent.
+    if (method === "turn/started" && !this.reviewing) this.turnId = params.turn.id;
     if (method === "item/agentMessage/delta") {
-      this.streamed.add(params.itemId); this.answeredThisTurn = true;
+      this.streamed.add(params.itemId);
       this.emit({ type: "delta", id: params.itemId, text: params.delta });
     }
     if (method === "item/started") {
@@ -818,15 +893,13 @@ export class CodexSession implements NativeSession {
     }
     if (method === "item/completed") this.runningCommands.delete(params.item.id);
     if (method === "item/completed" && params.item.type === "agentMessage") {
-      this.lastAgentMessage = params.item.text; this.answeredThisTurn = true;
+      this.lastAgentMessage = params.item.text;
       if (!this.streamed.has(params.item.id)) this.emit({ type: "text", text: params.item.text });
     }
     if (method === "item/completed" && params.item.type === "plan" && String(params.item.text ?? "").trim()) this.proposedPlan = String(params.item.text);
-    // Codex frames a review with its banners; its result is shown here only if no answer of the turn already showed it.
-    if (method === "item/completed" && params.item.type === "exitedReviewMode") {
-      if (!this.answeredThisTurn && String(params.item.review ?? "").trim()) this.emit({ type: "text", text: String(params.item.review) });
-      this.emit({ type: "text", text: this.native.reviewFinished });
-    }
+    // Codex frames a review with its banners and paints only the banner for `exitedReviewMode` (`chatwidget/replay.rs:426`): the review
+    // itself reaches the screen once, as the `agentMessage` Codex records right after it — never from `exitedReviewMode.review`.
+    if (method === "item/completed" && params.item.type === "exitedReviewMode") this.emit({ type: "text", text: this.native.reviewFinished });
     if (method === "thread/tokenUsage/updated") {
       const usage = params.tokenUsage;
       this.tokens = this.t.sessionTokensLine({

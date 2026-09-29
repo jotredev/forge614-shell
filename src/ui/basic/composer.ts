@@ -1,4 +1,4 @@
-import { Editor, TuiAltScreen, ProcessTerminal, visibleWidth, matchesKey } from "@earendil-works/pi-tui";
+import { Editor, TuiAltScreen, ProcessTerminal, visibleWidth, matchesKey, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { accent as cyan, danger, muted, fit, paint, success, warning } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
@@ -18,8 +18,11 @@ function defaultForgeCommands(locale: Locale): ComposerChoice[] {
  * `key`, when set, is a single letter that picks the row straight away in a picker that is not searchable (uppercase or lowercase).
  */
 export interface ComposerChoice { value: string; label: string; display?: string; group?: string; search?: string; key?: string; }
-/** How a picker opens: `searchable` filters as the person types; `numbered: false` drops the «1.» before each row; `footer` replaces the default «title · 1–2 of 2 · …» line. */
-export interface ComposerChooseOptions { searchable?: boolean; numbered?: boolean; footer?: string; }
+/**
+ * How a picker opens: `searchable` filters as the person types; `numbered: false` drops the «1.» before each row; `footer` replaces the
+ * default «title · 1–2 of 2 · …» line; `body` is an explanation of the question, drawn wrapped under its title and gone with the picker.
+ */
+export interface ComposerChooseOptions { searchable?: boolean; numbered?: boolean; footer?: string; body?: string; }
 export interface ComposerCommandGroup { title: string; items: ComposerChoice[]; }
 
 /** Lowercase and without accents, so «CAFÉ», «Café» and «cafe» all read the same when searching. */
@@ -98,11 +101,22 @@ function statusColor(status: string): (text: string) => string {
   return warning; // e.g. "Connect with /login" — needs the person's attention
 }
 
+/** «Working …» or, while `/compact` runs, «Compacting context …» — both in either language, both drawn as busy. */
 function isWorkingStatus(status: string): boolean {
-  return status.startsWith(getCatalog("en").chat.statusWorking) || status.startsWith(getCatalog("es").chat.statusWorking);
+  return (["en", "es"] as const).some(locale => status.startsWith(getCatalog(locale).chat.statusWorking) || status.startsWith(getCatalog(locale).codexChat.compactingTitle));
 }
 
-export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+/**
+ * A busy status that fits `max` columns: «label · what it is doing · time» loses the middle part (the command, or «Making room to
+ * continue») before it is allowed to cut off the time at the end, which is the part that shows it has not frozen.
+ */
+function fitStatus(status: string, max: number): string {
+  const parts = status.split(" · ");
+  while (parts.length > 2 && visibleWidth(parts.join(" · ")) > max) parts.splice(1, 1);
+  return parts.join(" · ");
+}
+
+export const SPINNER_FRAMES =["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 /** A live-moving dot while active — a static label reads as frozen once the person stares at it. */
 export function spinnerFrame(active: boolean): string {
   return active ? SPINNER_FRAMES[Math.floor(Date.now() / 120) % SPINNER_FRAMES.length]! : "●";
@@ -127,7 +141,7 @@ export class ForgeComposer extends Editor {
   /** The `@` query last searched and the files it found. */
   private fileQuery = "";
   private fileChoices: ComposerChoice[] = [];
-  private picker?: { title: string; items: ComposerChoice[]; searchable: boolean; numbered: boolean; footer?: string; resolve: (value?: string) => void };
+  private picker?: { title: string; items: ComposerChoice[]; searchable: boolean; numbered: boolean; footer?: string; body?: string; resolve: (value?: string) => void };
   private pickerQuery = "";
   private repaint: () => void;
   constructor(tui: TUI, private readonly locale: Locale = "en") {
@@ -149,7 +163,7 @@ export class ForgeComposer extends Editor {
     this.currentValue = current;
     this.pickerQuery = "";
     return new Promise(resolve => {
-      this.picker = { title, items, searchable: Boolean(options.searchable), numbered: options.numbered !== false, ...(options.footer ? { footer: options.footer } : {}), resolve };
+      this.picker = { title, items, searchable: Boolean(options.searchable), numbered: options.numbered !== false, ...(options.footer ? { footer: options.footer } : {}), ...(options.body ? { body: options.body } : {}), resolve };
       this.repaint();
     });
   }
@@ -178,7 +192,7 @@ export class ForgeComposer extends Editor {
     this.selectedChoice = 0; this.dismissed = ""; this.repaint();
   }
   setSkillChoices(skills: ComposerChoice[]): void {
-    this.skillChoices = skills.map(skill => ({ ...skill, group: "CODEX SKILLS" }));
+    this.skillChoices = skills.map(skill => ({ ...skill, group: getCatalog(this.locale).chat.skillsGroup }));
     this.repaint();
   }
   /** Lets `@` search files with the assistant's own search (Codex: `fuzzyFileSearch`); undefined turns it off. */
@@ -247,6 +261,8 @@ export class ForgeComposer extends Editor {
         const item = items[this.selectedChoice % items.length]!;
         if (this.picker) { const picker = this.picker; this.picker = undefined; picker.resolve(item.value); }
         else if (item.group === getCatalog(this.locale).chat.filesGroup) this.insertFile(item.value);
+        // Like Codex, a skill only goes into the box as «$name » so the person goes on writing; the next Enter sends the message.
+        else if (item.group === getCatalog(this.locale).chat.skillsGroup) { const text = `${item.value} `; this.setText(text); this.dismissed = text; }
         else { this.setText(item.value); this.dismissed = item.value; if (matchesKey(data, "enter")) this.onSubmit?.(item.value); }
         this.repaint(); return;
       }
@@ -266,8 +282,15 @@ export class ForgeComposer extends Editor {
     if (event.button === "left" && ["press", "drag", "release"].includes(event.type)) return { handled: true, focus: true };
     const items = this.activeItems();
     const searchRows = this.picker?.searchable ? 1 : 0;
-    const menuRows = items.length ? Math.min(5, items.length - Math.max(0, this.selectedChoice - 4)) + 2 + searchRows : searchRows ? 2 : 0;
+    const menuRows = items.length ? Math.min(5, items.length - Math.max(0, this.selectedChoice - 4)) + 2 + searchRows + this.bodyLines(event.width).length : searchRows ? 2 : 0;
     return super.handleMouse({ ...event, x: event.x - 4, y: event.y - 2 - menuRows, width: Math.max(1, event.width - 8) });
+  }
+
+  /** The open picker's explanation wrapped for a component of `width` columns (the same margin `render` leaves), or no rows when it has none. */
+  private bodyLines(width: number): string[] {
+    if (!this.picker?.body) return [];
+    const inner = Math.max(1, width >= 14 ? width - 4 : width);
+    return wrapTextWithAnsi(muted(this.picker.body), inner).map(line => fit(line, inner));
   }
 
   render(width: number): string[] {
@@ -279,7 +302,7 @@ export class ForgeComposer extends Editor {
     const innerWidth = Math.max(1, width - 4);
     if (width < 10) return super.render(Math.max(1, width));
     const editor = super.render(innerWidth).slice(1, -1);
-    const title = `  ${statusDot(this.status)} ${this.status}  `;
+    const title = `  ${statusDot(this.status)} ${isWorkingStatus(this.status) ? fitStatus(this.status, width - 11) : this.status}  `;
     const topFill = rule(Math.max(0, width - visibleWidth(title) - 5));
     const mode = this.workModeHint || this.collaborationHint?.modes.length ? workModePresentation(this.workModeHint, this.locale, this.collaborationHint) : undefined;
     const hint = mode ? mode.text : muted(t.helpOrCommandsHint);
@@ -296,6 +319,8 @@ export class ForgeComposer extends Editor {
     const leftText = (item: ComposerChoice, index: number) =>
       `${numbered ? `${start + index + 1}. ` : ""}${item.display ?? item.value}${item.value === this.currentValue ? " ✓" : ""}`;
     const leftWidth = Math.max(0, ...visibleItems.map((item, offset) => visibleWidth(leftText(item, offset))));
+    const bodyRows = this.bodyLines(width + 4);
+    const skillList = !this.picker && items[0]?.group === t.skillsGroup;
     const searchRow = this.picker?.searchable
       ? [fit(`${cyan(`${t.searchLabel}:`)} ${this.pickerQuery ? this.pickerQuery : muted(t.searchPlaceholder)}`, width)]
       : [];
@@ -303,6 +328,7 @@ export class ForgeComposer extends Editor {
       ...searchRow,
       ...visibleItems.flatMap((item, offset) => [
         ...(offset === 0 || item.group !== visibleItems[offset - 1]?.group ? [fit(cyan(item.group ?? this.picker?.title ?? t.commandsFallbackTitle), width)] : []),
+        ...(offset === 0 ? bodyRows : []),
         fit((() => {
           const isCursor = start + offset === this.selectedChoice;
           const isCurrent = item.value === this.currentValue;
@@ -311,7 +337,7 @@ export class ForgeComposer extends Editor {
           return item.label ? `${left}  ${muted(item.label)}` : left;
         })(), width),
       ]),
-      fit(muted(this.picker?.footer ?? t.menuFooter({ title: this.picker?.title ?? t.commandsFallbackTitle, from: start + 1, to: Math.min(start + 5, items.length), total: items.length })), width),
+      fit(muted(this.picker?.footer ?? t.menuFooter({ title: this.picker?.title ?? (skillList ? t.skillsFooterTitle : t.commandsFallbackTitle), from: start + 1, to: Math.min(start + 5, items.length), total: items.length })), width),
     ] : searchRow.length ? [...searchRow, fit(muted(t.searchNoMatches), width)] : [];
     return [
       ...menu,

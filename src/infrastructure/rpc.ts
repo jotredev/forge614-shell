@@ -1,4 +1,5 @@
 import type { Readable, Writable } from "node:stream";
+import { ShellError } from "../shell-error.ts";
 
 // Protocol payloads are validated/interpreted by each engine adapter, not by the transport.
 export interface RpcConnection {
@@ -36,8 +37,9 @@ export class JsonRpcPeer implements RpcConnection {
     if (this.closed) return Promise.reject(new Error("Engine connection closed"));
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
+      // Shell's own typed error, not a literal English text: each screen renders it in the person's language (`describeError`).
       const timer = timeoutMs > 0 ? setTimeout(() => {
-        this.fail(new Error(`Engine request timed out: ${method}`));
+        this.fail(new ShellError("engine-request-timeout", { method }));
       }, timeoutMs) : undefined;
       this.pending.set(id, { resolve, reject, timer });
       try { this.write({ id, method, params }); }

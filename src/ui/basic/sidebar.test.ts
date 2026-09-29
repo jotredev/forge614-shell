@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
-import { REASONING_DEFAULT_LABEL } from "./metrics.ts";
+import { REASONING_DEFAULT_LABEL, contextRing } from "./metrics.ts";
+import { getCatalog } from "../../i18n/index.ts";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ShellSnapshot } from "./shell-state.ts";
 
@@ -242,6 +243,29 @@ test("context and plan-usage rows never overflow or end in an ellipsis at any re
           expect({ locale, name, width, row, ellipsis: row.includes("…") }).toEqual({ locale, name, width, row, ellipsis: false });
         }
       }
+    }
+  }
+});
+
+/**
+ * The context ring grew one cell (13 wide) to hold its block digits. At every width the sidebar can really have (27–37 columns), in both
+ * languages, each of its six rows still fits, keeps its 13 ring cells whole, and the text beside it (title, «N% used», «N% free»)
+ * is not cut off.
+ */
+test("the context ring's rows fit at every real sidebar width and keep their 13 cells whole, in both languages", () => {
+  const ring = contextRing(17).map(stripVTControlCharacters);
+  for (const locale of ["en", "es"] as const) {
+    for (let width = 27; width <= 37; width++) {
+      const rows = new ShellSidebar(snapshotStates["with measured data"]!, undefined, undefined, locale).render(width).map(stripVTControlCharacters);
+      const start = rows.findIndex(row => row.startsWith(ring[0]!));
+      expect(start).toBeGreaterThan(-1);
+      const t = getCatalog(locale).sidebar;
+      const beside = ["", t.conversationLabel, t.percentUsed({ percent: 17 }), t.percentFree({ percent: 83 }), "", ""];
+      rows.slice(start, start + 6).forEach((row, i) => {
+        expect({ locale, width, row, fits: visibleWidth(row) <= width }).toEqual({ locale, width, row, fits: true });
+        expect(row.startsWith(ring[i]!)).toBe(true);
+        expect(row.slice(15).trimEnd()).toBe(beside[i]!);
+      });
     }
   }
 });

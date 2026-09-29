@@ -85,7 +85,20 @@ export interface NativeBackgroundTerminal { command: string; cwd: string; pid?: 
 /** The goal set for a long task: its `status` is the assistant's own word for it. */
 export interface NativeGoal { objective: string; status: string; tokenBudget?: number; tokensUsed: number; timeUsedSeconds: number }
 /** `planReady`: a turn finished in plan mode with a proposed plan (its Markdown is `text`), so the screen can offer to implement it. */
-export interface NativeEvent { type: "text" | "delta" | "status" | "reset" | "planReady"; text: string; id?: string }
+export interface NativeEvent {
+  type: "text" | "delta" | "status" | "reset" | "planReady"; text: string; id?: string;
+  /**
+   * The time of a message replayed from a saved conversation, in milliseconds since the epoch; `null` when the assistant did not
+   * give one (the screen then shows no time). Left out for a live message, which takes the time of now.
+   */
+  at?: number | null;
+}
+/**
+ * How a stop request ended: `requested` — the assistant took it and the turn ends when it says so; `no-active-turn` — the assistant
+ * said no turn was running; `no-answer` — the assistant did not answer in time. In the last two Shell ended the turn on its own side
+ * and told the person once.
+ */
+export type CancelOutcome = "requested" | "no-active-turn" | "no-answer";
 export type Emit = (event: NativeEvent) => void;
 export type Approve = (description: string, signal: AbortSignal) => Promise<boolean>;
 export interface NativeSession {
@@ -97,7 +110,8 @@ export interface NativeSession {
   login(): Promise<void>;
   logout?(): Promise<void>;
   send(text: string): Promise<void>;
-  cancel(): Promise<void>;
+  /** Stops the turn in progress; always leaves the session free (see `CancelOutcome`). A session that has nothing to report may resolve with nothing. */
+  cancel(): Promise<CancelOutcome | void>;
   reset(): void;
   resume(id: string): Promise<void>;
   listSessions(): Promise<NativeSessionInfo[]>;
