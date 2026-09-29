@@ -12,8 +12,24 @@ function defaultForgeCommands(locale: Locale): ComposerChoice[] {
     ["/status", t.commandSessionDetails], ["/stop", t.commandCancelKeepOpen], ["/help", t.commandBrowseAllCommands], ["/commands", t.commandBrowseAllCommands], ["/quit", t.commandExitShell],
   ].map(([value, label]) => ({ value: value!, label: label! }));
 }
-export interface ComposerChoice { value: string; label: string; display?: string; group?: string; }
+/** `search`, when set, is the text a searchable picker matches typed words against; without it the row's display and label are searched. */
+export interface ComposerChoice { value: string; label: string; display?: string; group?: string; search?: string; }
 export interface ComposerCommandGroup { title: string; items: ComposerChoice[]; }
+
+/** Lowercase and without accents, so «CAFÉ», «Café» and «cafe» all read the same when searching. */
+export function normalizeSearch(text: string): string {
+  return text.normalize("NFD").replace(/\p{M}+/gu, "").toLowerCase();
+}
+
+/** The rows that match every typed word (in any order, anywhere in the row's searchable text); an empty search keeps all of them. */
+export function filterChoices(items: ComposerChoice[], query: string): ComposerChoice[] {
+  const words = normalizeSearch(query).split(/\s+/).filter(Boolean);
+  if (!words.length) return items;
+  return items.filter(item => {
+    const haystack = normalizeSearch(item.search ?? `${item.display ?? item.value} ${item.label}`);
+    return words.every(word => haystack.includes(word));
+  });
+}
 
 const purple = paint("176;132;255");
 const planning = paint("52;170;166");
@@ -85,7 +101,8 @@ export class ForgeComposer extends Editor {
   private dismissed = "";
   private commandGroups: ComposerCommandGroup[];
   private skillChoices: ComposerChoice[] = [];
-  private picker?: { title: string; items: ComposerChoice[]; resolve: (value?: string) => void };
+  private picker?: { title: string; items: ComposerChoice[]; searchable: boolean; resolve: (value?: string) => void };
+  private pickerQuery = "";
   private repaint: () => void;
   constructor(tui: TUI, private readonly locale: Locale = "en") {
     super(tui, { borderColor: cyan, selectList: { selectedPrefix: cyan, selectedText: cyan, description: muted, scrollInfo: muted, noMatch: muted } }, { paddingX: 1 });
@@ -93,14 +110,39 @@ export class ForgeComposer extends Editor {
     this.status = getCatalog(locale).chat.statusReady;
     this.commandGroups = [{ title: "FORGE614", items: defaultForgeCommands(locale) }];
   }
-  choose(title: string, items: ComposerChoice[], current?: string): Promise<string | undefined> {
+  /**
+   * Opens a selector: arrows move, Enter resolves the highlighted value, Esc resolves nothing. With
+   * `searchable`, typing also filters the rows (see `filterChoices`) and Backspace widens the search
+   * again; without it typed letters are ignored, as they always were.
+   */
+  choose(title: string, items: ComposerChoice[], current?: string, options: { searchable?: boolean } = {}): Promise<string | undefined> {
     this.cancelChoice();
     if (!items.length) return Promise.resolve(undefined);
     this.selectedChoice = Math.max(0, items.findIndex(item => item.value === current));
     this.currentValue = current;
-    return new Promise(resolve => { this.picker = { title, items, resolve }; this.repaint(); });
+    this.pickerQuery = "";
+    return new Promise(resolve => { this.picker = { title, items, searchable: Boolean(options.searchable), resolve }; this.repaint(); });
   }
-  cancelChoice(): void { const picker = this.picker; this.picker = undefined; this.currentValue = undefined; picker?.resolve(); this.repaint(); }
+  cancelChoice(): void { const picker = this.picker; this.picker = undefined; this.currentValue = undefined; this.pickerQuery = ""; picker?.resolve(); this.repaint(); }
+  /** What the menu lists right now: the open picker's rows narrowed by what was typed, or the "/" and "$" suggestions. */
+  private activeItems(): ComposerChoice[] {
+    return this.picker ? (this.picker.searchable ? filterChoices(this.picker.items, this.pickerQuery) : this.picker.items) : this.suggestions();
+  }
+  /** Keys for a searchable picker: arrows, Enter, Esc, Backspace and printable text; everything else is swallowed so no stray key reaches the editor. */
+  private handleSearchInput(data: string): void {
+    const items = this.activeItems();
+    if (matchesKey(data, "escape")) { this.dismissed = this.getText(); this.cancelChoice(); return; }
+    if (items.length && (matchesKey(data, "up") || matchesKey(data, "down"))) {
+      this.selectedChoice = (this.selectedChoice + (matchesKey(data, "up") ? -1 : 1) + items.length) % items.length;
+    } else if (items.length && (matchesKey(data, "enter") || matchesKey(data, "tab"))) {
+      const picker = this.picker!; this.picker = undefined; this.pickerQuery = ""; picker.resolve(items[this.selectedChoice % items.length]!.value);
+    } else if (matchesKey(data, "backspace")) {
+      this.pickerQuery = Array.from(this.pickerQuery).slice(0, -1).join(""); this.selectedChoice = 0;
+    } else if (data && !/[\u0000-\u001f\u007f-\u009f]/.test(data)) {
+      this.pickerQuery += data; this.selectedChoice = 0;
+    }
+    this.repaint();
+  }
   setCommandGroups(groups: ComposerCommandGroup[]): void {
     this.commandGroups = groups.filter(group => group.items.length).map(group => ({ ...group, items: group.items.map(item => ({ ...item, group: group.title })) }));
     this.selectedChoice = 0; this.dismissed = ""; this.repaint();
@@ -121,12 +163,13 @@ export class ForgeComposer extends Editor {
     return [];
   }
   handleInput(data: string): void {
+    if (this.picker?.searchable) { this.handleSearchInput(data); return; }
     if (this.picker && (data.startsWith("/") || this.getText().startsWith("/")) && !matchesKey(data, "escape")) {
       super.handleInput(data);
       this.repaint();
       return;
     }
-    const items = this.picker?.items ?? this.suggestions();
+    const items = this.activeItems();
     if (items.length) {
       if (matchesKey(data, "up") || matchesKey(data, "down")) {
         this.selectedChoice = (this.selectedChoice + (matchesKey(data, "up") ? -1 : 1) + items.length) % items.length;
@@ -152,8 +195,9 @@ export class ForgeComposer extends Editor {
     // Own editor gestures so screen-level selection cannot highlight the
     // zero-width cursor marker (or the entire padded input row).
     if (event.button === "left" && ["press", "drag", "release"].includes(event.type)) return { handled: true, focus: true };
-    const items = this.picker?.items ?? this.suggestions();
-    const menuRows = items.length ? Math.min(5, items.length - Math.max(0, this.selectedChoice - 4)) + 2 : 0;
+    const items = this.activeItems();
+    const searchRows = this.picker?.searchable ? 1 : 0;
+    const menuRows = items.length ? Math.min(5, items.length - Math.max(0, this.selectedChoice - 4)) + 2 + searchRows : searchRows ? 2 : 0;
     return super.handleMouse({ ...event, x: event.x - 4, y: event.y - 2 - menuRows, width: Math.max(1, event.width - 8) });
   }
 
@@ -174,7 +218,7 @@ export class ForgeComposer extends Editor {
     const hintWidth = visibleWidth(hint) + visibleWidth(shortcuts);
     const hintLine = innerWidth >= hintWidth + 2 ? `${hint}${" ".repeat(innerWidth - hintWidth)}${shortcuts}` : hint;
 
-    const items = this.picker?.items ?? this.suggestions();
+    const items = this.activeItems();
     const start = Math.max(0, this.selectedChoice - 4);
     const visibleItems = items.slice(start, start + 5);
     // Numbering and the ✓ for the active value only make sense for a deliberate choose() menu
@@ -183,7 +227,11 @@ export class ForgeComposer extends Editor {
     const leftText = (item: ComposerChoice, index: number) =>
       `${numbered ? `${start + index + 1}. ` : ""}${item.display ?? item.value}${item.value === this.currentValue ? " ✓" : ""}`;
     const leftWidth = Math.max(0, ...visibleItems.map((item, offset) => visibleWidth(leftText(item, offset))));
+    const searchRow = this.picker?.searchable
+      ? [fit(`${cyan(`${t.searchLabel}:`)} ${this.pickerQuery ? this.pickerQuery : muted(t.searchPlaceholder)}`, width)]
+      : [];
     const menu = items.length ? [
+      ...searchRow,
       ...visibleItems.flatMap((item, offset) => [
         ...(offset === 0 || item.group !== visibleItems[offset - 1]?.group ? [fit(cyan(item.group ?? this.picker?.title ?? t.commandsFallbackTitle), width)] : []),
         fit((() => {
@@ -195,7 +243,7 @@ export class ForgeComposer extends Editor {
         })(), width),
       ]),
       fit(muted(t.menuFooter({ title: this.picker?.title ?? t.commandsFallbackTitle, from: start + 1, to: Math.min(start + 5, items.length), total: items.length })), width),
-    ] : [];
+    ] : searchRow.length ? [...searchRow, fit(muted(t.searchNoMatches), width)] : [];
     return [
       ...menu,
       "",

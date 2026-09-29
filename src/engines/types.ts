@@ -22,6 +22,12 @@ export interface BackgroundActivity {
   endedAt?: number;
   detail?: string;
 }
+/**
+ * One saved conversation as the assistant reports it, for the `/resume` selector. Every field but `id`
+ * is optional because Shell shows only what the assistant delivers and never makes up the rest.
+ * `updatedAt` is in milliseconds since the epoch; `firstMessage` is the conversation's first user message.
+ */
+export interface NativeSessionInfo { id: string; title?: string; firstMessage?: string; folder?: string; updatedAt?: number }
 export interface NativeEvent { type: "text" | "delta" | "status" | "reset"; text: string; id?: string }
 export type Emit = (event: NativeEvent) => void;
 export type Approve = (description: string, signal: AbortSignal) => Promise<boolean>;
@@ -37,7 +43,7 @@ export interface NativeSession {
   cancel(): Promise<void>;
   reset(): void;
   resume(id: string): Promise<void>;
-  listSessions(): Promise<{ id: string; title: string }[]>;
+  listSessions(): Promise<NativeSessionInfo[]>;
   setModel(id: string): Promise<void>;
   setEffort(effort: string): Promise<void>;
   workModes?(): NativeWorkMode[];

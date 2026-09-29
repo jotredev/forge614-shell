@@ -2,6 +2,8 @@ import { stripVTControlCharacters } from "node:util";
 import { Container, HStack, ProcessTerminal, ScrollView, Text, TuiAltScreen, VStack, matchesKey } from "@earendil-works/pi-tui";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { getSessionMessages, listSessions } from "@anthropic-ai/claude-agent-sdk";
+import { claudeResumeEntries, resumeChoice, sortRecentFirst } from "./resume-picker.ts";
+import type { ResumeEntry } from "./resume-picker.ts";
 import type { EffortLevel, ModelInfo, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { claudeEnvironment, claudeLoginState, findClaude, officialLogin } from "../../engines/claude/auth.ts";
 import { confirmedLogout } from "../../engines/logout.ts";
@@ -114,7 +116,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   let resolveExit!: () => void;
   const exited = new Promise<void>(resolve => { resolveExit = resolve; });
   const approvals: { label: string; finish: (allowed: boolean) => void }[] = [];
-  let sessions: Awaited<ReturnType<typeof listSessions>> = [];
+  let sessions: ResumeEntry[] = [];
   let streaming: ChatText | undefined;
   let streamedText = "";
   const toolTracker = new ToolTracker(card => { transcript.addChild(card); tui.requestRender(); }, tc);
@@ -410,14 +412,19 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         session.effort = argument as EffortLevel; persistPreference();
       } else throw new Error(tc.invalidEffort);
     } else if (name === "/resume") {
+      let chosen: string | undefined;
       if (!argument) {
-        sessions = (await listSessions({ dir: cwd })).filter(item => item.cwd === cwd).slice(0, 30);
-        write(sessions.length ? sessions.map((item, i) => `${i + 1}. ${item.summary}`).join("\n") + "\n" + tc.resumeInstruction : tc.noClaudeSessionsFound);
+        // Newest first; the same order gives the numbers `/resume <number>` has always used.
+        sessions = sortRecentFirst(claudeResumeEntries(await listSessions({ dir: cwd }), cwd)).slice(0, 30);
+        if (!sessions.length) write(tc.noClaudeSessionsFound);
+        else chosen = await input.choose(t.commandChatHistory, sessions.map(item => resumeChoice(item, locale, process.env.HOME)), undefined, { searchable: true });
       } else {
         if (!/^\d+$/.test(argument) || !sessions[Number(argument) - 1]) throw new Error(tc.useResumeFirst);
-        const selected = sessions[Number(argument) - 1]!;
-        const messages = await getSessionMessages(selected.sessionId, { dir: cwd });
-        session.resume(selected.sessionId); telemetry = emptyTelemetry(); transcript.clear();
+        chosen = sessions[Number(argument) - 1]!.id;
+      }
+      if (chosen) {
+        const messages = await getSessionMessages(chosen, { dir: cwd });
+        session.resume(chosen); telemetry = emptyTelemetry(); transcript.clear();
         for (const entry of messages) {
           const message = entry.message as { content?: unknown };
           const content = message?.content;
