@@ -1,6 +1,7 @@
 import { accent, border, danger, warning } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
+import { limitName } from "../../i18n/status-text.ts";
 
 /** A usage meter's own color escalates as it fills — muted at first, amber near the limit, red at or over it — instead of always looking the same regardless of how close you are to running out. */
 export function usageColor(percent: number): (text: string) => string {
@@ -48,10 +49,9 @@ export function formatUsd(value: number, locale: Locale = "en"): string {
   return `$${locale === "es" ? fixed.replace(".", ",") : fixed}`;
 }
 
+/** The name the sidebar and `/f614:status` give a plan limit; it lives in `limitName` so both say the same words. */
 export function usageTitle(label: string, locale: Locale = "en"): string {
-  const t = getCatalog(locale).metrics;
-  const names: Record<string, string> = { five_hour: t.usageFiveHourLimit, seven_day: t.usageWeeklyLimit, seven_day_opus: t.usageWeeklyOpus, seven_day_sonnet: t.usageWeeklySonnet, seven_day_oauth_apps: t.usageWeeklyConnectedApps, extra_usage: t.usageExtraUsage };
-  return names[label] ?? (label.includes("_") ? label.replaceAll("_", " ").replace(/\b\w/g, c => c.toUpperCase()) + t.usageProviderSuffix : label);
+  return limitName(label, locale);
 }
 
 /** Provider-internal buckets are not stable user-facing plan limits. */

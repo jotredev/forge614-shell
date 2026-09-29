@@ -280,6 +280,9 @@ export interface Catalog {
     resumeUseNumber: string;
     noSessionsFound: string;
     quitConfirmActiveWork: string;
+    /** `/f614:quit` (and Ctrl+C / Ctrl+D) while work runs: the question, and the footer under its «Yes» / «No» rows. */
+    quitQuestion: string;
+    quitFooter: string;
     historyRestored: string;
     nativeCliOptionsUnsupported: (params: { id: string }) => string;
     nativeRequiresInteractiveTerminal: string;
@@ -362,9 +365,23 @@ export interface Catalog {
     tokensLine: (params: { input: string; output: string; cacheRead: string; cacheWrite: string }) => string;
     contextLine: (params: { used: string; window: string }) => string;
     costLine: (params: { estimate: string }) => string;
-    quotaLine: (params: { key: string; used: string; status: string; resets: string }) => string;
+    /** `name` is the limit's plain name (the sidebar's), `status` the translated status and `resets` a whole phrase (`resetsAt` or `resetsUnknown`). */
+    quotaLine: (params: { name: string; used: string; status: string; resets: string }) => string;
+    resetsAt: (params: { moment: string }) => string;
+    resetsUnknown: string;
+    /** The statuses the SDK reports for a limit (`SDKRateLimitInfo.status`), in plain words. */
+    statusAllowed: string;
+    statusAllowedWarning: string;
+    statusRejected: string;
     percentUsed: (params: { percent: number }) => string;
     extraUsageActive: string;
+  };
+  /** A moment in local time (`formatMoment`): short month names, the 12-hour clock's two halves and the order of the pieces. */
+  moments: {
+    months: string[];
+    am: string;
+    pm: string;
+    dateTime: (params: { month: string; day: string; time: string }) => string;
   };
   chatRoles: {
     you: string;
@@ -387,6 +404,8 @@ export interface Catalog {
     usageWeeklySonnet: string;
     usageWeeklyConnectedApps: string;
     usageExtraUsage: string;
+    usageWeeklyOverageIncluded: string;
+    usageOtherLimit: string;
     usageProviderSuffix: string;
     resetTimeUnavailable: string;
     resetsIn: (params: { time: string }) => string;

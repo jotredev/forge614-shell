@@ -15,6 +15,7 @@ import { ShellError, describeError } from "../../shell-error.ts";
 import { MEMORY_HOOK_TIMEOUT_MS } from "../../infrastructure/memory-hook.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
+import { formatMoment } from "../../i18n/status-text.ts";
 
 /** How long `/f614:stop` waits, first for Codex to answer `turn/interrupt` and then, once it has, for Codex to end the turn (`turn/completed`), before it stops waiting and ends the turn on Shell's side. */
 export const INTERRUPT_TIMEOUT_MS = 5000;
@@ -313,9 +314,11 @@ export class CodexSession implements NativeSession {
       for (const name of ["primary", "secondary"]) {
         const window = bucket?.[name];
         if (typeof window?.usedPercent === "number") {
-          const reset = typeof window.resetsAt === "number" ? new Date(window.resetsAt * 1000).toISOString() : this.t.notReported;
-          lines.push(this.t.quotaLine({ label: `${label} ${name}`, percent: String(window.usedPercent), resets: reset }));
-          usage.push({ label: `${label} ${name}`, usedPercent: window.usedPercent, ...(typeof window.resetsAt === "number" ? { reset } : {}) });
+          const reported = typeof window.resetsAt === "number";
+          // `/status` says the reset in local time and in words; the sidebar's meter keeps the ISO string, which `resetLabel` turns into «Resets in …».
+          const moment = reported ? formatMoment(window.resetsAt * 1000, this.locale) : this.t.notReported;
+          lines.push(this.t.quotaLine({ label: `${label} ${name}`, percent: String(window.usedPercent), resets: moment }));
+          usage.push({ label: `${label} ${name}`, usedPercent: window.usedPercent, ...(reported ? { reset: new Date(window.resetsAt * 1000).toISOString() } : {}) });
         }
       }
     }

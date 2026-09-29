@@ -11,7 +11,7 @@ import { ClaudeSession } from "../../engines/claude/session.ts";
 import { isUnconnectedClaudeCommand } from "../../engines/claude/commands.ts";
 import { emptyTelemetry, telemetryLines, updateTelemetry } from "../../engines/claude/telemetry.ts";
 import { createComposer } from "./composer.ts";
-import { askPermission } from "./permission-choice.ts";
+import { askPermission, askQuit } from "./permission-choice.ts";
 import { formatClaudePermission } from "../../engines/permission-text.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
@@ -328,12 +328,23 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     if (event.type === "result" && event.is_error) writeError(tc.claudeError({ message: event.subtype === "success" ? event.result : event.errors.join("\n") }));
     refresh();
   };
+  /** Whether the «Quit anyway?» question is on screen, so a second Ctrl+C does not open it again. */
+  let quitAsking = false;
   /**
-   * Leaves Shell. Claude Code's own `/exit` (alias `/quit`) and Ctrl+C/Ctrl+D refuse while a turn or a login is in progress and say
-   * which command leaves anyway; Shell's `/f614:quit` (`force`) leaves at once, stopping what runs.
+   * Leaves Shell — `/f614:quit`, Ctrl+C and Ctrl+D. Idle it leaves at once; while a turn or a login runs it asks «Quit anyway?» with
+   * «No» marked (stopping work cannot be undone) and only «Yes» stops it and leaves. With a permission question open it asks to answer
+   * that first, so the question is never cancelled (and the permission denied) by accident.
    */
-  const quit = async (force: boolean) => {
-    if (!force && (session.busy || loginAbort)) write(tc.workOrAuthActive);
+  const quit = async () => {
+    if (!(session.busy || loginAbort)) { await shutdown(); return; }
+    if (approvals.length) { write(t.answerPendingPermissionFirst); return; }
+    if (quitAsking) return;
+    quitAsking = true;
+    try { if (await askQuit(input, locale)) await shutdown(); } finally { quitAsking = false; }
+  };
+  /** Claude Code's own `/exit` (alias `/quit`): it leaves when idle and refuses while a turn or a login is in progress, saying that `/f614:quit` leaves. */
+  const quitLikeClaude = async () => {
+    if (session.busy || loginAbort) write(tc.workOrAuthActive);
     else await shutdown();
   };
   const command = async (value: string) => {
@@ -356,8 +367,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       approvals[0].finish(name === "/f614:yes"); return;
     }
     if (name === "/f614:stop") { loginAbort?.abort(); session.stop(); return; }
-    if (name === "/exit" || name === "/quit") { await quit(false); return; }
-    if (name === "/f614:quit") { await quit(true); return; }
+    if (name === "/exit" || name === "/quit") { await quitLikeClaude(); return; }
+    if (name === "/f614:quit") { await quit(); return; }
     // Shell's own session telemetry. Claude Code's `/status` (and `/help`) are its own, which Shell has not connected: said honestly.
     if (name === "/f614:status") { write([...telemetryLines(telemetry, locale), memorySourceLine(await session.memoryDeliveredByAssistant(), locale)].join("\n")); return; }
     if (isUnconnectedClaudeCommand(name)) { write(tc.commandNotAllowed({ name: name ?? "" })); return; }
@@ -507,8 +518,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       return { consume: true };
     }
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) {
-      // Like Claude Code's own `/exit`: refused while work is in progress, `/f614:quit` leaves anyway.
-      void quit(false);
+      // Ctrl+C and Ctrl+D do what `/f614:quit` does: leave when idle, ask first while work is in progress.
+      void quit().catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) })));
       return { consume: true };
     }
     return undefined;

@@ -17,6 +17,44 @@ test("telemetry keeps quota separate from tokens and never labels an estimate as
   expect(state.contextTokens).toBeUndefined(); // Totals are not current context occupancy.
 });
 
+/**
+ * `/f614:status` names the limits like the sidebar and says the status in plain words, in both languages, with no provider key
+ * («five_hour», «seven_day», «allowed») and no machine date. It exists because the real-account test of 1.12.0 showed
+ * «five_hour (last report): not reported | allowed | resets: …» to the owner.
+ */
+test("the quota lines of /f614:status use plain names, a translated status and a readable reset moment", () => {
+  const reset = new Date(2026, 9, 3, 17, 22, 0).getTime() / 1000;
+  let state = updateTelemetry(emptyTelemetry(), { type: "rate_limit_event", rate_limit_info: { rateLimitType: "seven_day", utilization: 0.74, resetsAt: reset, status: "allowed" } });
+  state = updateTelemetry(state, { type: "rate_limit_event", rate_limit_info: { rateLimitType: "five_hour", utilization: 0.9, resetsAt: reset, status: "allowed_warning" } });
+  const quotaLines = (locale: "en" | "es") => telemetryLines(state, locale).slice(4);
+  expect(quotaLines("en")).toEqual([
+    "5-hour limit (last report): 90% used | allowed, near the limit | resets Oct 3, 5:22 PM",
+    "Weekly limit (last report): 74% used | allowed | resets Oct 3, 5:22 PM",
+  ]);
+  expect(quotaLines("es")).toEqual([
+    "Límite de 5 horas (último reporte): 90% usado | permitido, cerca del límite | se reinicia el 3 oct, 5:22 p.m.",
+    "Límite semanal (último reporte): 74% usado | permitido | se reinicia el 3 oct, 5:22 p.m.",
+  ]);
+  // Nothing reported yet: the two usual limits still show, with «not reported» in place of every value.
+  expect(telemetryLines(emptyTelemetry(), "en").slice(4)).toEqual([
+    "5-hour limit (last report): not reported | not reported | reset not reported",
+    "Weekly limit (last report): not reported | not reported | reset not reported",
+  ]);
+  expect(telemetryLines(emptyTelemetry(), "es").slice(4)).toEqual([
+    "Límite de 5 horas (último reporte): no reportado | no reportado | reinicio no reportado",
+    "Límite semanal (último reporte): no reportado | no reportado | reinicio no reportado",
+  ]);
+  // A limit that is rejected and one the SDK reports in extra usage.
+  const blocked = updateTelemetry(emptyTelemetry(), { type: "rate_limit_event", rate_limit_info: { rateLimitType: "overage", status: "rejected", isUsingOverage: true } });
+  expect(telemetryLines(blocked, "en").slice(6)).toEqual(["Extra usage (last report): not reported | blocked | reset not reported | EXTRA USAGE ACTIVE (provider account setting)"]);
+  for (const locale of ["en", "es"] as const) {
+    for (const lines of [telemetryLines(state, locale), telemetryLines(emptyTelemetry(), locale), telemetryLines(blocked, locale)]) {
+      expect(lines.join("\n")).not.toMatch(/five_hour|seven_day|allowed_warning|rejected|\d{4}-\d{2}-\d{2}T/);
+      if (locale === "es") expect(lines.join("\n")).not.toContain("allowed"); // in English «allowed» is the plain word itself
+    }
+  }
+});
+
 test("token counters are per query and subagent input is not main context occupancy", () => {
   let state = updateTelemetry(emptyTelemetry(), { type: "assistant", parent_tool_use_id: null, message: { model: "claude-test", usage: { input_tokens: 10, cache_read_input_tokens: 30, cache_creation_input_tokens: 40, output_tokens: 20 } } });
   expect(state.contextTokens).toBe(100);

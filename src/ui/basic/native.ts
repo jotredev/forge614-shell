@@ -3,7 +3,7 @@ import { Container, HStack, ProcessTerminal, ScrollView, Text, TuiAltScreen, VSt
 import type { Terminal } from "@earendil-works/pi-tui";
 import type { Approve, Emit, NativeEvent, NativeId, NativeSession, NativeSessionInfo } from "../../engines/types.ts";
 import { createComposer } from "./composer.ts";
-import { askPermission } from "./permission-choice.ts";
+import { askPermission, askQuit } from "./permission-choice.ts";
 import { resumeChoice, sortRecentFirst } from "./resume-picker.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
@@ -63,7 +63,7 @@ export async function runNativeUI(
   tui.setFocus(input);
   // With Codex the menu is Codex's own list (names, descriptions and order as its terminal shows them on macOS);
   // what is Shell's own sits apart under FORGE614, every one of them with the `/f614:` prefix (a command without it is Codex's).
-  // `/f614:stop` cancels the answer in progress (`/stop` is Codex's) and `/f614:quit` leaves at once, stopping what runs (`/quit` is Codex's).
+  // `/f614:stop` cancels the answer in progress (`/stop` is Codex's) and `/f614:quit` leaves Shell, asking first if work is running (`/quit` is Codex's).
   input.setCommandGroups([
     { title: engineLabel.toUpperCase(), items: codexMenuCommands() },
     { title: "FORGE614", items: [
@@ -275,20 +275,31 @@ export async function runNativeUI(
     await session.resume(selected);
     write(session.resumeNotice ?? t.historyRestored);
   };
+  /** Whether the «Quit anyway?» question is on screen, so a second Ctrl+C does not open it again. */
+  let quitAsking = false;
   /**
-   * Leaves Shell. Codex's own `/quit` and `/exit` (the same command, «exit Codex») and Ctrl+C/Ctrl+D refuse while work or a login
-   * is in progress and say which command leaves anyway; Shell's `/f614:quit` (`force`) leaves at once, stopping what runs.
+   * Leaves Shell — `/f614:quit`, Ctrl+C and Ctrl+D. Idle it leaves at once; while a turn, a login or a command runs it asks «Quit anyway?»
+   * with «No» marked (stopping work cannot be undone) and only «Yes» stops it and leaves. With a permission question open it asks
+   * to answer that first, so the question is never cancelled (and the permission denied) by accident.
    */
-  const quit = (force: boolean) => {
-    if (!force && (session.busy || commandBusy)) writeError(tc.workOrLoginActive);
+  const quit = async () => {
+    if (!(session.busy || commandBusy)) { shutdown(); return; }
+    if (approvals.length) { write(t.answerPendingPermissionFirst); return; }
+    if (quitAsking) return;
+    quitAsking = true;
+    try { if (await askQuit(input, locale)) shutdown(); } finally { quitAsking = false; }
+  };
+  /** Codex's own `/quit` and `/exit` (the same command, «exit Codex»): they leave when idle and refuse while work or a login is in progress, saying that `/f614:quit` leaves. */
+  const quitLikeCodex = () => {
+    if (session.busy || commandBusy) writeError(tc.workOrLoginActive);
     else shutdown();
   };
   const command = async (value: string) => {
     const [name, ...parts] = value.trim().split(/\s+/); const argument = parts.join(" ");
     // Every command of Shell's own starts with `/f614:`; without it a name is Codex's (or unknown), never a silent alias of Shell's.
     if (name === "/f614:refresh") { await sidebar.refreshUsage(); return; }
-    if (name === "/quit" || name === "/exit") { quit(false); return; }
-    if (name === "/f614:quit") { quit(true); return; }
+    if (name === "/quit" || name === "/exit") { quitLikeCodex(); return; }
+    if (name === "/f614:quit") { await quit(); return; }
     if (name === "/f614:yes" || name === "/f614:no") {
       if (!approvals[0]) throw new Error(t.noPermissionPending);
       approvals[0].answer(name === "/f614:yes"); return;
@@ -400,8 +411,8 @@ export async function runNativeUI(
   };
   tui.addInputListener(data => {
     if (matchesKey(data, "shift+tab")) { void changeWorkMode().catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))); return { consume: true }; }
-    // Ctrl+C and Ctrl+D leave like Codex's own `/quit`: refused while work is in progress, `/f614:quit` leaves anyway.
-    if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { quit(false); return { consume: true }; }
+    // Ctrl+C and Ctrl+D do what `/f614:quit` does: leave when idle, ask first while work is in progress.
+    if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { void quit().catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))); return { consume: true }; }
     return undefined;
   });
   process.once("SIGTERM", shutdown);
