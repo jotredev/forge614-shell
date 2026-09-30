@@ -1,6 +1,6 @@
 import type { RpcConnection } from "../../infrastructure/rpc.ts";
 import type {
-  Approve, CancelOutcome, Emit, NativeAccountUsage, NativeDetour, NativeEvent, NativeSideStart, NativeApp, NativeAutoReviewDenial, NativeBackgroundTerminal, NativeCollaborationMode, NativeConfigWrite, NativeFeature,
+  Approve, CancelOutcome, Confirm, Emit, NativeAccountUsage, NativeDetour, NativeEvent, NativeSideStart, NativeApp, NativeAutoReviewDenial, NativeBackgroundTerminal, NativeCollaborationMode, NativeConfigWrite, NativeFeature,
   NativeFeedbackCategory, NativeGoal, NativeHook, NativeImportDetection, NativeImportItem, NativeImportSource, NativeMcpServer, NativeMemorySettings, NativeModel,
   NativePlugin, NativePluginDetail, NativeRecapResult, NativeReviewTarget, NativeSession, NativeSessionInfo, NativeSkill, NativeSubagent, NativeSubagentList, NativeVisualState,
   NativeWorkMode, WorkModeChange,
@@ -464,10 +464,10 @@ export class CodexSession implements NativeSession {
       }
     } catch (error) { this.busy = false; this.loginId = undefined; throw error; }
   }
-  async logout(): Promise<void> {
+  async logout(confirm: Confirm): Promise<void> {
     this.idle(); this.busy = true; this.aborted = new AbortController();
     try {
-      const done = await confirmedLogout("Codex", this.approve, this.aborted.signal, async () => {
+      const done = await confirmedLogout("Codex", confirm, this.aborted.signal, async () => {
         this.disconnected = true;
         this.quotas = this.t.quotaNotReported;
         this.context = undefined; this.usage = [];

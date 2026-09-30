@@ -164,6 +164,13 @@ export interface NativeEvent {
 export type CancelOutcome = "requested" | "no-active-turn" | "no-answer";
 export type Emit = (event: NativeEvent) => void;
 export type Approve = (description: string, signal: AbortSignal) => Promise<boolean>;
+/** A Yes/No question of Shell's own (disconnect, delete, stop, install, send data out): `no` comes first and is the marked row, `body` is what the question is about. */
+export interface ShellQuestion { title: string; no: string; yes: string; body?: string }
+/**
+ * Asks a `ShellQuestion` and resolves `true` only for «Yes» (Enter alone, Esc and `signal` aborting are «No»). It is not `Approve`: that one is the assistant's permission
+ * question, with «Yes» marked, and a question of Shell's own must never look like it.
+ */
+export type Confirm = (question: ShellQuestion, signal: AbortSignal) => Promise<boolean>;
 export interface NativeSession {
   resumeNotice?: string;
   busy: boolean;
@@ -171,7 +178,8 @@ export interface NativeSession {
   models: NativeModel[];
   initialize(): Promise<void>;
   login(): Promise<void>;
-  logout?(): Promise<void>;
+  /** Disconnects Shell from the account (never the native one) after `confirm` says yes. */
+  logout?(confirm: Confirm): Promise<void>;
   send(text: string): Promise<void>;
   /** Stops the turn in progress; always leaves the session free (see `CancelOutcome`). A session that has nothing to report may resolve with nothing. */
   cancel(): Promise<CancelOutcome | void>;

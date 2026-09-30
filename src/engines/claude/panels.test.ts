@@ -29,7 +29,9 @@ test("the /status panel lists what Shell knows, word for word in English and Spa
     "Permission mode: Manual",
     "Memory: Shell pastes it",
     "Setting sources: user, project, local",
-    "MCP servers: forge614-engram (connected), github (failed)",
+    "MCP servers:",
+    "  Connected: forge614-engram",
+    "  Failed: github",
   ]);
   expect(claudeStatusLines(full, "es")).toEqual([
     "Estado de Claude Code",
@@ -44,7 +46,9 @@ test("the /status panel lists what Shell knows, word for word in English and Spa
     "Modo de permisos: Manual",
     "Memoria: la pega Shell",
     "Fuentes de configuración: usuario, proyecto, local",
-    "Servidores MCP: forge614-engram (conectado), github (falló)",
+    "Servidores MCP:",
+    "  Conectados: forge614-engram",
+    "  Fallaron: github",
   ]);
 });
 
@@ -83,8 +87,51 @@ test("the /status panel words the API key source, a provider other than Anthropi
   expect(line({ apiKeySource: "none", provider: "firstParty" }).some(text => text.startsWith("Provider"))).toBe(false);
   // A value the SDK keeps only for compatibility (no current Claude Code emits it) is not shown as if it meant something.
   expect(line({ apiKeySource: "oauth", provider: undefined }).some(text => text.startsWith("API key"))).toBe(false);
-  expect(line({ mcpServers: [{ name: "x", status: "needs-auth" }, { name: "y", status: "pending" }, { name: "z", status: "disabled" }, { name: "w", status: "odd" }] }).at(-1))
-    .toBe("MCP servers: x (needs sign-in), y (connecting), z (disabled), w (odd)");
+});
+
+/**
+ * The MCP servers come grouped by state, one group per line with its name in the person's language, always in the same order — connected, connecting, needing sign-in,
+ * failed — and a group with no server is left out. A state the panel has no words for (disabled, or one a newer Claude Code adds) is shown after them, never lost: a
+ * disabled one in its own group and any other under «Other» with the state as the SDK names it. It exists because 25 servers used to come out as one paragraph.
+ */
+test("the /status panel groups the MCP servers by state, in a fixed order, in English and Spanish", () => {
+  const servers = [
+    { name: "w", status: "odd" }, { name: "f1", status: "failed" }, { name: "c1", status: "connected" }, { name: "z", status: "disabled" },
+    { name: "n1", status: "needs-auth" }, { name: "p1", status: "pending" }, { name: "c2", status: "connected" }, { name: "n2", status: "needs-auth" },
+  ];
+  const tail = (locale: "en" | "es") => claudeStatusLines({ ...full, mcpServers: servers }, locale).slice(-7);
+  expect(tail("en")).toEqual(["MCP servers:", "  Connected: c1, c2", "  Connecting: p1", "  Need sign-in: n1, n2", "  Failed: f1", "  Disabled: z", "  Other: w (odd)"]);
+  expect(tail("es")).toEqual(["Servidores MCP:", "  Conectados: c1, c2", "  Conectando: p1", "  Necesitan iniciar sesión: n1, n2", "  Fallaron: f1", "  Desactivados: z", "  Otros: w (odd)"]);
+  expect(claudeStatusLines({ ...full, mcpServers: [{ name: "only", status: "failed" }] }, "en").slice(-2)).toEqual(["MCP servers:", "  Failed: only"]);
+});
+
+/**
+ * With the width the screen has, a group too long for a line continues on the next one under its first name (the indent is the width of «Connected: »), a line breaks
+ * only between names — a name is never cut — and one name wider than the line stays whole on its own line. It exists because 25 servers were one paragraph.
+ * The 40-column case has a line that is exactly 40 wide, so the edge is tested too.
+ */
+test("the /status panel breaks long MCP groups under their first name without cutting a name", () => {
+  const names = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"];
+  const info = { ...full, mcpServers: names.map(name => ({ name, status: "connected" })) };
+  expect(claudeStatusLines(info, "en", 40).slice(-4)).toEqual([
+    "MCP servers:",
+    "  Connected: alpha, bravo, charlie,",
+    "             delta, echo, foxtrot, golf,",
+    "             hotel",
+  ]);
+  expect(claudeStatusLines(info, "en").slice(-2)).toEqual(["MCP servers:", "  Connected: alpha, bravo, charlie, delta, echo, foxtrot, golf, hotel"]);
+  const long = "a-server-name-that-is-longer-than-the-whole-line";
+  expect(claudeStatusLines({ ...full, mcpServers: [{ name: "one", status: "failed" }, { name: long, status: "failed" }, { name: "two", status: "failed" }] }, "en", 30).slice(-4)).toEqual([
+    "MCP servers:",
+    "  Failed: one,",
+    `          ${long},`,
+    "          two",
+  ]);
+  for (const width of [30, 40, 60]) {
+    const groups = claudeStatusLines({ ...full, mcpServers: names.map(name => ({ name, status: "failed" })) }, "es", width).filter(line => line.startsWith(" "));
+    expect(groups.length).toBeGreaterThan(0);
+    for (const line of groups) expect(line.length).toBeLessThanOrEqual(width);
+  }
 });
 
 /** Values that come from outside (a session id, a server name, an account) are shown as text: control characters are stripped so they can never move the cursor or repaint the screen. */
@@ -92,7 +139,7 @@ test("the /status panel strips control characters from values that come from out
   const text = claudeStatusLines({ ...full, organization: "Ac\u001b[31mme\u0001", mcpServers: [{ name: "gi\u001b[2Jthub", status: "connected" }] }, "en").join("\n");
   expect(text).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
   expect(text).toContain("Organization: Acme");
-  expect(text).toContain("MCP servers: github (connected)");
+  expect(text).toContain("  Connected: github");
 });
 
 const rows = [
@@ -149,4 +196,32 @@ test("the /help panel strips control characters from command descriptions", () =
   const text = claudeHelpLines([{ value: "/x", label: "Do\u001b[2J it\u0001" }], "en").join("\n");
   expect(text).toContain("/x  Do it");
   expect(text).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
+});
+
+/**
+ * With the width the screen has, a description that does not fit continues under its own column (a hanging indent) — never at the left edge, which broke the columns —
+ * and the same in the shortcuts list. It exists because the rest of a long description («and MCP servers») used to drop flush left under the command names.
+ * The 40-column case checks the words of a real row, and every line stays within the width.
+ */
+test("the /help panel keeps the rest of a long description under its own column, commands and shortcuts", () => {
+  const lines = claudeHelpLines(rows, "en", 40);
+  expect(lines.join("\n")).toContain("/compact  Clear conversation history but\n          keep a summary in context");
+  expect(lines.join("\n")).toContain("/help     Show help and available\n          commands");
+  expect(lines.join("\n")).toContain("Tab            Accept the highlighted\n               command in the / menu");
+  const leave = lines.findIndex(line => line.startsWith("Ctrl+C, Ctrl+D "));
+  expect(leave).toBeGreaterThan(0);
+  for (const line of lines.slice(leave + 1)) expect(line.startsWith(" ".repeat(15))).toBe(true);
+  for (const line of lines) expect(line.length, line).toBeLessThanOrEqual(40);
+  expect(claudeHelpLines(rows, "en")).toEqual(claudeHelpLines(rows, "en", 500));
+});
+
+/**
+ * When the width is so narrow that the column plus a few words does not fit, the description goes on the line below with a fixed two-space indent, so nothing is squeezed
+ * into a sliver. It exists as the fallback of the hanging indent.
+ */
+test("the /help panel puts the description on the next line with a fixed indent when the column does not fit", () => {
+  const lines = claudeHelpLines(rows, "en", 20);
+  expect(lines.join("\n")).toContain("/compact\n  Clear conversation\n  history but keep a\n  summary in context");
+  expect(lines.join("\n")).toContain("/model\n  Select model");
+  for (const line of lines) expect(line.length, line).toBeLessThanOrEqual(20);
 });

@@ -65,11 +65,11 @@ if(process.argv[2]==='auth') {
     terminal.input("\x1b"); await tick();
     enter("/logout"); await tick();
     expect(terminal.output).toContain("only in this Forge614-Shell session");
-    enter("/f614:no"); await tick();
+    terminal.input("\x1b"); await tick();
     expect(await readFile(marker, "utf8")).toBe("auth status --json\n");
-    enter("/logout"); await tick(); enter("/f614:stop"); await tick();
+    enter("/logout"); await tick(); terminal.input("\r"); await tick();
     expect(await readFile(marker, "utf8")).toBe("auth status --json\n");
-    enter("/logout"); await tick(); enter("/f614:yes");
+    enter("/logout"); await tick(); terminal.input("\x1b[B"); terminal.input("\r");
     await tick();
     expect(terminal.output).toContain("Disconnected locally");
     enter("/new"); await tick(); enter("hello"); await tick();
@@ -271,41 +271,36 @@ else {
 });
 
 /**
- * The «Disconnect only in this session?» question of `/logout` uses the same Sí/No selector as any tool permission: its own
- * sentence, «Yes» marked, Enter alone confirms. It exists because that question went through the tool-permission path
- * as a fake tool called «Sign out» and would have been read as `Use the Sign out tool`.
+ * The owner's rule: the marked «Yes» is only for the permissions the assistant asks; a question of Shell's own that disconnects goes out with «No» marked and its own
+ * words. `/logout` shows «Disconnect Claude Code from this Shell?» with «No, stay connected» marked and «Yes, disconnect»; it never shows the permission card
+ * («Permission requested», «Allow?») nor the turn footer. Enter alone and Esc keep the connection; only picking «Yes» disconnects. It exists because the question used to
+ * go through the tool-permission path, with «Yes» marked. Runs in English and in Spanish.
  */
-test.skipIf(process.platform === "win32")("Claude UI: the /logout question keeps its own sentence with a marked Yes, and Enter alone confirms", async () => {
-  const root = await mkdtemp(join(tmpdir(), "forge614-logout-choice-ui-"));
-  const executable = join(root, "claude");
-  const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
-  const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
-  const plain = () => stripVTControlCharacters(terminal.output);
-  const previousForgeHome = process.env.FORGE614_HOME;
-  process.env.FORGE614_HOME = join(root, "forge614-home");
-  try {
-    await writeFile(executable, `#!${process.execPath}
-if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
-else {
-  require('readline').createInterface({input:process.stdin}).on('line',line=>{
-    const msg=JSON.parse(line);
-    if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
-  });
-}`, { mode: 0o755 });
-    ui = startClaudeUI([], executable, terminal); await tick();
-    for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
-    enter("/logout"); await tick();
-    expect(plain()).toContain(getCatalog("en").logout.confirmPrompt({ engine: "Claude Code", loginCommand: "/login" }).slice(0, 30));
-    expect(plain()).toContain("› Yes");
-    expect(plain()).not.toContain("Sign out");
-    terminal.input("\r");
-    // The card wraps a long sentence across rows, so the check reads its start.
-    const confirmed = getCatalog("en").claudeChat.disconnectedLocally.slice(0, 40);
-    for (let i = 0; i < 30 && !plain().includes(confirmed); i++) await tick();
-    expect(plain()).toContain(confirmed);
-  } finally {
-    enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true });
-    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+test.skipIf(process.platform === "win32")("Claude UI: the /logout question has its own words and «No» marked; Enter alone and Esc keep the connection, only «Yes» disconnects", async () => {
+  for (const locale of ["en", "es"] as const) {
+    const t = getCatalog(locale);
+    const h = await claudeUi([], locale);
+    try {
+      h.terminal.output = ""; h.enter("/logout"); await tick();
+      expect(h.plain()).toContain(t.logout.confirmTitle({ engine: "Claude Code" }));
+      expect(h.plain()).toContain(`› 1. ${t.logout.stay}`);
+      expect(h.plain()).toContain(t.logout.disconnect);
+      expect(h.plain()).not.toContain(`› 2. ${t.logout.disconnect}`);
+      expect(h.plain()).not.toContain(t.chat.permissionRequestedTitle);
+      expect(h.plain()).not.toContain(t.permission.question);
+      expect(h.plain()).not.toContain("/f614:stop");
+      const cancelled = t.claudeChat.logoutCancelled.slice(0, 30); const done = t.claudeChat.disconnectedLocally.slice(0, 40);
+      // Enter alone is «No».
+      h.terminal.output = ""; h.terminal.input("\r"); await tick();
+      expect(h.plain()).toContain(cancelled); expect(h.plain()).not.toContain(done);
+      // Esc is «No».
+      h.terminal.output = ""; h.enter("/logout"); await tick(); h.terminal.input("\x1b"); await tick();
+      expect(h.plain()).toContain(cancelled); expect(h.plain()).not.toContain(done);
+      // Picking «Yes» disconnects.
+      h.terminal.output = ""; h.enter("/logout"); await tick(); h.terminal.input("\x1b[B"); h.terminal.input("\r");
+      for (let i = 0; i < 30 && !h.plain().includes(done); i++) await tick();
+      expect(h.plain()).toContain(done);
+    } finally { await h.finish(); }
   }
 });
 
@@ -459,7 +454,7 @@ test.skipIf(process.platform === "win32")("Claude UI: /status shows the version,
     for (let i = 0; i < 60 && !h.plain().includes("MCP servers:"); i++) await tick();
     const shown = h.plain();
     for (const line of ["Claude Code status", "Version: 2.1.274", "Session: s-status-1", `Folder: ${process.cwd()}`, "Email: test@example.com", "API key: none in use", "Permission mode: Manual",
-      "MCP servers: forge614-engram (connected), github (failed)"]) expect(shown).toContain(line);
+      "MCP servers:", "Connected: forge614-engram", "Failed: github"]) expect(shown).toContain(line);
     expect(shown).not.toContain(getCatalog("en").claudePanels.statusAfterFirstMessage);
   } finally { await h.finish(); }
 });
@@ -473,7 +468,7 @@ test.skipIf(process.platform === "win32")("Claude UI: /status after a confirmed 
   try {
     const t = getCatalog("en").claudePanels;
     h.enter("/logout"); await tick();
-    h.terminal.input("\r");
+    h.terminal.input("\x1b[B"); h.terminal.input("\r");
     const confirmed = getCatalog("en").claudeChat.disconnectedLocally.slice(0, 40);
     for (let i = 0; i < 30 && !h.plain().includes(confirmed); i++) await tick();
     h.terminal.output = ""; h.enter("/status");
@@ -500,7 +495,8 @@ test.skipIf(process.platform === "win32")("Claude UI: /status after /new drops t
     for (let i = 0; i < 60 && !h.plain().includes("s-new-1"); i++) await tick();
     h.enter("/status");
     for (let i = 0; i < 60 && !h.plain().includes("Version: 2.1.274"); i++) await tick();
-    expect(h.plain()).toContain("MCP servers: forge614-engram (connected)");
+    expect(h.plain()).toContain("MCP servers:");
+    expect(h.plain()).toContain("Connected: forge614-engram");
     h.enter("/f614:stop"); await tick(); await tick(); await tick();
     h.enter("/new"); await tick(); await tick();
     h.terminal.output = ""; h.enter("/status");
@@ -540,6 +536,35 @@ test.skipIf(process.platform === "win32")("Claude UI: /help lists the menu's com
     } finally { await h.finish(); }
   }
 });
+
+/**
+ * On a narrow screen `/help` keeps the rest of a long description under its own column instead of dropping it flush left («and MCP servers» used to break the columns),
+ * and `/status` shows the MCP servers one group per line, the long group continuing under its first name. It runs the real screen at 60 columns, so the width the panels
+ * are wrapped to is the width the chat has, not a guess.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: /help and /status wrap to the real width, under their own columns", async () => {
+  const commands = [{ name: "compact", description: "Clear conversation history but keep a summary in context", argumentHint: "" }];
+  const names = Array.from({ length: 12 }, (_, index) => `server-${String(index + 1).padStart(2, "0")}`);
+  const init = { type: "system", subtype: "init", session_id: "s-wrap-1", claude_code_version: "2.1.274", apiKeySource: "none", model: "claude-test", permissionMode: "default", cwd: process.cwd(),
+    mcp_servers: names.map(name => ({ name, status: "connected", source: "user" })), slash_commands: [], tools: [], output_style: "default", skills: [], plugins: [],
+    uuid: "00000000-0000-4000-8000-000000000003" };
+  const h = await claudeUi(commands, "en", undefined, 60, [init]);
+  try {
+    // The screen's text has no line breaks (rows come one after another, padded), so a row that continues shows as a wide run of spaces — the margin and the indent —
+    // between its last word and the first of the next row; a flush-left break would leave a run too short to hold the column, and an unbroken row leaves one space.
+    h.terminal.output = ""; h.enter("/help");
+    for (let i = 0; i < 60 && !h.plain().includes("Shortcuts:"); i++) await tick();
+    expect(h.plain()).toMatch(/\/compact  Clear conversation history but keep a summary {12,}in context/);
+    expect(h.plain()).not.toContain("keep a summary in context");
+    h.enter("go"); await tick();
+    for (let i = 0; i < 60 && !h.plain().includes("s-wrap-1"); i++) await tick();
+    h.terminal.output = ""; h.enter("/status");
+    for (let i = 0; i < 60 && !h.plain().includes("MCP servers:"); i++) await tick();
+    expect(h.plain()).toContain("Connected: server-01, server-02");
+    expect(h.plain()).toMatch(/server-\d\d, {15,}server-\d\d/);
+    expect(h.plain()).not.toContain("server-01, server-02, server-03, server-04, server-05, server-06");
+  } finally { await h.finish(); }
+}, 30_000);
 
 /**
  * The `/` menu's Claude Code group and `/help` are made by one function, so they cannot disagree. It lists the commands Claude Code reports first, then the ones Shell

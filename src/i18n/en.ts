@@ -140,7 +140,10 @@ const en: Catalog = {
     engineSpecifiedTwice: "Specify --engine only once.",
   },
   logout: {
-    confirmPrompt: ({ engine, loginCommand }) => `Disconnect ${engine} only in this Forge614-Shell session? Your native account, Orca, other terminals and saved chats will not be changed. Use ${loginCommand} here to reconnect with your existing account.`,
+    confirmTitle: ({ engine }) => `Disconnect ${engine} from this Shell?`,
+    confirmBody: ({ loginCommand }) => `Disconnects only in this Forge614-Shell session. Your native account, Orca, other terminals and saved chats will not be changed. Use ${loginCommand} here to reconnect with your existing account.`,
+    stay: "No, stay connected",
+    disconnect: "Yes, disconnect",
     disconnectFailed: "Could not disconnect Shell. No native logout was requested.",
   },
   errors: {
@@ -365,7 +368,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     labelApiKey: "API key", labelProvider: "Provider", labelModel: "Model", labelPermissionMode: "Permission mode", labelSettingSources: "Setting sources", labelMcpServers: "MCP servers",
     apiKeyFromEnvironment: "from ANTHROPIC_API_KEY", apiKeyFromHelper: "from apiKeyHelper", apiKeyFromLogin: "created by /login", apiKeyNone: "none in use",
     settingSourceUser: "user", settingSourceProject: "project", settingSourceLocal: "local",
-    mcpNone: "none", mcpConnected: "connected", mcpFailed: "failed", mcpNeedsSignIn: "needs sign-in", mcpConnecting: "connecting", mcpDisabled: "disabled",
+    mcpNone: "none", mcpGroupConnected: "Connected", mcpGroupConnecting: "Connecting", mcpGroupNeedsSignIn: "Need sign-in", mcpGroupFailed: "Failed", mcpGroupDisabled: "Disabled", mcpGroupOther: "Other",
     statusAfterFirstMessage: "Some details (version, session and MCP servers) appear after your first message.",
     helpTitle: "Claude Code help",
     helpCommands: "Commands (type / to open the menu):",

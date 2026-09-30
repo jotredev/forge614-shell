@@ -251,29 +251,47 @@ test("a saved Codex mode that no longer exists comes back as Ask for approval wi
   } finally { enter("/f614:quit"); await ui; }
 });
 
-test("local logout waits for consent and never calls native account logout", async () => {
-  const terminal = new TestTerminal(); const rpc = new FixtureRpc();
-  rpc.replies.set("initialize", {});
-  rpc.replies.set("account/read", { account: null, requiresOpenaiAuth: true });
-  rpc.replies.set("model/list", { data: [], nextCursor: null });
-  rpc.replies.set("account/logout", {});
-  const ui = runNativeUI("codex", "/project", (emit, approve) => new CodexSession(rpc, "/project", emit, approve), terminal);
-  const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
-  try {
-    await tick(); enter("/logout"); await tick();
-    expect(terminal.output).toContain("SESSION");
-    expect(terminal.output).toContain("F614");
-    expect(terminal.output).toContain("╭─");
-    expect(terminal.output).toContain("Connect with /f614:login");
-    expect(terminal.output).not.toContain("Ask anything, or / for commands…");
-    expect(terminal.output).toContain("only in this Forge614-Shell session");
-    expect(rpc.calls.some(c => c.method === "account/logout")).toBe(false);
-    enter("/f614:stop"); await tick();
-    expect(rpc.calls.some(c => c.method === "account/logout")).toBe(false);
-    enter("/logout"); await tick(); enter("/f614:yes"); await tick();
-    expect(rpc.calls.filter(c => c.method === "account/logout")).toHaveLength(0);
-    expect(terminal.output).toContain("Disconnected locally");
-  } finally { enter("/f614:quit"); await ui; }
+/**
+ * The owner's rule: the marked «Yes» is only for the permissions the assistant asks; a question of Shell's own that disconnects goes out with «No» marked and its own
+ * words. With Codex, `/logout` shows «Disconnect Codex from this Shell?» with «No, stay connected» marked and «Yes, disconnect»; it never shows the permission
+ * card («Permission requested», «Allow?»). Enter alone and Esc keep the connection and call nothing; only picking «Yes» disconnects, and even then Codex's own
+ * `account/logout` is never called (the native account stays). Also in Spanish.
+ */
+test("Codex /logout asks with its own question and «No» marked: Enter alone and Esc keep the connection, only «Yes» disconnects", async () => {
+  for (const locale of ["en", "es"] as const) {
+    const t = getCatalog(locale);
+    const terminal = new TestTerminal(); const rpc = new FixtureRpc();
+    rpc.replies.set("initialize", {});
+    rpc.replies.set("account/read", { account: null, requiresOpenaiAuth: true });
+    rpc.replies.set("model/list", { data: [], nextCursor: null });
+    rpc.replies.set("account/logout", {});
+    const plain = () => stripVTControlCharacters(terminal.output);
+    const ui = runNativeUI("codex", "/project", (emit, approve) => new CodexSession(rpc, "/project", emit, approve, undefined, undefined, locale), terminal, undefined, locale);
+    const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+    const question = t.logout.confirmTitle({ engine: "Codex" });
+    try {
+      await tick(); terminal.output = ""; enter("/logout"); await tick();
+      expect(plain()).toContain(question);
+      expect(plain()).toContain(`› 1. ${t.logout.stay}`);
+      expect(plain()).toContain(t.logout.disconnect);
+      expect(plain()).not.toContain(`› 2. ${t.logout.disconnect}`);
+      expect(plain()).not.toContain(t.chat.permissionRequestedTitle);
+      expect(plain()).not.toContain(t.permission.question);
+      expect(plain()).not.toContain("/f614:stop");
+      // Enter alone is «No».
+      terminal.output = ""; terminal.input("\r"); await tick();
+      expect(plain()).toContain(t.codexSession.logoutCancelled.slice(0, 30));
+      expect(plain()).not.toContain(t.codexSession.disconnectedLocally.slice(0, 30));
+      // Esc is «No».
+      terminal.output = ""; enter("/logout"); await tick(); terminal.input("\x1b"); await tick();
+      expect(plain()).toContain(t.codexSession.logoutCancelled.slice(0, 30));
+      expect(plain()).not.toContain(t.codexSession.disconnectedLocally.slice(0, 30));
+      // Picking «Yes» disconnects.
+      terminal.output = ""; enter("/logout"); await tick(); terminal.input("\x1b[B"); terminal.input("\r"); await tick();
+      expect(plain()).toContain(t.codexSession.disconnectedLocally.slice(0, 30));
+      expect(rpc.calls.some(c => c.method === "account/logout")).toBe(false);
+    } finally { enter("/f614:quit"); await ui; }
+  }
 });
 
 test("native UI reports backgroundActivitySupported as true and shows idle text when the session implements backgroundActivity()", async () => {

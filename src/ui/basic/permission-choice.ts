@@ -1,5 +1,6 @@
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
+import type { ShellQuestion } from "../../engines/types.ts";
 import { normalizeSearch } from "./composer.ts";
 import type { ForgeComposer } from "./composer.ts";
 
@@ -13,6 +14,21 @@ export async function askQuit(input: ForgeComposer, locale: Locale): Promise<boo
   const row = (value: string, display: string) => ({ value, display, label: "", key: normalizeSearch(display).charAt(0) });
   const choice = await input.choose(t.chat.quitQuestion, [row("no", t.permission.no), row("yes", t.permission.yes)], undefined, { numbered: false, footer: t.chat.quitFooter });
   return choice === "yes";
+}
+
+/**
+ * A Yes/No question of Shell's own (disconnect, delete, stop, install, send data out — never a permission the assistant asks): its own title and words, «No» first and marked so
+ * Enter alone keeps everything as it is, and Esc is «No». `body` is what the question is about and goes away with it. Resolves `true` only for «Yes»; when `signal` aborts the
+ * question closes as «No». It is the one place these questions are drawn, so `/logout`, `/feedback`, `/import` and `/plugins` look the same.
+ */
+export async function askShellQuestion(input: ForgeComposer, question: ShellQuestion, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return false;
+  const onAbort = () => input.cancelChoice();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const choice = await input.choose(question.title, [{ value: "no", display: question.no, label: "" }, { value: "yes", display: question.yes, label: "" }], undefined, question.body ? { body: question.body } : undefined);
+    return choice === "yes" && !signal?.aborted;
+  } finally { signal?.removeEventListener("abort", onAbort); }
 }
 
 /**

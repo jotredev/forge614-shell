@@ -3,7 +3,7 @@ import { Container, HStack, ProcessTerminal, ScrollView, Text, TuiAltScreen, VSt
 import type { Terminal } from "@earendil-works/pi-tui";
 import type { Approve, Emit, NativeEvent, NativeId, NativeSession, NativeSessionInfo } from "../../engines/types.ts";
 import { createComposer } from "./composer.ts";
-import { askPermission, askQuit } from "./permission-choice.ts";
+import { askPermission, askQuit, askShellQuestion } from "./permission-choice.ts";
 import { resumeChoice, sortRecentFirst } from "./resume-picker.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
@@ -383,7 +383,7 @@ export async function runNativeUI(
       if (name === "/f614:login") await session.login();
       else if (name === "/logout") {
         if (!session.logout) throw new Error(tc.logoutUnavailable);
-        await session.logout();
+        await session.logout((question, signal) => askShellQuestion(input, question, signal));
       }
       else if (name === "/compact") {
         if (!session.compact) write(tc.commandNotAllowed({ name }));
@@ -403,7 +403,7 @@ export async function runNativeUI(
     session, cwd, locale, local,
     write: text => { write(text); },
     clearView: () => { transcript.clear(); streaming.clear(); },
-    confirm: async (title, no, yes, body) => await input.choose(title, [{ value: "no", display: no, label: "" }, { value: "yes", display: yes, label: "" }], undefined, body ? { body } : undefined) === "yes",
+    confirm: (title, no, yes, body) => askShellQuestion(input, { title, no, yes, ...(body ? { body } : {}) }),
     ask: (title, placeholder, body) => input.ask(title, placeholder, body ? { body } : {}),
     choose: (title, items, current, options) => input.choose(title, items, current, options),
     setSkillChoices: skills => input.setSkillChoices(skills),
