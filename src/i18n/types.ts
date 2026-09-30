@@ -27,6 +27,7 @@ export type ShellErrorCode =
   | "codex-refresh-requires-login"
   | "codex-login-not-managed"
   | "codex-turn-busy"
+  | "codex-agent-read-only"
   | "codex-model-unknown"
   | "codex-effort-unknown"
   | "codex-session-foreign-project"
@@ -854,6 +855,54 @@ export interface Catalog {
     /** The name of an import item's type in its list («Settings», «Recent chat sessions»), and in the summaries («Chat sessions»); an unknown type keeps its own code. */
     importItemLabel: (params: { type: string }) => string;
     importTypeLabel: (params: { type: string }) => string;
+    /** `/recap`: the summary in its frame («↳ Recap: …», «Next: …») and Codex's three messages. */
+    recapLine: (params: { summary: string }) => string;
+    recapNextLine: (params: { action: string }) => string;
+    recapEmpty: string;
+    recapBusy: string;
+    recapFailed: string;
+    /** `/side` and `/btw`: Codex's messages when the side conversation cannot open or a command is not kept in it. */
+    sideNoConversation: string;
+    sideAlreadyOpen: string;
+    sideReviewing: (params: { name: string }) => string;
+    sideStartFailed: (params: { error: string }) => string;
+    sidePrepareFailed: (params: { error: string }) => string;
+    sideUnavailableCommand: (params: { name: string }) => string;
+    /** Shell's own words for the side conversation on screen: the header in its view and the pieces of the fixed line in the box («Side conversation · from main thread · Ctrl+C to close»). */
+    sideHeader: string;
+    sideTitle: string;
+    sideFromMain: string;
+    sideMainNeedsApproval: string;
+    sideCloseHint: string;
+    /** Shell's own words for a subagent being watched, read only: the header, the pieces of the fixed line and the answer to a command that is not kept there. */
+    agentHeader: (params: { name: string }) => string;
+    agentTitle: (params: { name: string }) => string;
+    agentReadOnly: string;
+    agentReturnHint: string;
+    agentUnavailableCommand: (params: { name: string }) => string;
+    /** `/subagents`: Codex's picker, its «Enable subagents?» question and how saving went; the state words and the line about writing to `~/.codex` are Shell's own. */
+    subagentsTitle: string;
+    subagentsSubtitle: string;
+    subagentMain: string;
+    subagentAgent: string;
+    subagentRunning: string;
+    subagentIdle: string;
+    subagentClosed: string;
+    subagentsNone: string;
+    subagentOpenFailed: (params: { error: string }) => string;
+    subagentsEnableTitle: string;
+    subagentsEnableSubtitle: string;
+    subagentsEnableYesDescription: string;
+    subagentsEnableNoDescription: string;
+    subagentsEnableWrites: string;
+    subagentsEnabled: string;
+    subagentsEnableOverridden: (params: { message: string }) => string;
+    subagentsEnableFailed: (params: { error: string }) => string;
+    /** `/agents` with the embedded server: Codex's «Shared agents unavailable», and Shell's line saying it does not start that server. */
+    agentsUnavailableTitle: string;
+    agentsUnavailableSubtitle: string;
+    agentsUnavailableNote: string;
+    agentsNoServer: string;
   };
   /**
    * The permission question (its two words and its footer) and the plain-language text of a permission request
@@ -903,6 +952,8 @@ export interface Catalog {
     /** The status line while `/compact` runs, as Codex words it: title, then detail, then the time. */
     compactingTitle: string;
     compactingDetail: string;
+    /** The status line while `/recap` waits, as Codex words its loading line («Generating conversation recap»). */
+    recapLoadingTitle: string;
     /** Honest answer for a `/command` Shell cannot pass on to Codex through its app-server. */
     commandNotAllowed: (params: { name: string }) => string;
     workOrLoginActive: string;

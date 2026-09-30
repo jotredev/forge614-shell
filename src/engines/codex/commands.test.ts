@@ -76,11 +76,31 @@ test("the menu lists only what Codex shows on macOS, in Codex's order, with Code
  */
 test("screen-only commands are exactly the ones with no app-server counterpart", () => {
   expect(CODEX_COMMANDS.filter(command => command.screenOnly).map(command => command.name)).toEqual([
-    "ide", "keymap", "vim", "setup-default-sandbox", "worktree", "app", "voice", "agents", "raw", "tui", "daemon", "warnings", "cd",
+    "ide", "keymap", "vim", "setup-default-sandbox", "worktree", "app", "voice", "raw", "tui", "daemon", "warnings", "cd",
     "debug-config", "title", "statusline", "theme", "pets", "rollout", "test-approval", "debug-m-drop", "debug-m-update",
   ]);
-  for (const name of ["recap", "side", "btw", "subagents", "import", "plugins", "feedback", "approve"]) expect(findCodexCommand(name)?.screenOnly).toBe(false);
+  for (const name of ["recap", "side", "btw", "subagents", "agents", "import", "plugins", "feedback", "approve"]) expect(findCodexCommand(name)?.screenOnly).toBe(false);
   expect(findCodexCommand("pet")?.screenOnly).toBe(true);
+});
+
+/**
+ * `SlashCommand::available_in_side_conversation` (`slash_command.rs`): the only commands that keep working inside a side conversation; the table lists them in the enum's
+ * order. Exists because every other command answers «unavailable in side conversations» there, and that list must be Codex's, not a guess.
+ */
+test("the commands that stay available in a side conversation are exactly Codex's list", () => {
+  expect(CODEX_COMMANDS.filter(command => command.availableInSideConversation).map(command => command.name)).toEqual([
+    "ide", "agents", "copy", "export", "raw", "diff", "mention", "status", "daemon", "warnings", "pwd", "usage",
+  ]);
+});
+
+/** `available_during_task` for the four commands of this part: `/recap` waits for the turn to end; `/side`, `/btw`, `/subagents` and `/agents` run while Codex works. */
+test("/recap waits for the turn to end and /side, /btw, /subagents and /agents run during it", () => {
+  expect(findCodexCommand("recap")?.availableDuringTask).toBe(false);
+  for (const name of ["side", "btw", "subagents", "agents"]) expect(findCodexCommand(name)?.availableDuringTask, name).toBe(true);
+  expect(findCodexCommand("side")?.description).toBe("start a side conversation in an ephemeral fork");
+  expect(findCodexCommand("btw")?.description).toBe(findCodexCommand("side")?.description);
+  expect(findCodexCommand("recap")?.description).toBe("summarize the current conversation now");
+  expect(findCodexCommand("subagents")?.description).toBe("switch between this session's subagents");
 });
 
 /** `/model` and `/resume` run while Codex works, per `available_during_task`. */

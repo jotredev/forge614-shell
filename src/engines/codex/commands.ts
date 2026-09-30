@@ -26,17 +26,25 @@ export interface CodexCommand {
    * debug tools and has no app-server method (see `chatwidget/slash_dispatch.rs`), so Shell says exactly that.
    */
   readonly screenOnly: boolean;
+  /**
+   * `available_in_side_conversation()`: whether the command keeps working inside a side conversation. Every other command answers «unavailable in side conversations»
+   * there (and Shell applies the same rule to a subagent being watched, plus `/subagents` to leave it).
+   */
+  readonly availableInSideConversation: boolean;
 }
 
-const command = (name: string, description: string, availableDuringTask: boolean, options: { aliases?: string[]; visible?: boolean; screenOnly?: boolean } = {}): CodexCommand =>
-  ({ name, description, availableDuringTask, aliases: options.aliases ?? [], visible: options.visible ?? true, screenOnly: options.screenOnly ?? false });
+interface CommandOptions { aliases?: string[]; visible?: boolean; screenOnly?: boolean; inSide?: boolean }
+const command = (name: string, description: string, availableDuringTask: boolean, options: CommandOptions = {}): CodexCommand =>
+  ({ name, description, availableDuringTask, aliases: options.aliases ?? [], visible: options.visible ?? true, screenOnly: options.screenOnly ?? false, availableInSideConversation: options.inSide ?? false });
 /** Shorthand for `{ screenOnly: true }` plus any other option. */
-const screen = (options: { aliases?: string[]; visible?: boolean } = {}) => ({ ...options, screenOnly: true });
+const screen = (options: Omit<CommandOptions, "screenOnly"> = {}) => ({ ...options, screenOnly: true });
+/** Shorthand for `{ inSide: true }`: the command stays available inside a side conversation. */
+const inSide = { inSide: true };
 
 /** Codex 0.159.0's commands in the enum's order. */
 export const CODEX_COMMANDS: readonly CodexCommand[] = [
   command("model", "choose what model and reasoning effort to use", true),
-  command("ide", "include current selection, open files, and other context from your IDE", true, screen()),
+  command("ide", "include current selection, open files, and other context from your IDE", true, screen(inSide)),
   command("permissions", "choose what Codex is allowed to do", true),
   command("keymap", "remap TUI shortcuts", false, screen()),
   command("vim", "toggle Vim mode for the composer", false, screen()),
@@ -62,21 +70,21 @@ export const CODEX_COMMANDS: readonly CodexCommand[] = [
   command("plan", "switch to Plan mode", false),
   command("voice", "start or stop voice; use /voice settings to choose a voice", true, screen()),
   command("goal", "set or view the goal for a long-running task", true),
-  command("agents", "open the agent command center", true, screen()),
+  command("agents", "open the agent command center", true, inSide),
   command("side", "start a side conversation in an ephemeral fork", true),
   command("btw", "start a side conversation in an ephemeral fork", true),
-  command("copy", "copy the last response or part of it", true),
-  command("export", "export the conversation as markdown", false),
-  command("raw", "toggle raw scrollback mode for copy-friendly terminal selection", true, screen()),
+  command("copy", "copy the last response or part of it", true, inSide),
+  command("export", "export the conversation as markdown", false, inSide),
+  command("raw", "toggle raw scrollback mode for copy-friendly terminal selection", true, screen(inSide)),
   command("tui", "choose the TUI mode for the next launch", false, screen()),
-  command("diff", "show git diff (including untracked files)", true),
-  command("mention", "mention a file", true),
-  command("status", "show current session configuration and token usage", true),
-  command("daemon", "Manage the local background server", true, screen()),
-  command("warnings", "view retained warnings and diagnostic details", true, screen()),
+  command("diff", "show git diff (including untracked files)", true, inSide),
+  command("mention", "mention a file", true, inSide),
+  command("status", "show current session configuration and token usage", true, inSide),
+  command("daemon", "Manage the local background server", true, screen(inSide)),
+  command("warnings", "view retained warnings and diagnostic details", true, screen(inSide)),
   command("cd", "change the current working directory", false, screen()),
-  command("pwd", "show the current working directory", true, { aliases: ["cwd"] }),
-  command("usage", "view account usage or use a usage limit reset", true),
+  command("pwd", "show the current working directory", true, { aliases: ["cwd"], inSide: true }),
+  command("usage", "view account usage or use a usage limit reset", true, inSide),
   command("debug-config", "show config layers and requirement sources for debugging", true, screen()),
   command("title", "configure which items appear in the terminal title", true, screen()),
   command("statusline", "configure which items appear in the status line", true, screen()),

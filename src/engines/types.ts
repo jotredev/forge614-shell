@@ -117,9 +117,39 @@ export interface NativePluginDetail {
   description?: string; source: NativePluginSource; authPolicy: "onInstall" | "onUse"; version?: string;
   skills: string[]; hooks: string; apps: string[]; mcpServers: string[];
 }
-/** `planReady`: a turn finished in plan mode with a proposed plan (its Markdown is `text`), so the screen can offer to implement it. */
+/**
+ * How `/recap` ended: `ok` with the summary and, when the assistant found one, the next action; `empty` — there is nothing to summarize yet; `busy` — another
+ * recap is being generated; `failed` — the assistant could not produce one (any reason: the request, the time limit or an answer that was not a recap).
+ */
+export type NativeRecapResult = { status: "ok"; summary: string; nextAction?: string } | { status: "empty" | "busy" | "failed" };
+/**
+ * How `/side` began: `started` — the side conversation is open (the screen was told with a `detourStart` event); `no-conversation` — the main conversation has no
+ * message yet, so there is nothing to branch from; `already-open` — one side conversation is open already; `reviewing` — a code review is running;
+ * `failed` — the assistant refused it, `stage` says whether at creating the branch or at preparing it, and `error` is the assistant's own text.
+ */
+export type NativeSideStart =
+  | { status: "started" } | { status: "no-conversation" } | { status: "already-open" } | { status: "reviewing" }
+  | { status: "failed"; stage: "start" | "prepare"; error: string };
+/**
+ * A conversation the screen shows apart from the main one while it lasts: a side conversation (`side`, where what the person writes goes) or a subagent they are
+ * watching (`agent`, read only). `name` is what the screen calls it; `readOnly` means nothing the person writes reaches it; `mainNeedsApproval` is set while the main
+ * conversation waits for a permission answer that is held until the person returns.
+ */
+export interface NativeDetour { kind: "side" | "agent"; name?: string; readOnly: boolean; mainNeedsApproval?: boolean }
+/**
+ * One row of the subagent picker: the main conversation or a subagent spawned from it, with its state (`running`, `idle` or `closed`) and whether it is the one on screen.
+ * `name` is the assistant's name for it (empty when it has none, and for the main conversation, which the screen names itself); `preview` is its first message when known.
+ */
+export interface NativeSubagent { id: string; name: string; preview?: string; main: boolean; state: "running" | "idle" | "closed"; current: boolean }
+/** The subagents of the open conversation, and whether the assistant's subagents feature is on (when it is off and there are none, the screen offers to turn it on). */
+export interface NativeSubagentList { enabled: boolean; agents: NativeSubagent[] }
+/**
+ * `planReady`: a turn finished in plan mode with a proposed plan (its Markdown is `text`), so the screen can offer to implement it.
+ * `detourStart` / `detourEnd`: the assistant switches the view to a conversation apart from the main one (its name is `text`) and back; the screen keeps the main
+ * view aside meanwhile, and whatever the main conversation says in the meantime arrives after `detourEnd`, in order.
+ */
 export interface NativeEvent {
-  type: "text" | "delta" | "status" | "reset" | "planReady"; text: string; id?: string;
+  type: "text" | "delta" | "status" | "reset" | "planReady" | "detourStart" | "detourEnd"; text: string; id?: string;
   /**
    * The time of a message replayed from a saved conversation, in milliseconds since the epoch; `null` when the assistant did not
    * give one (the screen then shows no time). Left out for a live message, which takes the time of now.
@@ -193,6 +223,22 @@ export interface NativeSession {
   startReview?(target: NativeReviewTarget): Promise<void>;
   /** Copies the conversation into a new one (named `name` when given) and continues in the copy. */
   forkThread?(name?: string): Promise<void>;
+  /** Summarizes the conversation for someone coming back to it, with a temporary conversation of the assistant's that is never shown or saved. */
+  recap?(): Promise<NativeRecapResult>;
+  /** Opens a side conversation: a temporary branch of this one, where the next messages go until `leaveDetour`. */
+  startSide?(): Promise<NativeSideStart>;
+  /** The conversation on screen when it is not the main one (a side conversation or a watched subagent); undefined otherwise. */
+  detour?(): NativeDetour | undefined;
+  /** Goes back to the main conversation: a side conversation is interrupted and discarded, a watched subagent is left running. Nothing is lost from the main one. */
+  leaveDetour?(): Promise<void>;
+  /** Whether the main conversation is working (a turn or a command) even while a side conversation is on screen, which is what `busy` then tells about. */
+  mainBusy?(): boolean;
+  /** The main conversation and its subagents (spawned from it at any depth, running or finished). */
+  subagents?(): Promise<NativeSubagentList>;
+  /** Turns the assistant's subagents feature on for new conversations (this one is unchanged). */
+  enableSubagents?(): Promise<NativeConfigWrite>;
+  /** Shows a subagent's conversation and follows it live, read only; the main conversation goes on in the background. */
+  watchSubagent?(id: string): Promise<void>;
   apps?(): Promise<NativeApp[]>;
   experimentalFeatures?(): Promise<NativeFeature[]>;
   /** Saves one feature switch and reads the list back; `overridden` when what is configured now differs from the choice. */
