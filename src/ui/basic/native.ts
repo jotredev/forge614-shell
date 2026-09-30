@@ -26,6 +26,7 @@ import type { CodexLocalTools } from "./codex-commands.ts";
 import { PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX, PLAN_IMPLEMENTATION_CODING_MESSAGE } from "../../engines/codex/prompts.ts";
 import { planContextUsage } from "../../engines/codex/transcript.ts";
 import { workingStatus } from "./duration.ts";
+import { detourHeader, detourStatus, detourTitle } from "./detour.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 import { describeError } from "../../shell-error.ts";
@@ -119,10 +120,14 @@ export async function runNativeUI(
     }
     sidebar.invalidate();
     const elapsed = turnStartedAt !== undefined ? (Date.now() - turnStartedAt) / 1000 : 0;
-    // `/compact` shows Codex's own words for it (title, detail, time) from the moment it is typed; Codex reports no real progress, so there is no bar.
-    const working = compacting ? workingStatus(tc.compactingTitle, tc.compactingDetail, elapsed)
-      : turnStartedAt !== undefined ? workingStatus(t.statusWorking, session.currentActivity?.(), elapsed) : t.statusWorking;
-    input.setStatus(session.busy || commandBusy ? working : shellState.snapshot().account === "connected" ? t.statusReady : t.statusConnectWithLogin({ command: "/f614:login" }));
+    // A conversation apart from the main one (a side conversation, a watched subagent) is always named in the box: where the person is and how to leave.
+    const detour = session.detour?.();
+    // `/compact` shows Codex's own words for it (title, detail, time) from the moment it is typed; Codex reports no real progress, so there is no bar. `/recap` does the same with its own title.
+    const working = commandLabel ? workingStatus(commandLabel.title, commandLabel.detail, elapsed)
+      : compacting ? workingStatus(tc.compactingTitle, tc.compactingDetail, elapsed)
+      : turnStartedAt !== undefined ? workingStatus(t.statusWorking, detour ? detourTitle(detour, locale) : session.currentActivity?.(), elapsed) : t.statusWorking;
+    const idle = detour ? detourStatus(detour, locale) : shellState.snapshot().account === "connected" ? t.statusReady : t.statusConnectWithLogin({ command: "/f614:login" });
+    input.setStatus(session.busy || commandBusy ? working : idle);
     const collaborationModes = session.collaborationModes?.() ?? [];
     input.setWorkModeHint(session.workModes?.().find(mode => mode.id === session.workMode?.()), collaborationModes.length ? { modes: collaborationModes, active: session.collaborationMode?.() } : undefined);
     statusBar.invalidate();
@@ -133,6 +138,8 @@ export async function runNativeUI(
   let turnStartedAt: number | undefined;
   /** Whether `/compact` is running, so the status line names it instead of the generic «Working». */
   let compacting = false;
+  /** What a command that waits (`/recap`) shows on the status line instead of the generic «Working», until it ends. */
+  let commandLabel: { title: string; detail?: string } | undefined;
   let turnTicker: ReturnType<typeof setInterval> | undefined;
   const beginTurn = () => {
     turnStartedAt = Date.now();
@@ -147,8 +154,31 @@ export async function runNativeUI(
   };
   /** A plan Codex proposed in the turn that just ended in Plan mode, waiting for «Implement this plan?». */
   let pendingPlan: string | undefined;
+  /**
+   * The main conversation's view, kept aside while the screen shows another one (a side conversation or a watched subagent): what was on screen and the answers still being
+   * written. It comes back untouched when the person returns; whatever the main conversation said meanwhile is told after it, in order.
+   */
+  let mainView: { children: typeof transcript.children; streaming: typeof streaming } | undefined;
+  const enterDetour = () => {
+    const detour = session.detour?.();
+    if (!detour) return;
+    mainView = { children: [...transcript.children], streaming: new Map(streaming) };
+    transcript.clear(); streaming.clear();
+    write(detourHeader(detour, locale));
+  };
+  const leaveDetourView = () => {
+    if (!mainView) return;
+    transcript.clear();
+    for (const child of mainView.children) transcript.addChild(child);
+    streaming.clear();
+    for (const [key, entry] of mainView.streaming) streaming.set(key, entry);
+    mainView = undefined;
+    tui.requestRender();
+  };
   const emit = (event: NativeEvent) => {
     if (closed) return;
+    if (event.type === "detourStart") { enterDetour(); refresh(); return; }
+    if (event.type === "detourEnd") { leaveDetourView(); refresh(); return; }
     if (event.type === "planReady") { pendingPlan = event.text; return; }
     if (event.type === "reset") { transcript.clear(); streaming.clear(); }
     else if (event.type === "text") writeEngineText(event.text, event.at);
@@ -283,7 +313,8 @@ export async function runNativeUI(
    * to answer that first, so the question is never cancelled (and the permission denied) by accident.
    */
   const quit = async () => {
-    if (!(session.busy || commandBusy)) { shutdown(); return; }
+    // The main conversation counts even when a side conversation is on screen: leaving would stop its work too.
+    if (!(session.busy || commandBusy || session.mainBusy?.())) { shutdown(); return; }
     if (approvals.length) { write(t.answerPendingPermissionFirst); return; }
     if (quitAsking) return;
     quitAsking = true;
@@ -296,6 +327,15 @@ export async function runNativeUI(
   };
   const command = async (value: string) => {
     const [name, ...parts] = value.trim().split(/\s+/); const argument = parts.join(" ");
+    const official = findCodexCommand((name ?? "").slice(1));
+    // With a side conversation on screen only the commands Codex keeps there work (`available_in_side_conversation`); the others answer honestly, and Ctrl+C returns to the main thread.
+    // A watched subagent follows the same rule, and `/subagents` is how the person goes back or to another one. Shell's own `/f614:` commands are not Codex's and are never held back.
+    const detour = session.detour?.();
+    if (detour && official && !official.availableInSideConversation && !(detour.kind === "agent" && official.name === "subagents")) {
+      const nt = getCatalog(locale).codexNative;
+      writeError(detour.kind === "side" ? nt.sideUnavailableCommand({ name: `/${official.name}` }) : nt.agentUnavailableCommand({ name: `/${official.name}` }));
+      return;
+    }
     // Every command of Shell's own starts with `/f614:`; without it a name is Codex's (or unknown), never a silent alias of Shell's.
     if (name === "/f614:refresh") { await sidebar.refreshUsage(); return; }
     if (name === "/quit" || name === "/exit") { quitLikeCodex(); return; }
@@ -319,7 +359,6 @@ export async function runNativeUI(
       write([...session.status(), ...memory].join("\n")); return;
     }
     // Codex's own commands that Shell has connected: Codex says which of them may run while it works.
-    const official = findCodexCommand((name ?? "").slice(1));
     // A command of Codex's own screen (keyboard, window, desktop, debug) has no app-server method: say exactly that.
     if (official?.screenOnly) { write(getCatalog(locale).codexCommands.screenOnly({ name: name ?? "" })); return; }
     if (name === "/model" || name === "/resume") {
@@ -374,6 +413,10 @@ export async function runNativeUI(
     rememberWorkMode: modeId => saveEngineMode("codex", modeId, { env: process.env }),
     rememberCollaborationMode: modeId => saveEngineCollaborationMode("codex", modeId, { env: process.env }),
     refresh: () => refresh(),
+    working: (title, detail) => {
+      commandLabel = { title, ...(detail ? { detail } : {}) }; beginTurn(); refresh();
+      return () => { commandLabel = undefined; endTurn(); refresh(); };
+    },
   });
   // `@` searches the folder's files with Codex's own search, when the session has one.
   input.setFileSearch(session.searchFiles ? query => session.searchFiles!(query) : undefined);
@@ -387,6 +430,8 @@ export async function runNativeUI(
     if (closed || !value.trim()) return;
     input.setValue("");
     if (value.startsWith("/")) void command(value).catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) })));
+    // A subagent being watched takes no messages: say so before anything is written or sent.
+    else if (session.detour?.()?.readOnly) writeError(getCatalog(locale).errors["codex-agent-read-only"]({}));
     else if (!ready || commandBusy || session.busy) writeError(tc.waitForCurrentOperationToFinish);
     else sendMessage(value);
   };
@@ -412,6 +457,8 @@ export async function runNativeUI(
   };
   tui.addInputListener(data => {
     if (matchesKey(data, "shift+tab")) { void changeWorkMode().catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))); return { consume: true }; }
+    // With a side conversation or a watched subagent on screen, Ctrl+C returns to the main thread (as in Codex): the side conversation is discarded, the subagent is left running.
+    if (matchesKey(data, "ctrl+c") && session.detour?.()) { void session.leaveDetour?.().catch(() => {}); return { consume: true }; }
     // Ctrl+C and Ctrl+D do what `/f614:quit` does: leave when idle, ask first while work is in progress.
     if (matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+d")) { void quit().catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))); return { consume: true }; }
     return undefined;

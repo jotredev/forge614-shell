@@ -10,6 +10,7 @@ import { CODEX_INIT_PROMPT } from "../../engines/codex/prompts.ts";
 import { copyChoices } from "../../engines/codex/transcript.ts";
 import type { CopyChoice } from "../../engines/codex/transcript.ts";
 import { outsideCommandHandlers } from "./codex-outside-commands.ts";
+import { threadCommandHandlers } from "./codex-thread-commands.ts";
 
 /**
  * What some Codex commands do on the person's own machine, as Codex's terminal app does it locally too: read-only
@@ -59,6 +60,8 @@ export interface CodexCommandScreen {
   rememberCollaborationMode(id: string): void;
   /** Redraws the status and mode indicators after a change. */
   refresh(): void;
+  /** Shows `title` (and `detail`, when given) in the box's busy line with the time, as `/compact` does, until the returned function is called. */
+  working(title: string, detail?: string): () => void;
 }
 
 /** Runs one Codex command; `argument` is what was typed after the name. */
@@ -263,6 +266,7 @@ export function codexCommandHandlers(screen: CodexCommandScreen): Record<string,
       write([nt.approveRecorded, nt.approveRecordedHint].join("\n"));
     }),
     ...outsideCommandHandlers(screen),
+    ...threadCommandHandlers(screen),
   };
 }
 

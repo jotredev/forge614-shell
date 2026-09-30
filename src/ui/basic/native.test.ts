@@ -170,15 +170,14 @@ test("/compact with Codex calls thread/compact/start and reports the result", as
   } finally { enter("/f614:quit"); await ui; }
 });
 
-/** Idea 23: a native command Shell cannot pass to Codex gets an honest one-line answer instead of «Unknown command». */
+/**
+ * Idea 23: a native command Shell cannot pass to Codex gets an honest one-line answer instead of «Unknown command». Every command of Codex's list is connected now, so the
+ * case left is a session that has no request for it (another assistant, an older adapter): a stand-in without `/recap` stands for it.
+ */
 test("a command Shell cannot pass to Codex says so honestly, in English and in Spanish", async () => {
   for (const locale of ["en", "es"] as const) {
-    const terminal = new TestTerminal(); const rpc = new FixtureRpc();
-    rpc.replies.set("initialize", {});
-    rpc.replies.set("account/read", { account: { type: "chatgpt" }, requiresOpenaiAuth: true });
-    rpc.replies.set("configRequirements/read", { requirements: null });
-    rpc.replies.set("model/list", { data: [], nextCursor: null });
-    const ui = runNativeUI("codex", "/project", (emit, approve) => new CodexSession(rpc, "/project", emit, approve, undefined, undefined, locale), terminal, undefined, locale);
+    const terminal = new TestTerminal();
+    const ui = runNativeUI("codex", "/project", () => sessionWithThreeSameTitle([]), terminal, undefined, locale);
     try {
       await tick(); terminal.input("/recap"); terminal.input("\r"); await tick();
       const text = stripVTControlCharacters(terminal.output);
@@ -571,19 +570,25 @@ test("the / menu shows Codex's descriptions, Shell's own group, and hides what C
   }
 });
 
-/** A command on Codex's official list that Shell has not connected yet answers with the honest message; a name that is not Codex's at all is an unknown command. */
-test("an official but unconnected command is answered honestly and a made-up one is unknown, in both languages", async () => {
+/**
+ * A command on Codex's official list that the session cannot pass on answers with the honest message (a stand-in session without `/side`, since every command is connected
+ * on the real one); a name that is not Codex's at all is an unknown command.
+ */
+test("an official command the session lacks is answered honestly and a made-up one is unknown, in both languages", async () => {
   for (const locale of ["en", "es"] as const) {
-    const h = codexUi(locale);
+    const terminal = new TestTerminal();
+    const ui = runNativeUI("codex", "/project", () => sessionWithThreeSameTitle([]), terminal, undefined, locale);
+    const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+    const plain = () => stripVTControlCharacters(terminal.output);
     try {
       await tick();
-      h.enter("/side"); await tick();
-      expect(h.plain()).toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/side" }));
-      expect(h.plain()).not.toContain(getCatalog(locale).chat.unknownCommand({ name: "/side" }));
-      h.enter("/nope"); await tick();
-      expect(h.plain()).toContain(getCatalog(locale).chat.unknownCommand({ name: "/nope" }));
-      expect(h.plain()).not.toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/nope" }));
-    } finally { h.enter("/f614:quit"); await h.ui; }
+      enter("/side"); await tick();
+      expect(plain()).toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/side" }));
+      expect(plain()).not.toContain(getCatalog(locale).chat.unknownCommand({ name: "/side" }));
+      enter("/nope"); await tick();
+      expect(plain()).toContain(getCatalog(locale).chat.unknownCommand({ name: "/nope" }));
+      expect(plain()).not.toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/nope" }));
+    } finally { enter("/f614:quit"); await ui; }
   }
 });
 
@@ -847,18 +852,26 @@ test("/model and /resume run during a Codex turn", async () => {
   } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
-/** A command that only exists in Codex's own screen gets its own answer; one from part 3 keeps the honest «not from Shell yet». Both languages. */
-test("screen-only Codex commands and part-3 commands answer with their own messages", async () => {
+/**
+ * A command that only exists in Codex's own screen gets its own answer, and one the session lacks keeps the honest «not from Shell yet» (a stand-in session without
+ * `/subagents`; on the real one it is connected). `/agents` is no longer screen-only: it answers «Shared agents unavailable». Both languages.
+ */
+test("screen-only Codex commands and commands the session lacks answer with their own messages", async () => {
   for (const locale of ["en", "es"] as const) {
     const h = codexUi(locale);
     try {
       // `/rollout` is typed (Codex's menu hides it, so no suggestion replaces it); aliases such as `/pet` are covered in commands.test.ts.
-      await tick(); h.enter("/theme"); await tick(); h.enter("/rollout"); await tick(); h.enter("/subagents"); await tick();
+      await tick(); h.enter("/theme"); await tick(); h.enter("/rollout"); await tick();
       expect(h.plain()).toContain(getCatalog(locale).codexCommands.screenOnly({ name: "/theme" }));
       expect(h.plain()).toContain(getCatalog(locale).codexCommands.screenOnly({ name: "/rollout" }));
-      expect(h.plain()).toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/subagents" }));
       expect(h.plain()).not.toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/theme" }));
     } finally { h.enter("/f614:quit"); await h.ui; }
+    const terminal = new TestTerminal();
+    const ui = runNativeUI("codex", "/project", () => sessionWithThreeSameTitle([]), terminal, undefined, locale);
+    try {
+      await tick(); terminal.input("/subagents"); terminal.input("\r"); await tick();
+      expect(stripVTControlCharacters(terminal.output)).toContain(getCatalog(locale).codexChat.commandNotAllowed({ name: "/subagents" }));
+    } finally { terminal.input("/f614:quit"); terminal.input("\r"); await ui; }
   }
   expect(getCatalog("en").codexCommands.screenOnly({ name: "/theme" })).toBe("/theme only exists in Codex's own screen.");
   expect(getCatalog("es").codexCommands.screenOnly({ name: "/theme" })).toBe("/theme solo existe en la pantalla de Codex.");
@@ -1782,3 +1795,312 @@ test("with Codex the sidebar and /status name each limit by its window and never
     } finally { h.enter("/f614:quit"); await h.ui; }
   }
 });
+
+// ── Codex native commands, part 3b: /recap, /side and /btw, /subagents, /agents ───────────────────────────────────────
+
+/** Threads the app-server holds for the subagent tests (`v2/Thread.ts`): a running subagent of the conversation `t` with a saved turn, and a finished one. */
+const subagentThread = (id: string, over: Record<string, unknown>, nickname: string) => ({
+  id, preview: "", ephemeral: false, createdAt: 10, updatedAt: 10, status: { type: "idle" }, cwd: "/project", path: null, canAcceptDirectInput: false, agentNickname: nickname, agentRole: null,
+  source: { subAgent: { thread_spawn: { parent_thread_id: "t", depth: 1, agent_path: null, agent_nickname: nickname, agent_role: null } } }, turns: [], ...over,
+});
+const reviewerThread = subagentThread("c1", { status: { type: "active", activeFlags: [] }, preview: "Review the login tests", turns: [{ id: "ct1", startedAt: 100, completedAt: 200, items: [
+  { type: "userMessage", id: "cm1", content: [{ type: "text", text: "Review the login tests", text_elements: [] }] }, { type: "agentMessage", id: "cm2", text: "Found 2 issues." },
+] }], source: { subAgent: { thread_spawn: { parent_thread_id: "t", depth: 1, agent_path: "/root/reviewer", agent_nickname: "Kepler", agent_role: null } } } }, "Kepler");
+
+/**
+ * Makes the fixture answer what the four commands ask (`v2/ConfigReadResponse.ts`, `ThreadForkResponse.ts`, `ThreadInjectItemsResponse.ts`, `ThreadUnsubscribeResponse.ts`,
+ * `ThreadLoadedListResponse.ts`, `ThreadReadResponse.ts`, `ThreadListResponse.ts`, `ExperimentalFeatureListResponse.ts`) and tells the temporary recap thread `r` and the side
+ * thread `s` (each with its own turn) from the conversation `t`. Replies set afterwards on `rpc.replies` still apply; `over` replaces one method's answer.
+ */
+function threadReplies(rpc: FixtureRpc, over: Record<string, (params: any) => any> = {}) {
+  rpc.replies.set("config/read", { config: { developer_instructions: null, mcp_servers: {} }, origins: {}, layers: null });
+  rpc.replies.set("thread/fork", { thread: { id: "s" }, model: "m", modelProvider: "openai" });
+  rpc.replies.set("thread/inject_items", {});
+  rpc.replies.set("thread/unsubscribe", { status: "unsubscribed" });
+  rpc.replies.set("turn/interrupt", {});
+  rpc.replies.set("experimentalFeature/list", featureList(false, [{ name: "multi_agent", stage: "stable", displayName: null, description: null, announcement: null, enabled: true, defaultEnabled: true }]));
+  rpc.replies.set("thread/loaded/list", { data: ["t", "c1"], nextCursor: null });
+  rpc.replies.set("thread/list", { data: [], nextCursor: null, backwardsCursor: null });
+  rpc.replies.set("config/batchWrite", { status: "ok", version: "v1", filePath: "/home/u/.codex/config.toml", overriddenMetadata: null });
+  rpc.handler = async (method, params) => {
+    if (over[method]) return over[method]!(params);
+    if (method === "thread/start" && params.ephemeral === true) return { thread: { id: "r" }, model: "m", modelProvider: "openai", sandbox: { type: "readOnly", networkAccess: false } };
+    if (method === "turn/start" && params.threadId === "r") return { turn: { id: "ru", status: "inProgress" } };
+    if (method === "turn/start" && params.threadId === "s") return { turn: { id: "su", status: "inProgress" } };
+    if (method === "thread/read" && params.threadId === "c1") return { thread: reviewerThread };
+    if (!rpc.replies.has(method)) throw new Error(`Unexpected ${method}`);
+    return rpc.replies.get(method);
+  };
+}
+/** One whole exchange in the conversation `t`: the person writes «hello», Codex answers «Hi there» and the turn ends. */
+async function converseUi(h: CommandHarness): Promise<void> {
+  await tick(); h.enter("hello"); await tick();
+  h.rpc.onNotification("item/completed", { threadId: "t", turnId: "u", item: { type: "agentMessage", id: "a1", text: "Hi there", phase: null, memoryCitation: null }, completedAtMs: 1 });
+  h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await tick();
+}
+const asked = (h: CommandHarness, method: string) => h.rpc.calls.filter(call => call.method === method);
+
+/**
+ * `/recap` through the screen: the box shows Codex's «Generating conversation recap» (translated) while the temporary thread works, then the summary in its
+ * «↳ Recap:» frame with the next action, and the temporary thread is detached. Nothing the recap thread streams reaches the chat.
+ */
+for (const locale of ["en", "es"] as const) {
+  test(`/recap shows the loading line while it waits and then the summary, and detaches the temporary thread (${locale})`, async () => {
+    const nt = getCatalog(locale).codexNative;
+    const h = codexUi(locale, rpc => threadReplies(rpc), undefined, 220);
+    try {
+      await converseUi(h);
+      h.terminal.output = ""; h.enter("/recap"); await tick(); await tick();
+      expect(h.plain(), "loading").toContain(getCatalog(locale).codexChat.recapLoadingTitle);
+      h.rpc.onNotification("item/agentMessage/delta", { threadId: "r", turnId: "ru", itemId: "ri", delta: "HIDDEN-RECAP-STREAM" });
+      h.rpc.onNotification("item/completed", { threadId: "r", turnId: "ru", item: { type: "agentMessage", id: "ri", text: JSON.stringify({ summary: "You said hello.", next_action: "Say more." }), phase: null, memoryCitation: null }, completedAtMs: 2 });
+      h.rpc.onNotification("turn/completed", { threadId: "r", turn: { id: "ru", status: "completed" } });
+      await tick(); await tick();
+      expect(h.plain()).toContain(nt.recapLine({ summary: "You said hello." }));
+      expect(h.plain()).toContain(nt.recapNextLine({ action: "Say more." }));
+      expect(h.plain()).not.toContain("HIDDEN-RECAP-STREAM");
+      expect(h.rpc.calls.slice(-4).map(call => call.method)).toEqual(["config/read", "thread/start", "turn/start", "thread/unsubscribe"]);
+      expect(h.rpc.calls.at(-1)!.params).toEqual({ threadId: "r" });
+      expect(h.rpc.calls.at(-2)!.params.outputSchema.required).toEqual(["summary", "next_action"]);
+      expect(h.session().sessionId).toBe("t");
+    } finally { h.enter("/f614:quit"); await h.ui; }
+  });
+}
+
+/** When the model breaks the schema, `/recap` says Codex's «Could not generate a recap. Please try again.» (translated), detaches the thread and the box works again. */
+test("/recap says it could not generate a recap, still detaches the thread and leaves the box free", async () => {
+  const h = codexUi("es", rpc => threadReplies(rpc));
+  try {
+    await converseUi(h);
+    h.enter("/recap"); await tick(); await tick();
+    h.rpc.onNotification("item/completed", { threadId: "r", turnId: "ru", item: { type: "agentMessage", id: "ri", text: "no es JSON", phase: null, memoryCitation: null }, completedAtMs: 2 });
+    h.rpc.onNotification("turn/completed", { threadId: "r", turn: { id: "ru", status: "completed" } });
+    await tick(); await tick();
+    expect(h.plain()).toContain("No se pudo generar el resumen. Inténtalo de nuevo.");
+    expect(asked(h, "thread/unsubscribe").map(call => call.params)).toEqual([{ threadId: "r" }]);
+    h.terminal.output = ""; h.enter("/pwd"); await tick();
+    expect(h.plain()).toContain("/project");
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/** With nothing said yet there is no history: `/recap` says so and asks Codex for nothing. */
+test("/recap before any message says there is no history and calls nothing", async () => {
+  const h = codexUi("en", rpc => threadReplies(rpc), undefined, 220);
+  try {
+    await tick(); h.enter("/recap"); await tick();
+    expect(h.plain()).toContain("There is no conversation history to recap.");
+    expect(asked(h, "config/read")).toHaveLength(0);
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/**
+ * `/side question` through the screen (Codex's flow, `app/side.rs`): `config/read`, `thread/fork`, `thread/inject_items`, then the question as `turn/start` on the side thread.
+ * The screen shows that this is a side conversation (a header in the view and a fixed line in the box), keeps the main conversation aside, and what the main thread says
+ * meanwhile does not appear until Ctrl+C returns to it. A command Codex does not keep in a side conversation answers honestly; one it keeps works.
+ */
+for (const locale of ["en", "es"] as const) {
+  test(`/side shows it is a side conversation, keeps the threads apart and Ctrl+C returns to the main one intact (${locale})`, async () => {
+    const nt = getCatalog(locale).codexNative;
+    const h = codexUi(locale, rpc => threadReplies(rpc), undefined, 220);
+    try {
+      await converseUi(h);
+      h.terminal.output = ""; h.enter("/side what is X?"); await tick(); await tick();
+      const calls = h.rpc.calls.map(call => call.method);
+      expect(calls.slice(-4)).toEqual(["config/read", "thread/fork", "thread/inject_items", "turn/start"]);
+      expect(h.rpc.calls.at(-1)!.params).toMatchObject({ threadId: "s", input: [{ type: "text", text: "what is X?" }] });
+      expect(h.plain()).toContain(nt.sideHeader);
+      expect(h.plain(), "the side turn is running, and the busy line names the side conversation").toContain(`${getCatalog(locale).chat.statusWorking} · ${nt.sideTitle}`);
+      expect(h.plain()).toContain("what is X?");
+      expect(h.session().detour?.()).toEqual({ kind: "side", readOnly: false });
+
+      h.terminal.output = "";
+      h.rpc.onNotification("item/agentMessage/delta", { threadId: "t", turnId: "u", itemId: "m9", delta: "MAIN-LATE-WORDS" });
+      h.rpc.onNotification("item/agentMessage/delta", { threadId: "s", turnId: "su", itemId: "s9", delta: "SIDE-ANSWER-WORDS" });
+      await tick();
+      expect(h.plain()).toContain("SIDE-ANSWER-WORDS");
+      expect(h.plain()).not.toContain("MAIN-LATE-WORDS");
+
+      h.terminal.output = ""; h.enter("/model"); await tick();
+      expect(h.plain()).toContain(nt.sideUnavailableCommand({ name: "/model" }));
+      expect(h.plain()).not.toContain(getCatalog(locale).chat.commandSelectModel);
+      h.terminal.output = ""; h.enter("/pwd"); await tick();
+      expect(h.plain()).toContain("/project");
+      expect(h.plain()).not.toContain(nt.sideUnavailableCommand({ name: "/pwd" }));
+
+      const before = h.rpc.calls.length; h.terminal.output = "";
+      h.terminal.input("\x03"); await tick(); await tick();
+      expect(h.rpc.calls.slice(before).map(call => [call.method, call.params])).toEqual([["turn/interrupt", { threadId: "s", turnId: "su" }], ["thread/unsubscribe", { threadId: "s" }]]);
+      expect(h.session().detour?.()).toBeUndefined();
+      expect(h.plain()).toContain("MAIN-LATE-WORDS");
+      expect(h.plain()).not.toContain("SIDE-ANSWER-WORDS");
+      expect(h.plain()).not.toContain(nt.sideHeader);
+      expect(h.session().sessionId).toBe("t");
+
+      h.enter("back in main"); await tick();
+      expect(h.rpc.calls.filter(call => call.method === "turn/start").at(-1)!.params.threadId).toBe("t");
+      h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } }); await tick();
+    } finally { h.enter("/f614:quit"); await h.ui; }
+  });
+}
+
+/** `/btw` is `/side` under another name (same description in Codex's list): it opens the same side conversation. */
+test("/btw opens the same side conversation as /side", async () => {
+  const h = codexUi("en", rpc => threadReplies(rpc), undefined, 220);
+  try {
+    await converseUi(h);
+    h.enter("/btw quick one"); await tick(); await tick();
+    expect(h.rpc.calls.filter(call => call.method === "thread/fork")).toHaveLength(1);
+    expect(h.rpc.calls.filter(call => call.method === "turn/start").at(-1)!.params).toMatchObject({ threadId: "s", input: [{ type: "text", text: "quick one" }] });
+    expect(h.session().detour?.()).toMatchObject({ kind: "side" });
+  } finally { h.terminal.input("\x03"); await tick(); h.enter("/f614:quit"); await h.ui; }
+});
+
+/** `/side` alone only opens the branch: no turn is sent until the person writes, and what they write then goes to the side thread. */
+test("/side alone opens the branch without sending a turn, and the next message goes to it", async () => {
+  const h = codexUi("en", rpc => threadReplies(rpc), undefined, 220);
+  try {
+    await converseUi(h);
+    const turns = asked(h, "turn/start").length;
+    h.terminal.output = ""; h.enter("/side"); await tick(); await tick();
+    expect(asked(h, "turn/start")).toHaveLength(turns);
+    expect(h.session().detour?.()).toMatchObject({ kind: "side" });
+    const nt = getCatalog("en").codexNative;
+    expect(h.plain(), "the fixed line in the box says where the person is and how to leave").toContain([nt.sideTitle, nt.sideFromMain, nt.sideCloseHint].join(" · "));
+    expect(h.plain()).toContain(nt.sideHeader);
+    h.enter("and this?"); await tick();
+    expect(asked(h, "turn/start").at(-1)!.params).toMatchObject({ threadId: "s", input: [{ type: "text", text: "and this?" }] });
+  } finally { h.terminal.input("\x03"); await tick(); h.enter("/f614:quit"); await h.ui; }
+});
+
+/** Codex lets `/side` start while a turn runs. With the main turn still working, Ctrl+D from the side conversation asks before leaving (the main work would be stopped), with «No» marked. */
+test("/side starts during a main turn, keeps working there and Ctrl+D asks before stopping the main work", async () => {
+  const h = codexUi("en");
+  threadRepliesLater(h);
+  try {
+    await tick(); h.enter("long task"); await tick();
+    expect(h.session().busy).toBe(true);
+    h.enter("/side hi"); await tick(); await tick();
+    expect(h.session().detour?.()).toMatchObject({ kind: "side" });
+    expect(h.session().mainBusy?.()).toBe(true);
+    h.terminal.output = ""; h.terminal.input("\x04"); await tick();
+    expect(h.plain()).toContain("Quit anyway? What is running will be stopped.");
+    expect(h.plain()).toContain("› No");
+    h.terminal.input("\x1b"); await tick();
+    h.terminal.input("\x03"); await tick();
+    expect(h.session().detour?.()).toBeUndefined();
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+    await tick();
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+/** Installs the thread replies on a harness that was built before them (the main `turn/start` and `thread/start` replies stay). */
+function threadRepliesLater(h: CommandHarness) { threadReplies(h.rpc); }
+
+/**
+ * `/subagents` through the screen: Codex's picker («Subagents», Main first), choosing a subagent shows its history read only with a fixed line saying so, writing to it is
+ * refused without sending anything, the commands Codex keeps in a side conversation still work and the others answer honestly, and Ctrl+C returns to the main conversation.
+ */
+for (const locale of ["en", "es"] as const) {
+  test(`/subagents opens the picker, watches the chosen subagent read only and Ctrl+C returns to the main conversation (${locale})`, async () => {
+    const nt = getCatalog(locale).codexNative;
+    const h = codexUi(locale, rpc => threadReplies(rpc), undefined, 220);
+    try {
+      await converseUi(h);
+      h.terminal.output = ""; h.enter("/subagents"); await tick(); await tick();
+      expect(h.plain()).toContain(nt.subagentsTitle);
+      expect(h.plain()).toContain(`• ${nt.subagentMain}`);
+      expect(h.plain()).toContain("• /root/reviewer");
+      const listed = asked(h, "thread/list").at(-1)!.params;
+      expect(listed).toMatchObject({ sourceKinds: ["subAgentThreadSpawn"], ancestorThreadId: "t" });
+
+      h.terminal.output = ""; h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick(); await tick();
+      expect(h.session().detour?.()).toEqual({ kind: "agent", name: "/root/reviewer", readOnly: true });
+      expect(h.plain()).toContain("Found 2 issues.");
+      expect(h.plain()).toContain(nt.agentHeader({ name: "/root/reviewer" }));
+      expect(h.plain()).toContain(nt.agentTitle({ name: "/root/reviewer" }));
+
+      const turns = asked(h, "turn/start").length; h.terminal.output = "";
+      h.enter("hello subagent"); await tick();
+      expect(h.plain()).toContain(getCatalog(locale).errors["codex-agent-read-only"]({}));
+      expect(asked(h, "turn/start")).toHaveLength(turns);
+      h.terminal.output = ""; h.enter("/model"); await tick();
+      expect(h.plain()).toContain(nt.agentUnavailableCommand({ name: "/model" }));
+      h.terminal.output = ""; h.enter("/pwd"); await tick();
+      expect(h.plain()).toContain("/project");
+
+      h.terminal.output = ""; h.terminal.input("\x03"); await tick();
+      expect(h.session().detour?.()).toBeUndefined();
+      expect(h.plain()).not.toContain(nt.agentHeader({ name: "/root/reviewer" }));
+      expect(asked(h, "thread/unsubscribe")).toHaveLength(0);
+      expect(asked(h, "turn/interrupt")).toHaveLength(0);
+    } finally { h.enter("/f614:quit"); await h.ui; }
+  });
+}
+
+/** Choosing «Main» from a watched subagent's own picker returns to the main conversation, the same as Ctrl+C. */
+test("/subagents from a watched subagent returns to the main conversation when Main is chosen", async () => {
+  const h = codexUi("en", rpc => threadReplies(rpc), undefined, 220);
+  try {
+    await converseUi(h);
+    h.enter("/subagents"); await tick(); await tick(); h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick(); await tick();
+    expect(h.session().detour?.()).toMatchObject({ kind: "agent" });
+    h.enter("/subagents"); await tick(); await tick();
+    h.terminal.input("\x1b[A"); h.terminal.input("\r"); await tick(); await tick();
+    expect(h.session().detour?.()).toBeUndefined();
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/** Without subagents Codex says «No agents available yet.» and opens nothing. */
+test("/subagents without subagents says there are none", async () => {
+  const h = codexUi("en", rpc => threadReplies(rpc, { "thread/loaded/list": () => ({ data: ["t"], nextCursor: null }) }), undefined, 220);
+  try {
+    await converseUi(h);
+    h.terminal.output = ""; h.enter("/subagents"); await tick(); await tick();
+    expect(h.plain()).toContain("No agents available yet.");
+    expect(h.plain()).not.toContain("Select an agent to watch.");
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/**
+ * With the subagents feature off Codex asks «Enable subagents?» with «Yes, enable» marked; saving writes into the person's Codex configuration, and the question says so.
+ * Enter alone takes «Yes» (as Codex marks it) and calls `config/batchWrite`; Esc calls nothing.
+ */
+test("/subagents with the feature off asks, says it writes to ~/.codex and saves only on Yes", async () => {
+  const off = { name: "multi_agent", stage: "stable", displayName: null, description: null, announcement: null, enabled: false, defaultEnabled: true };
+  const nt = getCatalog("en").codexNative;
+  const h = codexUi("en", rpc => threadReplies(rpc, { "experimentalFeature/list": () => featureList(false, [off]), "thread/loaded/list": () => ({ data: ["t"], nextCursor: null }) }), undefined, 220);
+  try {
+    await converseUi(h);
+    h.terminal.output = ""; h.enter("/subagents"); await tick(); await tick();
+    expect(h.plain()).toContain(nt.subagentsEnableTitle);
+    expect(h.plain()).toContain("~/.codex/config.toml");
+    expect(h.plain()).toContain("1. Yes, enable");
+    h.terminal.input("\x1b"); await tick();
+    expect(asked(h, "config/batchWrite")).toHaveLength(0);
+    h.terminal.output = ""; h.enter("/subagents"); await tick(); await tick(); h.terminal.input("\r"); await tick(); await tick();
+    expect(asked(h, "config/batchWrite").map(call => call.params)).toEqual([{ edits: [{ keyPath: "features.multi_agent", value: true, mergeStrategy: "replace" }], reloadUserConfig: true }]);
+    expect(h.plain()).toContain(nt.subagentsEnabled);
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/**
+ * `/agents` with the embedded server (the case of Shell): Codex's «Shared agents unavailable», in both languages, with nothing started. Codex keeps it in a side conversation, so it
+ * works there too.
+ */
+for (const locale of ["en", "es"] as const) {
+  test(`/agents says the shared agents are unavailable, also inside a side conversation (${locale})`, async () => {
+    const nt = getCatalog(locale).codexNative;
+    const h = codexUi(locale, rpc => threadReplies(rpc), undefined, 220);
+    try {
+      await converseUi(h);
+      h.terminal.output = ""; h.enter("/agents"); await tick();
+      expect(h.plain()).toContain(nt.agentsUnavailableTitle);
+      expect(h.plain()).toContain(nt.agentsUnavailableSubtitle);
+      expect(h.plain()).not.toContain(getCatalog(locale).codexCommands.screenOnly({ name: "/agents" }));
+      h.enter("/side"); await tick(); await tick();
+      h.terminal.output = ""; h.enter("/agents"); await tick();
+      expect(h.plain()).toContain(nt.agentsUnavailableTitle);
+      expect(h.plain()).not.toContain(nt.sideUnavailableCommand({ name: "/agents" }));
+    } finally { h.terminal.input("\x03"); await tick(); h.enter("/f614:quit"); await h.ui; }
+  });
+}

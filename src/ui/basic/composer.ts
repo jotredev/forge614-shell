@@ -107,7 +107,8 @@ function statusColor(status: string): (text: string) => string {
 
 /** «Working …» or, while `/compact` runs, «Compacting context …» — both in either language, both drawn as busy. */
 function isWorkingStatus(status: string): boolean {
-  return (["en", "es"] as const).some(locale => status.startsWith(getCatalog(locale).chat.statusWorking) || status.startsWith(getCatalog(locale).codexChat.compactingTitle));
+  return (["en", "es"] as const).some(locale => status.startsWith(getCatalog(locale).chat.statusWorking) || status.startsWith(getCatalog(locale).codexChat.compactingTitle)
+    || status.startsWith(getCatalog(locale).codexChat.recapLoadingTitle));
 }
 
 /**

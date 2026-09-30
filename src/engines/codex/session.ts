@@ -1,9 +1,15 @@
 import type { RpcConnection } from "../../infrastructure/rpc.ts";
 import type {
-  Approve, CancelOutcome, Emit, NativeAccountUsage, NativeApp, NativeAutoReviewDenial, NativeBackgroundTerminal, NativeCollaborationMode, NativeConfigWrite, NativeFeature,
+  Approve, CancelOutcome, Emit, NativeAccountUsage, NativeDetour, NativeEvent, NativeSideStart, NativeApp, NativeAutoReviewDenial, NativeBackgroundTerminal, NativeCollaborationMode, NativeConfigWrite, NativeFeature,
   NativeFeedbackCategory, NativeGoal, NativeHook, NativeImportDetection, NativeImportItem, NativeImportSource, NativeMcpServer, NativeMemorySettings, NativeModel,
-  NativePlugin, NativePluginDetail, NativeReviewTarget, NativeSession, NativeSessionInfo, NativeSkill, NativeVisualState, NativeWorkMode, WorkModeChange,
+  NativePlugin, NativePluginDetail, NativeRecapResult, NativeReviewTarget, NativeSession, NativeSessionInfo, NativeSkill, NativeSubagent, NativeSubagentList, NativeVisualState,
+  NativeWorkMode, WorkModeChange,
 } from "../types.ts";
+import { RECAP_RESPONSE_MAX_BYTES, RECAP_TURN_TIMEOUT_MS, parseRecap, recapHistory, recapOutputSchema, recapPrompt, temporaryThreadConfig } from "./recap.ts";
+import type { RecapCell } from "./recap.ts";
+import { isHistoryPaginationUnsupported, sideBoundaryItem, sideDeveloperInstructions, sideStartRefusal } from "./side.ts";
+import { canReadWithoutTurns, descendantsOf, subagentName, toSubagentThread } from "./subagents.ts";
+import type { SubagentThread } from "./subagents.ts";
 import { MAX_RECENT_DENIALS, denialFromNotification } from "./auto-review.ts";
 import type { AutoReviewDenialRecord } from "./auto-review.ts";
 import { limitLabel } from "./limits.ts";
@@ -121,6 +127,28 @@ function toImportItem(raw: any): NativeImportItem {
   return { type: String(raw.itemType), description: String(raw.description ?? ""), cwd: typeof raw.cwd === "string" && raw.cwd ? raw.cwd : null, count, names, raw };
 }
 
+/** A `/recap` in progress: the temporary thread and turn it runs on (known as they start) and the notifications of that thread that have arrived and not been read yet. */
+interface RecapRun { threadId?: string; turnId?: string; queue: { method: string; params: any }[]; wake?: () => void }
+
+/**
+ * A conversation on screen apart from the main one (see `NativeDetour`) and what the session keeps about it: the thread, the turn in progress and the wait for its end,
+ * the abort signal of the permission questions it asks, the items it started (to describe a permission request) and what was said in it (for `/copy` and `/export`).
+ */
+interface DetourState {
+  kind: "side" | "agent"; threadId: string; name?: string;
+  turnId?: string; busy: boolean; finish?: (error?: Error) => void; aborted: AbortController;
+  streamed: Set<string>; items: Map<string, any>; cells: RecapCell[];
+}
+
+/** Rejects if `work` does not settle within `ms`, like Codex's `tokio::time::timeout`; `work` itself is left to finish on its own. */
+function withinTime<T>(ms: number, work: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out")), ms);
+    timer.unref?.();
+    work.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
+  });
+}
+
 /** The tools `/import` can copy from, in Codex's order: the id `migrationSource` takes and the name shown. */
 const IMPORT_SOURCES = [{ id: "claude-code", label: "Claude Code" }, { id: "cursor", label: "Cursor" }] as const;
 
@@ -134,7 +162,13 @@ function wrapStartupContext(text: string): string {
 }
 
 export class CodexSession implements NativeSession {
-  busy = false;
+  /** Whether the main conversation is working (a turn, a command or a login); a side conversation on screen keeps its own flag, and `busy` tells about the one on screen. */
+  private mainWorking = false;
+  /** What the screen asks about the conversation it shows: the side conversation's turn while one is on screen, the main conversation's work otherwise. */
+  get busy(): boolean { return this.detourState?.kind === "side" ? this.detourState.busy : this.mainWorking; }
+  set busy(value: boolean) { this.mainWorking = value; }
+  /** Whether the main conversation is working even though a side conversation is on screen. */
+  mainBusy(): boolean { return this.mainWorking; }
   sessionId?: string;
   models: NativeModel[] = [];
   private model?: string;
@@ -191,11 +225,32 @@ export class CodexSession implements NativeSession {
   private importId?: string;
   /** The plugins of the last `plugin/list`, by `key`, with where each one lives. */
   private pluginIndex = new Map<string, PluginEntry>();
+  /** The messages the person sees in the open conversation (what they wrote and what Codex answered), which is all `/recap` summarizes. */
+  private visible: RecapCell[] = [];
+  /** The `/recap` being generated, if any. */
+  private recapRun?: RecapRun;
+  /** How long each step of `/recap` may take (Codex's `STRUCTURED_TURN_TIMEOUT`); a field only so tests can shorten it. */
+  private recapTimeoutMs = RECAP_TURN_TIMEOUT_MS;
+  /** The side conversation or watched subagent on screen, if any. */
+  private detourState?: DetourState;
+  /** What the main conversation said while the detour was on screen, kept in order to be told once the person is back (see `emit`). */
+  private parked: NativeEvent[] = [];
+  /** A wait that main-thread permission questions share while a detour is on screen, released when the person returns; `heldApprovals` counts the questions waiting. */
+  private mainReturned?: { promise: Promise<void>; release: () => void };
+  private heldApprovals = 0;
+  /**
+   * What the main conversation says. While a detour is on screen its text waits in `parked` (the person is looking at another conversation) and is told when they return;
+   * status changes always go through. What the detour itself says goes straight to `rawEmit`.
+   */
+  private emit: Emit = event => {
+    if (this.detourState && (event.type === "text" || event.type === "delta" || event.type === "planReady")) this.parked.push(event);
+    else this.rawEmit(event);
+  };
 
   private readonly locale: Locale;
 
   constructor(
-    private rpc: RpcConnection, private cwd: string, private emit: Emit, private approve: Approve,
+    private rpc: RpcConnection, private cwd: string, private rawEmit: Emit, private approve: Approve,
     private openBrowser: (url: string) => Promise<boolean> = openLoginBrowser,
     /** Injected by the composition root (`app/native-chat.ts`) with the real `getStartupContext`. Left undefined in tests that do not exercise memory recall — never falls back to calling a real Forge614 Engram binary implicitly. */
     private getStartupContextFn?: typeof getStartupContext,
@@ -220,6 +275,7 @@ export class CodexSession implements NativeSession {
       const stopTimedOut = this.interrupting && isRequestTimeout(error);
       const reported = this.finishTurn !== undefined;
       this.aborted.abort(); this.loginId = undefined; this.busy = false;
+      if (this.detourState) { this.detourState.busy = false; this.detourState.aborted.abort(); this.detourState.finish?.(error); }
       this.finishTurn?.(stopTimedOut ? undefined : error);
       if (!reported && !stopTimedOut) this.emit({ type: "text", text: describeError(error, this.locale) });
     };
@@ -306,7 +362,7 @@ export class CodexSession implements NativeSession {
   async setCollaborationMode(id: string): Promise<WorkModeChange> {
     if (!this.collaborationMasks.some(mask => mask.mode === id)) throw new ShellError("codex-mode-unknown");
     this.selectedCollaboration = id;
-    if (this.busy) return "next-turn";
+    if (this.mainWorking || this.detourState?.busy) return "next-turn";
     if (this.loaded && this.sessionId) {
       try { await this.rpc.request("thread/settings/update", { threadId: this.sessionId, collaborationMode: this.collaborationPayload() }); } catch { /* the next turn carries it */ }
     }
@@ -328,7 +384,7 @@ export class CodexSession implements NativeSession {
     const mode = this.modes.find(item => item.id === id);
     if (!mode) throw new ShellError("codex-mode-unknown");
     this.selectedMode = mode;
-    return this.busy ? "next-turn" : "applied";
+    return this.mainWorking || this.detourState?.busy ? "next-turn" : "applied";
   }
   private async readAccount(): Promise<boolean> {
     const response = await this.rpc.request("account/read", { refreshToken: false });
@@ -408,7 +464,7 @@ export class CodexSession implements NativeSession {
       this.emit({ type: "text", text: this.t.disconnectedLocally });
     } finally { this.busy = false; this.emit({ type: "status", text: "" }); }
   }
-  private idle(): void { if (this.busy) throw new ShellError("codex-turn-busy"); }
+  private idle(): void { if (this.mainWorking) throw new ShellError("codex-turn-busy"); }
   status(): string[] {
     if (this.disconnected) return [this.t.disconnectedStatus];
     return [
@@ -450,7 +506,7 @@ export class CodexSession implements NativeSession {
    * the last turn's id and the rollout file `/feedback` would attach — and keeps the new conversation's rollout file when it is known.
    */
   private threadChanged(rolloutPath?: unknown): void {
-    this.denials = []; this.lastTurnId = undefined;
+    this.denials = []; this.lastTurnId = undefined; this.visible = [];
     this.rolloutPath = typeof rolloutPath === "string" && rolloutPath ? rolloutPath : undefined;
   }
   /**
@@ -478,7 +534,7 @@ export class CodexSession implements NativeSession {
    * waits for it. A login or logout in progress still has to finish first.
    */
   async resume(id: string): Promise<void> {
-    if (this.busy && !this.finishTurn) throw new ShellError("codex-turn-busy");
+    if (this.mainWorking && !this.finishTurn) throw new ShellError("codex-turn-busy");
     const { thread } = await this.rpc.request("thread/read", { threadId: id, includeTurns: true });
     if (thread.cwd !== this.cwd) throw new ShellError("codex-session-foreign-project");
     if (thread.status?.type === "active") throw new ShellError("codex-session-active-elsewhere");
@@ -493,18 +549,23 @@ export class CodexSession implements NativeSession {
    */
   private showHistory(turns: any[]): void {
     this.emit({ type: "reset", text: "" });
-    this.lastAgentMessage = undefined;
+    this.lastAgentMessage = undefined; this.visible = [];
     for (const turn of turns) for (const item of turn.items ?? []) {
-      if (item.type === "agentMessage") { this.lastAgentMessage = item.text; this.emit({ type: "text", text: item.text, at: secondsToMilliseconds(turn.completedAt) }); }
+      if (item.type === "agentMessage") {
+        this.lastAgentMessage = item.text; this.visible.push({ role: "assistant", text: String(item.text) });
+        this.emit({ type: "text", text: item.text, at: secondsToMilliseconds(turn.completedAt) });
+      }
       if (item.type === "userMessage") {
         const parts = item.content.filter((part: any) => part.type === "text").map((part: any) => withoutMemoryBlock(part.text));
         const written = parts.filter(Boolean).join("\n");
+        if (written) this.visible.push({ role: "user", text: written });
         // A message made only of Shell's memory block was never the person's: nothing to show.
         if (written || !parts.length) this.emit({ type: "text", text: `You: ${written}`, at: secondsToMilliseconds(turn.startedAt) });
       }
     }
   }
   async send(text: string): Promise<void> {
+    if (this.detourState) return this.sendInDetour(text);
     this.idle(); if (!text.trim()) return;
     if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
     this.busy = true; this.aborted = new AbortController(); this.streamed.clear(); this.items.clear(); this.runningCommands.clear();
@@ -525,17 +586,23 @@ export class CodexSession implements NativeSession {
       ];
       if (this.aborted.signal.aborted) return;
       this.pendingStartupContext = undefined;
+      this.visible.push({ role: "user", text });
       const collaboration = this.collaborationPayload();
       this.turnCollaboration = collaboration?.mode;
       const result = await this.requestWithMode(mode, "turn/start", {
-        threadId: this.sessionId, input, model: this.model, effort: this.effort, approvalsReviewer: mode?.approvalsReviewer ?? "user",
-        ...(mode ? { approvalPolicy: mode.approvalPolicy, sandboxPolicy: sandboxPolicyFor(mode.sandbox) } : { approvalPolicy: "untrusted" }),
-        ...(collaboration ? { collaborationMode: collaboration } : {}),
+        threadId: this.sessionId, input, ...this.turnSettings(mode), ...(collaboration ? { collaborationMode: collaboration } : {}),
       });
       this.turnId = result.turn.id; this.lastTurnId = this.turnId;
       if (this.aborted.signal.aborted) await this.interruptTurn(this.sessionId, this.turnId!);
       await finished;
     } finally { this.busy = false; this.turnId = undefined; this.finishTurn = undefined; this.aborted.abort(); }
+  }
+  /** What every `turn/start` of the conversation carries besides its thread and input: the model, the effort and the work mode's approval policy, reviewer and sandbox (or Codex's cautious default). */
+  private turnSettings(mode: CodexWorkMode | undefined) {
+    return {
+      model: this.model, effort: this.effort, approvalsReviewer: mode?.approvalsReviewer ?? "user",
+      ...(mode ? { approvalPolicy: mode.approvalPolicy, sandboxPolicy: sandboxPolicyFor(mode.sandbox) } : { approvalPolicy: "untrusted" }),
+    };
   }
   /**
    * Sends a request that carries the work mode. If Codex rejects it while the mode is one it has not
@@ -660,7 +727,7 @@ export class CodexSession implements NativeSession {
   private async ensureThread(): Promise<string> {
     if (this.sessionId && this.loaded) return this.sessionId;
     if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
-    if (!this.busy) this.aborted = new AbortController();
+    if (!this.mainWorking) this.aborted = new AbortController();
     if (!await this.readAccount()) throw new ShellError("codex-requires-login-no-fallback");
     await this.openThread(this.selectedMode);
     return this.sessionId!;
@@ -673,11 +740,11 @@ export class CodexSession implements NativeSession {
   async clearThread(): Promise<void> {
     this.idle();
     if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
-    const previous = { sessionId: this.sessionId, loaded: this.loaded, tokens: this.tokens, context: this.context, pending: this.pendingStartupContext };
+    const previous = { sessionId: this.sessionId, loaded: this.loaded, tokens: this.tokens, context: this.context, pending: this.pendingStartupContext, visible: this.visible };
     this.forgetThread();
     try { await this.ensureThread(); }
     catch (error) {
-      this.sessionId = previous.sessionId; this.loaded = previous.loaded; this.tokens = previous.tokens; this.context = previous.context; this.pendingStartupContext = previous.pending;
+      this.sessionId = previous.sessionId; this.loaded = previous.loaded; this.tokens = previous.tokens; this.context = previous.context; this.pendingStartupContext = previous.pending; this.visible = previous.visible;
       throw error;
     }
   }
@@ -781,8 +848,11 @@ export class CodexSession implements NativeSession {
     await this.rpc.request("thread/backgroundTerminals/clean", { threadId: this.sessionId });
     return true;
   }
-  /** The last answer Codex completed (Markdown), for `/copy`; undefined before the first one. */
-  lastResponse(): string | undefined { return this.lastAgentMessage; }
+  /** The last answer Codex completed (Markdown), for `/copy`; undefined before the first one. With a detour on screen it is that conversation's last answer. */
+  lastResponse(): string | undefined {
+    if (this.detourState) return this.detourState.cells.filter(cell => cell.role === "assistant").at(-1)?.text;
+    return this.lastAgentMessage;
+  }
   /**
    * `/review` → `review/start` with `{ threadId, target, delivery: "inline" }` (`v2/ReviewStartParams.ts`,
    * `app_server_session.rs` `review_start`). The review runs as a turn on the conversation (opened first when
@@ -823,6 +893,290 @@ export class CodexSession implements NativeSession {
     this.sessionId = forkId; this.loaded = true; this.model = result.model ?? this.model; this.threadChanged(result.thread.path);
     this.tokens = this.t.tokensNotReported; this.context = undefined; this.pendingStartupContext = undefined; this.proposedPlan = undefined;
     this.showHistory(result.thread.turns ?? []);
+  }
+  /**
+   * `/recap`, the way Codex's `request_recap` does it (`app/recap.rs`, `temporary_structured_request.rs`): the visible history is turned into Codex's prompt; then
+   * `config/read` (to learn every MCP server), `thread/start` for an ephemeral thread that is read-only, has no tools, environment or MCP server and is never saved
+   * (so `/resume` cannot list it), `turn/start` with the prompt and the schema of the answer, and — in every case, also when anything fails or the time is up —
+   * `thread/unsubscribe`. Each step has Codex's 30 seconds. The temporary thread's notifications are read here and nowhere else. The conversation itself is not touched.
+   */
+  async recap(): Promise<NativeRecapResult> {
+    if (this.recapRun) return { status: "busy" };
+    const history = recapHistory(this.visible);
+    if (!history) return { status: "empty" };
+    const run: RecapRun = { queue: [] };
+    this.recapRun = run;
+    const limit = this.recapTimeoutMs;
+    // The transport closes the whole connection when a request outlives its own wait, so that wait must be longer than the one Shell applies here.
+    const wait = limit + 5000;
+    let result: NativeRecapResult = { status: "failed" };
+    try {
+      const started = await withinTime(limit, (async () => {
+        const read = await this.rpc.request("config/read", { includeLayers: false, cwd: this.cwd }, wait);
+        return this.rpc.request("thread/start", {
+          model: this.model, modelProvider: "openai", cwd: this.cwd, approvalPolicy: "never", sandbox: "read-only", runtimeWorkspaceRoots: [], ephemeral: true,
+          threadSource: "system", environments: [], dynamicTools: [], selectedCapabilityRoots: [], config: temporaryThreadConfig(Object.keys(read?.config?.mcp_servers ?? {})),
+        }, wait);
+      })());
+      run.threadId = String(started.thread.id);
+      if (started.sandbox?.type !== "readOnly") throw new Error("the temporary thread did not start read-only");
+      const response = await withinTime(limit, (async () => {
+        const turn = await this.rpc.request("turn/start", {
+          threadId: run.threadId, input: [{ type: "text", text: recapPrompt(history), text_elements: [] }], outputSchema: recapOutputSchema(),
+        }, wait);
+        run.turnId = String(turn.turn.id);
+        return this.recapResponse(run);
+      })());
+      const recap = parseRecap(response);
+      if (recap) result = { status: "ok", ...recap };
+    } catch { /* one answer for every failure, like Codex's «Could not generate a recap» */ }
+    if (run.threadId) await withinTime(limit, this.rpc.request("thread/unsubscribe", { threadId: run.threadId }, wait)).catch(() => {});
+    this.recapRun = undefined;
+    return result;
+  }
+  /**
+   * The model's answer to the recap turn (`collect_structured_response`): the last `agentMessage` completed in that turn, delivered when the turn completes — which must
+   * be `completed`, with an answer of at most 8 KiB. Notifications that arrive before `turn/start` has answered wait in the queue.
+   */
+  private recapResponse(run: RecapRun): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      let response: string | undefined;
+      const read = () => {
+        if (run.turnId === undefined) return;
+        for (let next = run.queue.shift(); next; next = run.queue.shift()) {
+          const { method, params } = next;
+          if (method === "item/completed" && params.turnId === run.turnId && params.item?.type === "agentMessage") {
+            if (Buffer.byteLength(String(params.item.text)) > RECAP_RESPONSE_MAX_BYTES) { reject(new Error("the recap answer is too large")); return; }
+            response = String(params.item.text);
+          } else if (method === "turn/completed" && params.turn?.id === run.turnId) {
+            if (params.turn.status !== "completed") reject(new Error(`the recap turn ended ${params.turn.status}`));
+            else if (response === undefined) reject(new Error("the recap turn completed without an answer"));
+            else resolve(response);
+            return;
+          }
+        }
+      };
+      run.wake = read;
+      read();
+    });
+  }
+  /**
+   * `/side` and `/btw`, the way Codex's `handle_start_side` does it (`app/side.rs`): `config/read` (the developer instructions the thread already has), `thread/fork` of the
+   * conversation as an ephemeral thread of the `user` source that skips the copied turns (`excludeTurns`, sent again without it when the server does not know it) and carries
+   * Codex's side instructions after the existing ones, and `thread/inject_items` with Codex's boundary — in that order. Only then does the screen switch (`detourStart`);
+   * a fork that cannot be prepared is detached again. Nothing of the main conversation changes.
+   */
+  async startSide(): Promise<NativeSideStart> {
+    if (this.detourState) return { status: "already-open" };
+    if (this.reviewing) return { status: "reviewing" };
+    if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
+    const parent = this.sessionId;
+    if (!parent) return { status: "no-conversation" };
+    const reason = (error: unknown) => error instanceof Error ? error.message : String(error);
+    let existing: string | null = null;
+    try { existing = (await this.rpc.request("config/read", { includeLayers: false, cwd: this.cwd }))?.config?.developer_instructions ?? null; } catch { /* Codex reads its config best-effort */ }
+    const params = { threadId: parent, ...this.threadConfig(this.selectedMode), developerInstructions: sideDeveloperInstructions(existing), ephemeral: true, threadSource: "user" };
+    let forked: any;
+    try {
+      try { forked = await this.rpc.request("thread/fork", { ...params, excludeTurns: true }); }
+      catch (error) {
+        if (!isHistoryPaginationUnsupported(reason(error))) throw error;
+        forked = await this.rpc.request("thread/fork", params);
+      }
+    } catch (error) {
+      return sideStartRefusal(reason(error)) ? { status: "no-conversation" } : { status: "failed", stage: "start", error: reason(error) };
+    }
+    const threadId = String(forked.thread.id);
+    try { await this.rpc.request("thread/inject_items", { threadId, items: [sideBoundaryItem()] }); }
+    catch (error) {
+      await this.rpc.request("thread/unsubscribe", { threadId }).catch(() => {});
+      return { status: "failed", stage: "prepare", error: reason(error) };
+    }
+    this.detourState = { kind: "side", threadId, busy: false, aborted: new AbortController(), streamed: new Set(), items: new Map(), cells: [] };
+    this.rawEmit({ type: "detourStart", text: "" });
+    return { status: "started" };
+  }
+  /** The conversation on screen when it is not the main one, for the screen's fixed line and for deciding what a message or a command does. */
+  detour(): NativeDetour | undefined {
+    const detour = this.detourState;
+    if (!detour) return undefined;
+    return { kind: detour.kind, ...(detour.name ? { name: detour.name } : {}), readOnly: detour.kind === "agent", ...(this.heldApprovals > 0 ? { mainNeedsApproval: true } : {}) };
+  }
+  /**
+   * Goes back to the main conversation at once, like Codex's Ctrl+C on a side conversation (`discard_side_thread_in_background`): the view returns (`detourEnd`), what the
+   * main conversation said meanwhile is told in order, and the permission questions it held are asked. A side conversation is then cleaned up — `turn/interrupt` when its
+   * turn is running and `thread/unsubscribe` — and if that fails the person is still back; a subagent that was watched is only left, still running.
+   */
+  async leaveDetour(): Promise<void> {
+    const detour = this.detourState;
+    if (!detour) return;
+    this.detourState = undefined;
+    detour.aborted.abort();
+    detour.finish?.();
+    this.rawEmit({ type: "detourEnd", text: "" });
+    const parked = this.parked; this.parked = [];
+    for (const event of parked) this.rawEmit(event);
+    this.mainReturned?.release(); this.mainReturned = undefined;
+    if (detour.kind !== "side") return;
+    if (detour.turnId) await this.rpc.request("turn/interrupt", { threadId: detour.threadId, turnId: detour.turnId }, INTERRUPT_TIMEOUT_MS).catch(() => {});
+    await this.rpc.request("thread/unsubscribe", { threadId: detour.threadId }).catch(() => {});
+  }
+  /** A permission question of the main thread that arrives while a detour is on screen waits here until `leaveDetour`; the side header says the main thread needs approval. */
+  private async holdForMainThread(): Promise<void> {
+    if (!this.mainReturned) {
+      let release!: () => void;
+      this.mainReturned = { promise: new Promise<void>(resolve => { release = resolve; }), release };
+    }
+    this.heldApprovals++;
+    this.rawEmit({ type: "status", text: "" });
+    try { await this.mainReturned.promise; } finally { this.heldApprovals--; }
+  }
+  /**
+   * What the person writes while a side conversation is on screen is a turn of the side thread (`turn/start` with the same model, effort and work mode as the main one,
+   * as Codex's `submit_user_message_as_plain_user_turn` sends it). A watched subagent takes nothing: it is read only.
+   */
+  private async sendInDetour(text: string): Promise<void> {
+    const detour = this.detourState!;
+    if (detour.kind === "agent") throw new ShellError("codex-agent-read-only");
+    if (!text.trim()) return;
+    if (detour.busy) throw new ShellError("codex-turn-busy");
+    if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
+    detour.busy = true; detour.aborted = new AbortController(); detour.streamed.clear(); detour.items.clear();
+    try {
+      const finished = new Promise<void>((resolve, reject) => { detour.finish = error => error ? reject(error) : resolve(); });
+      void finished.catch(() => {});
+      detour.cells.push({ role: "user", text });
+      const collaboration = this.collaborationPayload();
+      const result = await this.rpc.request("turn/start", {
+        threadId: detour.threadId, input: [{ type: "text", text }, ...await this.skillItems(text)], ...this.turnSettings(this.selectedMode),
+        ...(collaboration ? { collaborationMode: collaboration } : {}),
+      });
+      detour.turnId = result.turn.id;
+      await finished;
+    } finally { detour.busy = false; detour.turnId = undefined; detour.finish = undefined; detour.aborted.abort(); }
+  }
+  /** `/f614:stop` on a side conversation: `turn/interrupt` for its turn. If Codex cannot, the turn is over on Shell's side and the person is told once, as for the main one. */
+  private async cancelSideTurn(detour: DetourState): Promise<CancelOutcome | void> {
+    if (!detour.turnId) return;
+    try {
+      await this.rpc.request("turn/interrupt", { threadId: detour.threadId, turnId: detour.turnId }, INTERRUPT_TIMEOUT_MS);
+      return "requested";
+    } catch (error) {
+      const timedOut = isRequestTimeout(error);
+      this.rawEmit({ type: "text", text: timedOut ? this.t.stopNoAnswer : this.t.stopNoActiveTurn });
+      detour.finish?.();
+      return timedOut ? "no-answer" : "no-active-turn";
+    }
+  }
+  /** Whether Codex's subagents feature (`multi_agent`, on by default) is on: only Codex saying it is off counts, a list without it or one that cannot be read does not. */
+  private async subagentsEnabled(): Promise<boolean> {
+    try { return (await this.experimentalFeatures()).find(feature => feature.name === "multi_agent")?.enabled ?? true; } catch { return true; }
+  }
+  /** A thread of the protocol as a candidate subagent, with its first message cleaned of Shell's memory block. */
+  private candidate(thread: any): SubagentThread { return toSubagentThread(thread, withoutMemoryBlock(String(thread?.preview ?? "")).trim()); }
+  /**
+   * `/subagents`, the search Codex's picker does: `thread/loaded/list` and a `thread/read` (no turns) of each loaded thread, keeping the descendants of the conversation
+   * (`backfill_loaded_subagent_threads`), and `thread/list` with `sourceKinds: ["subAgentThreadSpawn"]` and the conversation as `ancestorThreadId`, page after page
+   * (`refresh_agent_picker_threads`), for the saved ones. The main conversation comes first, the rest in the order they were spawned. A call that fails only leaves out what
+   * it would have added, as in Codex.
+   */
+  async subagents(): Promise<NativeSubagentList> {
+    const enabled = await this.subagentsEnabled();
+    const primary = this.sessionId;
+    if (!primary) return { enabled, agents: [] };
+    const found = new Map<string, SubagentThread>();
+    try {
+      const loaded: string[] = (await this.rpc.request("thread/loaded/list", {}))?.data ?? [];
+      const threads: SubagentThread[] = [];
+      for (const id of loaded) {
+        if (id === primary) continue;
+        try { threads.push(this.candidate((await this.rpc.request("thread/read", { threadId: id, includeTurns: false })).thread)); } catch { /* one thread that cannot be read is left out */ }
+      }
+      for (const thread of descendantsOf(primary, threads)) found.set(thread.id, thread);
+    } catch { /* without the loaded list the saved ones still count */ }
+    try {
+      const seen = new Set<string | undefined>();
+      let cursor: string | undefined;
+      // Codex reads pages of 100 up to 1 000 threads and stops when a cursor comes back that it already used.
+      while (found.size < 1000 && !seen.has(cursor)) {
+        seen.add(cursor);
+        const page = await this.rpc.request("thread/list", {
+          limit: 100, sortDirection: "desc", modelProviders: [], sourceKinds: ["subAgentThreadSpawn"], useStateDbOnly: true, ancestorThreadId: primary, ...(cursor ? { cursor } : {}),
+        });
+        for (const thread of page?.data ?? []) if (!found.has(String(thread.id))) found.set(String(thread.id), this.candidate(thread));
+        cursor = page?.nextCursor ?? undefined;
+        if (!cursor) break;
+      }
+    } catch { /* what was read stays */ }
+    const onScreen = this.detourState?.threadId;
+    const subagents = [...found.values()].sort((a, b) => a.createdAt - b.createdAt).map((thread): NativeSubagent => ({
+      id: thread.id, name: subagentName(thread), ...(thread.preview ? { preview: thread.preview } : {}), main: false, state: thread.state, current: thread.id === onScreen,
+    }));
+    return { enabled, agents: [{ id: primary, name: "", main: true, state: this.mainWorking ? "running" : "idle", current: onScreen === undefined }, ...subagents] };
+  }
+  /** «Yes, enable» in the question Codex asks when subagents are off: `features.multi_agent` with `config/batchWrite` (`build_feature_enabled_edit`, `write_config_batch`), saved in the person's Codex configuration for new conversations. */
+  async enableSubagents(): Promise<NativeConfigWrite> {
+    return configWrite(await this.rpc.request("config/batchWrite", { edits: [replaceEdit("features.multi_agent", true)], reloadUserConfig: true }));
+  }
+  /**
+   * Choosing a subagent in the picker: its conversation is read (`thread/read` with its turns, or without them when the server has none to give) and the screen switches to
+   * it (`detourStart`, named after the subagent) before its history is told; from then on its own events are shown live. It is read only and nothing is stopped when the
+   * person leaves. Choosing another one first returns to the main view. An error other than "no turns to give" is the caller's to show.
+   */
+  async watchSubagent(id: string): Promise<void> {
+    if (this.detourState) await this.leaveDetour();
+    let thread: any;
+    try { thread = (await this.rpc.request("thread/read", { threadId: id, includeTurns: true })).thread; }
+    catch (error) {
+      if (!canReadWithoutTurns(error instanceof Error ? error.message : String(error))) throw error;
+      thread = (await this.rpc.request("thread/read", { threadId: id, includeTurns: false })).thread;
+    }
+    const info = this.candidate(thread);
+    const name = subagentName(info) || info.preview;
+    const detour: DetourState = { kind: "agent", threadId: id, ...(name ? { name } : {}), busy: false, aborted: new AbortController(), streamed: new Set(), items: new Map(), cells: [] };
+    this.detourState = detour;
+    this.rawEmit({ type: "detourStart", text: name });
+    for (const turn of thread.turns ?? []) for (const item of turn.items ?? []) {
+      if (item.type === "agentMessage") { detour.cells.push({ role: "assistant", text: String(item.text) }); this.rawEmit({ type: "text", text: item.text, at: secondsToMilliseconds(turn.completedAt) }); }
+      if (item.type === "userMessage") {
+        const written = (item.content ?? []).filter((part: any) => part?.type === "text").map((part: any) => withoutMemoryBlock(String(part.text))).filter(Boolean).join("\n");
+        if (written) { detour.cells.push({ role: "user", text: written }); this.rawEmit({ type: "text", text: `You: ${written}`, at: secondsToMilliseconds(turn.startedAt) }); }
+      }
+    }
+  }
+  /** The line the chat shows when Codex starts a tool call (`Tool: …`), or nothing for an item that is not one. */
+  private toolText(item: any): string | undefined {
+    if (item.type === "mcpToolCall") {
+      const label = engramToolLabel(item.server, item.tool) ?? `${item.server}: ${item.tool}`;
+      return `Tool: ${label}\n${JSON.stringify(item.arguments ?? {}, null, 2)}`;
+    }
+    return ["commandExecution", "fileChange"].includes(item.type) ? `Tool: ${item.type}\n${item.command ?? ""}` : undefined;
+  }
+  /**
+   * What the detour's thread sends: its turn, the words it streams and completes, its tool calls and its errors go to the screen at once; nothing of it touches the main
+   * conversation's turn, items or answers. (The token counts, quotas and the rest belong to the account and are read wherever they arrive.)
+   */
+  private detourNotification(detour: DetourState, method: string, params: any): void {
+    if (method === "turn/started") detour.turnId = params.turn.id;
+    if (method === "item/agentMessage/delta") { detour.streamed.add(params.itemId); this.rawEmit({ type: "delta", id: params.itemId, text: params.delta }); }
+    if (method === "item/started") {
+      detour.items.set(params.item.id, params.item);
+      const tool = this.toolText(params.item);
+      if (tool) this.rawEmit({ type: "text", text: tool });
+    }
+    if (method === "item/completed" && params.item.type === "agentMessage") {
+      detour.cells.push({ role: "assistant", text: String(params.item.text) });
+      if (!detour.streamed.has(params.item.id)) this.rawEmit({ type: "text", text: params.item.text });
+    }
+    if (method === "item/completed" && params.item.type === "userMessage" && detour.kind === "agent") {
+      const written = (params.item.content ?? []).filter((part: any) => part?.type === "text").map((part: any) => withoutMemoryBlock(String(part.text))).filter(Boolean).join("\n");
+      if (written) { detour.cells.push({ role: "user", text: written }); this.rawEmit({ type: "text", text: `You: ${written}` }); }
+    }
+    if (method === "turn/completed") {
+      if (detour.turnId && params.turn.id !== detour.turnId) return;
+      detour.finish?.(params.turn.status === "failed" ? (params.turn.error?.message ? new Error(params.turn.error.message) : new ShellError("codex-turn-failed")) : undefined);
+    }
+    if (method === "error") this.rawEmit({ type: "text", text: `Codex: ${params.error?.message ?? this.t.engineErrorFallback}` });
   }
   /** `/apps` → `app/list` as Codex's screen asks it (`v2/AppsListParams.ts`, `chatwidget/connectors.rs`): a fresh list, scoped to the open thread. */
   async apps(): Promise<NativeApp[]> {
@@ -1022,6 +1376,11 @@ export class CodexSession implements NativeSession {
   }
   /** `/export`: the whole conversation (`thread/read` with its turns) in Codex's Markdown transcript format. */
   async exportTranscript(): Promise<string> {
+    // A side conversation is temporary and Codex cannot read its turns back (`thread/read` refuses ephemeral threads), so it is exported from what was said in it.
+    if (this.detourState) {
+      return markdownTranscript([{ items: this.detourState.cells.map(cell => cell.role === "user"
+        ? { type: "userMessage", content: [{ type: "text", text: cell.text }] } : { type: "agentMessage", text: cell.text }) }]);
+    }
     if (!this.sessionId) throw new Error(this.native.exportNoConversation);
     const { thread } = await this.rpc.request("thread/read", { threadId: this.sessionId, includeTurns: true });
     return markdownTranscript(thread?.turns ?? []);
@@ -1033,6 +1392,7 @@ export class CodexSession implements NativeSession {
   }
   /** `/f614:stop`: cancels a login in progress, or asks Codex to interrupt the running turn — see `interruptTurn` for how it always frees the session. */
   async cancel(): Promise<CancelOutcome | void> {
+    if (this.detourState?.kind === "side") return this.cancelSideTurn(this.detourState);
     this.aborted.abort();
     if (this.loginId) {
       try { await this.rpc.request("account/login/cancel", { loginId: this.loginId }); }
@@ -1080,6 +1440,10 @@ export class CodexSession implements NativeSession {
     }
     if (method === "account/rateLimits/updated") { this.updateQuotas(params); this.emit({ type: "status", text: "" }); return; }
     if (method === "externalAgentConfig/import/completed") { this.importFinished(params); return; }
+    // The temporary thread of `/recap` is hidden work: what it streams is read by the recap alone and never reaches the conversation.
+    if (this.recapRun?.threadId !== undefined && params.threadId === this.recapRun.threadId) { this.recapRun.queue.push({ method, params }); this.recapRun.wake?.(); return; }
+    // The detour's thread (a side conversation or a watched subagent) has its own turn, items and answers: its events are told apart from the main conversation's by `threadId`.
+    if (this.detourState && params.threadId === this.detourState.threadId) { this.detourNotification(this.detourState, method, params); return; }
     if (params.threadId !== this.sessionId) return;
     // During a review the turn to follow is the one `review/start` answered with: the `turn/started` that arrives belongs to the reviewing sub-agent.
     if (method === "turn/started" && !this.reviewing) this.turnId = params.turn.id;
@@ -1092,17 +1456,16 @@ export class CodexSession implements NativeSession {
     if (method === "item/started") {
       this.items.set(params.item.id, params.item);
       if (params.item.type === "enteredReviewMode") this.emit({ type: "text", text: this.native.reviewStarted({ hint: String(params.item.review ?? "") }) });
-      else if (params.item.type === "mcpToolCall") {
-        const label = engramToolLabel(params.item.server, params.item.tool) ?? `${params.item.server}: ${params.item.tool}`;
-        this.emit({ type: "text", text: `Tool: ${label}\n${JSON.stringify(params.item.arguments ?? {}, null, 2)}` });
-      } else if (["commandExecution", "fileChange"].includes(params.item.type)) {
+      else if (params.item.type === "mcpToolCall") this.emit({ type: "text", text: this.toolText(params.item)! });
+      else if (["commandExecution", "fileChange"].includes(params.item.type)) {
         if (params.item.type === "commandExecution" && typeof params.item.command === "string") this.runningCommands.set(params.item.id, params.item.command);
-        this.emit({ type: "text", text: `Tool: ${params.item.type}\n${params.item.command ?? ""}` });
+        this.emit({ type: "text", text: this.toolText(params.item)! });
       }
     }
     if (method === "item/completed") this.runningCommands.delete(params.item.id);
     if (method === "item/completed" && params.item.type === "agentMessage") {
       this.lastAgentMessage = params.item.text;
+      this.visible.push({ role: "assistant", text: String(params.item.text) });
       if (!this.streamed.has(params.item.id)) this.emit({ type: "text", text: params.item.text });
     }
     if (method === "item/completed" && params.item.type === "plan" && String(params.item.text ?? "").trim()) this.proposedPlan = String(params.item.text);
@@ -1133,13 +1496,20 @@ export class CodexSession implements NativeSession {
     if (method === "error") this.emit({ type: "text", text: `Codex: ${params.error?.message ?? this.t.engineErrorFallback}` });
   }
   private async request(method: string, params: any): Promise<any> {
-    const scoped = this.busy && params.threadId === this.sessionId && (!this.turnId || params.turnId === this.turnId);
     if (["item/commandExecution/requestApproval", "item/fileChange/requestApproval"].includes(method)) {
-      const item = this.items.get(params.itemId);
+      // A question of the main thread while a detour is on screen would be asked about something the person cannot see: it waits until they are back.
+      if (this.detourState && params.threadId !== this.detourState.threadId && params.threadId === this.sessionId) await this.holdForMainThread();
+      // A question of the side thread is asked while its own turn runs, with its own abort signal; the main thread's, with the main turn's.
+      const detour = this.detourState && params.threadId === this.detourState.threadId ? this.detourState : undefined;
+      const item = (detour ? detour.items : this.items).get(params.itemId);
+      const signal = (detour ? detour.aborted : this.aborted).signal;
+      const scoped = detour
+        ? detour.kind === "side" && detour.busy && (!detour.turnId || params.turnId === detour.turnId)
+        : this.mainWorking && params.threadId === this.sessionId && (!this.turnId || params.turnId === this.turnId);
       // The size guard measures the whole event, as it always did (see `permissionTooLarge`); what the person reads is the plain-words text.
       const size = JSON.stringify({ ...params, item }, null, 2).length;
-      const allowed = scoped && size <= 20000 && await this.approve(formatCodexPermission(method, params, item, this.locale), this.aborted.signal);
-      return { decision: allowed && !this.aborted.signal.aborted ? "accept" : "decline" };
+      const allowed = scoped && size <= 20000 && await this.approve(formatCodexPermission(method, params, item, this.locale), signal);
+      return { decision: allowed && !signal.aborted ? "accept" : "decline" };
     }
     if (method === "item/permissions/requestApproval") return { permissions: {}, scope: "turn" };
     if (method === "mcpServer/elicitation/request") return { action: "decline", content: null };
