@@ -1,4 +1,5 @@
-import { Markdown, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
 export const paint = (rgb: string) => (text: string) => `\x1b[38;2;${rgb}m${text}\x1b[39m`;
 export const accent = paint("70;222;224");
 export const foreground = paint("220;230;235");
@@ -17,6 +18,21 @@ export const fit = (text: string, width: number) => {
   const clipped = truncateToWidth(text, Math.max(0, width), "…");
   return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
 };
+/**
+ * A panel whose rows keep their own layout (columns, hanging indents): `lines` is asked, every time it is drawn, for the rows that fit the width the text really has — the box's
+ * width minus the two columns of side margin `ChatText` uses — so a description continues under its own column at the width the screen has, not at a guessed one. A row that
+ * still does not fit (one unbreakable word) is broken by the terminal-safe fallback rather than overflowing. It keeps `ChatText`'s blank line above and below.
+ */
+export class PanelText implements Component {
+  private readonly lines: (width: number) => string[];
+  constructor(lines: (width: number) => string[]) { this.lines = lines; }
+  invalidate(): void {}
+  render(width: number): string[] {
+    const inner = Math.max(1, width - 4);
+    const rows = this.lines(inner).flatMap(line => visibleWidth(line) > inner ? wrapTextWithAnsi(line, inner) : [line]);
+    return ["", ...rows.map(line => `  ${foreground(line)}`), ""];
+  }
+}
 export class ChatText extends Markdown {
   /** `baseColor` lets an error message read as red at a glance instead of blending into normal chat text. */
   constructor(text: string, baseColor: (text: string) => string = foreground) {

@@ -210,7 +210,13 @@ export interface Catalog {
     engineSpecifiedTwice: string;
   };
   logout: {
-    confirmPrompt: (params: { engine: string; loginCommand: string }) => string;
+    /** Title of the question that disconnects: it names the assistant. */
+    confirmTitle: (params: { engine: string }) => string;
+    /** Body of that question: what is left untouched and the command that reconnects. */
+    confirmBody: (params: { loginCommand: string }) => string;
+    /** The marked row («No»: everything stays as it is) and the row that disconnects. */
+    stay: string;
+    disconnect: string;
     disconnectFailed: string;
   };
   /**
@@ -368,7 +374,8 @@ export interface Catalog {
     labelApiKey: string; labelProvider: string; labelModel: string; labelPermissionMode: string; labelSettingSources: string; labelMcpServers: string;
     apiKeyFromEnvironment: string; apiKeyFromHelper: string; apiKeyFromLogin: string; apiKeyNone: string;
     settingSourceUser: string; settingSourceProject: string; settingSourceLocal: string;
-    mcpNone: string; mcpConnected: string; mcpFailed: string; mcpNeedsSignIn: string; mcpConnecting: string; mcpDisabled: string;
+    /** Names of the groups the MCP servers of `/status` come in, one per state. */
+    mcpNone: string; mcpGroupConnected: string; mcpGroupConnecting: string; mcpGroupNeedsSignIn: string; mcpGroupFailed: string; mcpGroupDisabled: string; mcpGroupOther: string;
     statusAfterFirstMessage: string;
     helpTitle: string; helpCommands: string; helpShellCommands: string; helpShortcuts: string;
     keySend: string; keyNewLine: string; keyCycleModes: string; keyAcceptCommand: string; keyCloseMenu: string; keyLeave: string;

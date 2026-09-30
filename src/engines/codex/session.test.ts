@@ -29,10 +29,10 @@ test("manual quota refresh reads account limits without starting a model turn", 
 test("Codex logout is local and reconnect reuses the untouched native account", async () => {
   for (const allow of [false, true]) {
     const rpc = codexFixture(); const events: any[] = [];
-    const session = new CodexSession(rpc, "/project", e => events.push(e), async () => allow);
+    const session = new CodexSession(rpc, "/project", e => events.push(e), async () => { throw new Error("logout must not ask with the permission question"); });
     await session.initialize();
     const before = rpc.calls.length;
-    await session.logout();
+    await session.logout(async () => allow);
     expect(rpc.calls.length).toBe(before);
     expect(rpc.calls.some(c => c.method === "account/login/start")).toBe(false);
     expect(session.status().join(" ").includes("24%")).toBe(!allow);
@@ -61,15 +61,16 @@ test("Codex visual state clears reported model and context after local logout", 
   rpc.onNotification("thread/tokenUsage/updated", { tokenUsage: { total: { inputTokens: 10_000, cachedInputTokens: 2_000, outputTokens: 1_000 }, last: { totalTokens: 18_000 }, modelContextWindow: 128_000 } });
   expect(session.visual()).toMatchObject({ account: "connected", provider: "Codex", model: "gpt-5.6", reasoning: "medium", context: { used: 18_000, window: 128_000 } });
 
-  await session.logout();
+  await session.logout(async () => true);
   expect(session.visual()).toEqual({ account: "disconnected", provider: "Codex" });
 });
 
 test("Codex logout can be cancelled before consent and is blocked during a turn", async () => {
   const rpc = codexFixture();
-  const session = new CodexSession(rpc, "/project", () => {}, async (_text, signal) => new Promise(resolve => signal.addEventListener("abort", () => resolve(false), { once: true })));
-  const pending = session.logout();
-  await expect(session.logout()).rejects.toThrow("active");
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  const confirm = (_question: unknown, signal: AbortSignal) => new Promise<boolean>(resolve => signal.addEventListener("abort", () => resolve(false), { once: true }));
+  const pending = session.logout(confirm);
+  await expect(session.logout(confirm)).rejects.toThrow("active");
   await session.cancel(); await pending;
   expect(rpc.calls.some(c => c.method === "account/logout")).toBe(false);
   expect(session.busy).toBe(false);
@@ -560,7 +561,7 @@ test("Codex's own status/login narration renders in the session's own locale, no
   const session = new CodexSession(rpc, "/project", event => events.push(event), async () => true, undefined, undefined, "es");
   await session.initialize();
   expect(session.status()[0]).toContain("Cuenta de ChatGPT");
-  await session.logout();
+  await session.logout(async () => true);
   expect(events.some(event => event.type === "text" && event.text === "Se desconectó localmente de Codex en esta sesión de Shell. Tu cuenta nativa y otras aplicaciones no cambiaron. Usa /f614:login para reconectar.")).toBe(true);
 });
 

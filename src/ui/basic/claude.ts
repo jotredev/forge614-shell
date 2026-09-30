@@ -12,7 +12,7 @@ import { claudeHelpLines, claudeStatusLines } from "../../engines/claude/panels.
 import type { ClaudeStatusInfo } from "../../engines/claude/panels.ts";
 import { emptyTelemetry, telemetryLines, updateTelemetry } from "../../engines/claude/telemetry.ts";
 import { createComposer } from "./composer.ts";
-import { askPermission, askQuit } from "./permission-choice.ts";
+import { askPermission, askQuit, askShellQuestion } from "./permission-choice.ts";
 import { formatClaudePermission } from "../../engines/permission-text.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
@@ -28,7 +28,7 @@ import { effortDescription, effortLabel, isDisplayableUsage } from "./metrics.ts
 import { ActivityCard, chatMessage } from "./transcript.ts";
 import { lineDiff } from "./diff.ts";
 import { engramToolLabel, parseClaudeMcpToolName } from "../../engines/mcp-labels.ts";
-import { ChatText, danger } from "./theme.ts";
+import { ChatText, PanelText, danger } from "./theme.ts";
 import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
 import { workingStatus } from "./duration.ts";
 import { ToolTracker } from "./tool-tracker.ts";
@@ -184,6 +184,11 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     transcript.addChild(component);
     tui.requestRender();
     return component;
+  };
+  /** A panel with columns and indents (`/status`, `/help`): its rows are made for the width the chat really has each time it is drawn, so a long line continues under its own column. */
+  const writePanel = (lines: (width: number) => string[]): void => {
+    transcript.addChild(new PanelText(width => lines(width).map(clean)));
+    tui.requestRender();
   };
   /** Red, so an error reads as an error at a glance instead of blending into a normal reply. */
   const writeError = (text: string): ChatText => {
@@ -389,8 +394,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     // Shell's own session telemetry.
     if (name === "/f614:status") { write([...telemetryLines(telemetry, locale), memorySourceLine(await session.memoryDeliveredByAssistant(), locale)].join("\n")); return; }
     // Claude Code's own `/status` and `/help`, answered with what Shell has (see `claudeStatusLines` and `claudeHelpLines`); like Claude Code's, they run also while a turn does.
-    if (name === "/status") { write(claudeStatusLines(await statusInfo(), locale).join("\n")); return; }
-    if (name === "/help") { write(claudeHelpLines(claudeMenuCommands(session.commands, t), locale).join("\n")); return; }
+    if (name === "/status") { const info = await statusInfo(); writePanel(width => claudeStatusLines(info, locale, width)); return; }
+    if (name === "/help") { const rows = claudeMenuCommands(session.commands, t); writePanel(width => claudeHelpLines(rows, locale, width)); return; }
     if (name === "/f614:help" || name === "/f614:commands") {
       if (approvals.length) { write(t.answerPendingPermissionFirst); return; }
       const selected = await input.chooseCommand();
@@ -422,7 +427,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     } else if (name === "/logout") {
       loginAbort = new AbortController();
       try {
-        const done = await confirmedLogout("Claude Code", askApproval, loginAbort.signal,
+        const done = await confirmedLogout("Claude Code", (question, signal) => askShellQuestion(input, question, signal), loginAbort.signal,
           async () => { disconnected = true; accountConnected = false; accountChecked = true; accountUnknown = false; }, locale);
         if (done) {
           // The account goes too, so `/status` does not keep showing the email, organization and plan of the one just disconnected.

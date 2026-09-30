@@ -140,7 +140,10 @@ const es: Catalog = {
     engineSpecifiedTwice: "Especifica --engine solo una vez.",
   },
   logout: {
-    confirmPrompt: ({ engine, loginCommand }) => `¿Desconectar ${engine} solo en esta sesión de Forge614-Shell? Tu cuenta nativa, Orca, otras terminales y los chats guardados no cambiarán. Usa ${loginCommand} aquí para reconectar con tu cuenta existente.`,
+    confirmTitle: ({ engine }) => `¿Desconectar ${engine} de esta Shell?`,
+    confirmBody: ({ loginCommand }) => `Se desconecta solo en esta sesión de Forge614-Shell. Tu cuenta nativa, Orca, otras terminales y los chats guardados no cambiarán. Usa ${loginCommand} aquí para reconectar con tu cuenta existente.`,
+    stay: "No, seguir conectado",
+    disconnect: "Sí, desconectar",
     disconnectFailed: "No se pudo desconectar Shell. No se solicitó ningún cierre de sesión nativo.",
   },
   errors: {
@@ -365,7 +368,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     labelApiKey: "Llave de API", labelProvider: "Proveedor", labelModel: "Modelo", labelPermissionMode: "Modo de permisos", labelSettingSources: "Fuentes de configuración", labelMcpServers: "Servidores MCP",
     apiKeyFromEnvironment: "de ANTHROPIC_API_KEY", apiKeyFromHelper: "de apiKeyHelper", apiKeyFromLogin: "creada con /login", apiKeyNone: "ninguna en uso",
     settingSourceUser: "usuario", settingSourceProject: "proyecto", settingSourceLocal: "local",
-    mcpNone: "ninguno", mcpConnected: "conectado", mcpFailed: "falló", mcpNeedsSignIn: "necesita iniciar sesión", mcpConnecting: "conectando", mcpDisabled: "desactivado",
+    mcpNone: "ninguno", mcpGroupConnected: "Conectados", mcpGroupConnecting: "Conectando", mcpGroupNeedsSignIn: "Necesitan iniciar sesión", mcpGroupFailed: "Fallaron", mcpGroupDisabled: "Desactivados", mcpGroupOther: "Otros",
     statusAfterFirstMessage: "Algunos datos (versión, sesión y servidores MCP) aparecen tras el primer mensaje.",
     helpTitle: "Ayuda de Claude Code",
     helpCommands: "Comandos (escribe / para abrir el menú):",
