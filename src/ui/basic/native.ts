@@ -195,7 +195,6 @@ export async function runNativeUI(
     if (!item) return;
     transcript.addChild(new ActivityCard(t.permissionRequestedTitle, "", clean(item.description), true));
     tui.requestRender();
-    input.setStatus(t.awaitingPermission);
     void askPermission(input, locale).then(allowed => item.answer(allowed));
   };
   const approve: Approve = (description, signal) => new Promise(resolve => {

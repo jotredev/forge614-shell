@@ -272,27 +272,34 @@ test("the subagent texts are Codex's in English and translated into Spanish", ()
 // ── /agents ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * With the embedded server (the case of Shell) Codex's `/agents` shows «Shared agents unavailable» — «This session isn’t connected to a shared background server.» and
- * the note that starting one would not move this session (`open_agents_overview`). Shell does not start that server, so it says so and offers nothing to start.
+ * With the embedded server (the case of Shell) Codex's `/agents` shows «Shared agents unavailable» — «This session isn’t connected to a shared background server.»
+ * (`open_agents_overview`). Shell does not start that server, so it says so and offers nothing to start. Came out of the third real-account test: Codex's note that
+ * starting one «will not interrupt or move this session» is left out, because Shell does not offer to start it and the line only confused. The exact text is written out.
  */
 for (const locale of both) {
   test(`/agents says the shared agents are unavailable and starts nothing (${locale})`, async () => {
     const nt = getCatalog(locale).codexNative;
     const { handlers, trace } = harness(locale, {});
     await handlers.agents!("");
-    expect(trace.written).toEqual([[nt.agentsUnavailableTitle, nt.agentsUnavailableSubtitle, nt.agentsUnavailableNote, nt.agentsNoServer].join("\n")]);
+    expect(trace.written).toEqual([[nt.agentsUnavailableTitle, nt.agentsUnavailableSubtitle, nt.agentsNoServer].join("\n")]);
+    expect(trace.written[0]).toBe(locale === "en"
+      ? "Shared agents unavailable\nThis session isn’t connected to a shared background server.\nShell does not start that server."
+      : "Agentes compartidos no disponibles\nEsta sesión no está conectada a un servidor compartido en segundo plano.\nShell no inicia ese servidor.");
+    expect(trace.written[0]).not.toMatch(/interrump|interrupt/);
     expect(trace.asked).toEqual([]);
   });
 }
-/** Codex's three lines of «Shared agents unavailable» (`open_agents_overview`), word for word in English and translated into Spanish; Shell's own fourth line exists in both. */
+/** Codex's title and subtitle of «Shared agents unavailable» (`open_agents_overview`), word for word in English and translated into Spanish; Shell's own last line exists in both, and the «starting a server» note no longer does. */
 test("the /agents texts are Codex's in English and translated into Spanish", () => {
   const en = getCatalog("en").codexNative; const es = getCatalog("es").codexNative;
-  expect([en.agentsUnavailableTitle, en.agentsUnavailableSubtitle, en.agentsUnavailableNote]).toEqual([
-    "Shared agents unavailable", "This session isn’t connected to a shared background server.", "Starting a background server will not interrupt or move this session.",
+  expect([en.agentsUnavailableTitle, en.agentsUnavailableSubtitle]).toEqual([
+    "Shared agents unavailable", "This session isn’t connected to a shared background server.",
   ]);
-  expect([es.agentsUnavailableTitle, es.agentsUnavailableSubtitle, es.agentsUnavailableNote]).toEqual([
-    "Agentes compartidos no disponibles", "Esta sesión no está conectada a un servidor compartido en segundo plano.", "Iniciar un servidor en segundo plano no interrumpirá ni moverá esta sesión.",
+  expect([es.agentsUnavailableTitle, es.agentsUnavailableSubtitle]).toEqual([
+    "Agentes compartidos no disponibles", "Esta sesión no está conectada a un servidor compartido en segundo plano.",
   ]);
+  expect("agentsUnavailableNote" in en).toBe(false);
+  expect("agentsUnavailableNote" in es).toBe(false);
   expect(en.agentsNoServer.length).toBeGreaterThan(10);
   expect(es.agentsNoServer).not.toBe(en.agentsNoServer);
 });

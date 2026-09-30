@@ -1,6 +1,7 @@
 import { startNativeProcess } from "../engines/process.ts";
 import { CodexSession } from "../engines/codex/session.ts";
-import type { NativeId } from "../engines/types.ts";
+import type { Approve, Emit, NativeId } from "../engines/types.ts";
+import type { RpcConnection } from "../infrastructure/rpc.ts";
 import { runNativeUI } from "../ui/basic/native.ts";
 import { openLoginBrowser } from "../infrastructure/browser.ts";
 import { getStartupContext } from "../infrastructure/forge614-engram.ts";
@@ -25,17 +26,29 @@ export function codexStartupContext(
   return getStartupContext(directory, { ...options, env: process.env });
 }
 
+/** How the app-server is started: `startNativeProcess`, or a stand-in in a test. */
+export type StartProcess = (id: NativeId, executable: string, cwd: string, env: NodeJS.ProcessEnv, diagnostic: (text: string) => void) => RpcConnection;
+
+/**
+ * Builds the Codex session with everything the composition root gives it: the app-server connection, Engram's memory (with its notices as transcript text), the
+ * once-per-run check of Engines' startup hook, and `start` again as the way to open the app-server anew — what lets a `/f614:stop` that Codex never answers end in
+ * a reconnection that resumes the same conversation. `start` is the process starter, a parameter only so a test can stand in for it. Exported for testing.
+ */
+export function createCodexSession(
+  id: NativeId, executable: string, cwd: string, emit: Emit, approve: Approve, locale: Locale, start: StartProcess = startNativeProcess,
+): CodexSession {
+  const open = () => start(id, executable, cwd, process.env, text => emit({ type: "text", text }));
+  // Engram's notices reach the person as transcript text; the session never knows about them.
+  const startupContext = withStartupNotices(codexStartupContext, text => emit({ type: "text", text }), locale);
+  // Engines' startup hook already delivers the memory to Codex when `verify memory-integration` (and the session's `hooks/list`) says so.
+  return new CodexSession(open(), cwd, emit, approve, openLoginBrowser, startupContext, locale, createMemoryHookProbe("codex", { env: process.env }), open);
+}
+
 // Composition root: views render sessions; they do not construct transports.
 export async function startNativeUI(id: NativeId, executable: string, args: string[], version?: string, locale: Locale = "en"): Promise<void> {
   const t = getCatalog(locale).chat;
   if (args.length) throw new Error(t.nativeCliOptionsUnsupported({ id }));
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error(t.nativeRequiresInteractiveTerminal);
   const cwd = process.cwd();
-  await runNativeUI(id, cwd, (emit, approve) => {
-    const rpc = startNativeProcess(id, executable, cwd, process.env, text => emit({ type: "text", text }));
-    // Engram's notices reach the person as transcript text; the session never knows about them.
-    const startupContext = withStartupNotices(codexStartupContext, text => emit({ type: "text", text }), locale);
-    // Engines' startup hook already delivers the memory to Codex when `verify memory-integration` (and the session's `hooks/list`) says so.
-    return new CodexSession(rpc, cwd, emit, approve, openLoginBrowser, startupContext, locale, createMemoryHookProbe("codex", { env: process.env }));
-  }, undefined, version, locale);
+  await runNativeUI(id, cwd, (emit, approve) => createCodexSession(id, executable, cwd, emit, approve, locale), undefined, version, locale);
 }

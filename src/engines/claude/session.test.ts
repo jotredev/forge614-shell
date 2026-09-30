@@ -533,3 +533,66 @@ test("notices are shown once, and a project-file failure is shown as a problem, 
   await session.send("four", () => {}, async () => true);
   expect(shown.filter(([, isProblem]) => isProblem)).toHaveLength(1);
 });
+
+/**
+ * Claude Code's `/status` needs what the SDK reports. The `init` message of a turn carries the Claude Code version, the source of the API key, the permission mode and the
+ * MCP servers with their state; the session keeps the newest one after the turn ends (the next turn replaces it) so `/status` can show it at any time, also while a turn runs.
+ * Uses a stand-in for the SDK's stream, so no real account or process is involved.
+ */
+test("the session keeps what the SDK's init message reports for /status, and the next turn's replaces it", async () => {
+  let turn = 0;
+  const init = (version: string, servers: { name: string; status: string; source?: string }[]) => ({
+    type: "system", subtype: "init", session_id: `s-${version}`, claude_code_version: version, apiKeySource: "none", model: "claude-test", permissionMode: "default",
+    cwd: "/tmp/project", mcp_servers: servers, slash_commands: [], tools: [], output_style: "default", skills: [], plugins: [],
+  }) as unknown as SDKMessage;
+  const session = new ClaudeSession({ cwd: "/tmp/project", executable: "claude", env: {}, authenticate: async () => {}, run: () => {
+    turn++;
+    return (async function* () {
+      yield turn === 1 ? init("2.1.274", [{ name: "forge614-engram", status: "connected", source: "user" }]) : init("2.1.275", []);
+      yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+    })();
+  } });
+  expect(session.initInfo).toBeUndefined();
+  await session.send("hello", () => {}, async () => false);
+  expect(session.initInfo).toEqual({ version: "2.1.274", apiKeySource: "none", mcpServers: [{ name: "forge614-engram", status: "connected" }] });
+  await session.send("again", () => {}, async () => false);
+  expect(session.initInfo).toEqual({ version: "2.1.275", apiKeySource: "none", mcpServers: [] });
+});
+
+/** An init message missing fields (an older Claude Code) keeps only what it has: no field is made up, and the server list is left out rather than written as empty. */
+test("an init message without version or servers leaves those fields out", async () => {
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: () => (async function* () {
+    yield { type: "system", subtype: "init", session_id: "s" } as unknown as SDKMessage;
+    yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+  })() });
+  await session.send("hello", () => {}, async () => false);
+  expect(session.initInfo).toEqual({});
+});
+
+/**
+ * The account of the catalog handshake (`AccountInfo`: email, organization, plan, provider) is kept whole, not only the email, so `/status` can show it. The handshake
+ * goes through the same injected SDK connection as a turn, which is what lets a test stand in for it.
+ */
+test("initialize keeps the whole account the SDK reports", async () => {
+  const connection = {
+    initializationResult: async () => ({ models: [], commands: [], account: { email: "a@b.c", organization: "Acme", subscriptionType: "max", apiProvider: "firstParty" } }),
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({ rate_limits_available: false }),
+    close() {},
+  };
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, connect: (() => connection) as any });
+  await session.initialize();
+  expect(session.user).toBe("a@b.c");
+  expect(session.account).toEqual({ email: "a@b.c", organization: "Acme", subscriptionType: "max", apiProvider: "firstParty" });
+});
+
+/** The setting sources Shell asks Claude Code to load are one list, the same for the handshake and for every turn, so what `/status` says is what is really requested. */
+test("the turn asks for the same setting sources the session reports", async () => {
+  let received: any;
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: input => {
+    received = input;
+    return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
+  } });
+  await session.send("hello", () => {}, async () => false);
+  expect(received.options.settingSources).toEqual(["user", "project", "local"]);
+  expect(session.settingSources).toEqual(["user", "project", "local"]);
+});

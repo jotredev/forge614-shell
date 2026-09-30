@@ -213,7 +213,7 @@ Uso: forge614-shell [--engine claude|codex]
 
 Cada arranque interactivo pregunta primero por la interfaz visual y luego por el motor de IA instalado.
 Basic está disponible; Full — Próximamente está deshabilitado.
-Las selecciones no se guardan. Incluso con una sola opción disponible se espera confirmación.
+Shell recuerda el último asistente que usaste (aparece resaltado) y el modelo, el razonamiento y el modo de trabajo de cada uno. Aun así pregunta cada vez: incluso con una sola opción disponible se espera confirmación.
 El CLI nativo seleccionado debe estar ya instalado. El inicio de sesión (/login en Claude Code, /f614:login en Codex) usa su flujo oficial de cuenta.
 Shell no guarda credenciales de suscripción ni administra facturación.
 
@@ -236,7 +236,7 @@ Los comandos propios de Shell empiezan con /f614: — /f614:login (Codex), /f614
 Sesiones de Claude: administradas por Claude Code, compartidas con su historial nativo.
 Codex: historial nativo, catálogo de modelos, razonamiento y límites de cuenta reportados.
 El login reutiliza cuentas existentes.
-El modo headless usa permisos nativos, sin aprobaciones interactivas de herramientas.
+Abrir un chat necesita una terminal interactiva; sin ella Shell no arranca.
 
 Se aplican la configuración y los permisos del proyecto del motor seleccionado. Esto no es un sandbox.`,
   },
@@ -261,6 +261,8 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     commandSelectReasoning: "Seleccionar razonamiento",
     commandChatHistory: "Historial de chat",
     commandNewConversation: "Nueva conversación",
+    commandShowStatus: "Muestra versión, sesión, modelo, cuenta y servidores MCP",
+    commandShowHelp: "Muestra la ayuda y los comandos disponibles",
     commandConnectAccount: "Conectar cuenta",
     commandDisconnectLocally: "Desconectar localmente",
     commandSessionDetails: "Detalles de la sesión",
@@ -269,7 +271,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     commandBrowseCommands: "Explorar comandos",
     commandExitShell: "Salir de Shell",
     permissionRequestedTitle: "Permiso solicitado",
-    awaitingPermission: "Esperando permiso",
+    awaitingAnswer: "Esperando tu respuesta",
     noPermissionPending: "No hay ninguna solicitud de permiso pendiente.",
     answerPendingPermissionFirst: "Responde primero el permiso pendiente con el selector.",
     unknownCommand: ({ name }) => `Comando desconocido: ${name}. Usa /f614:help.`,
@@ -327,7 +329,6 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     questionnaireUnsupported: "Claude solicitó un cuestionario. Este primer conector todavía no soporta formularios de cuestionario; pide a Claude que ponga su pregunta en el chat.",
     claudeError: ({ message }) => `Error de Claude: ${message}`,
     finishOrStopFirst: "Termina o usa /f614:stop en el turno actual primero.",
-    commandNotAllowed: ({ name }) => `Claude Code no permite ${name} desde Shell todavía.`,
     workOrAuthActive: "Hay trabajo o autenticación en curso. Usa /f614:quit para salir: antes te pregunta si detiene lo que está en curso. No se detuvo nada.",
     checkingAccount: "Verificando tu cuenta de Claude…",
     connectedExistingAccount: "Conectado a Claude en Shell usando tu cuenta existente. No se necesita un nuevo inicio de sesión.",
@@ -357,6 +358,21 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
   memorySource: {
     byAssistant: "Memoria: la entrega el asistente al arrancar",
     byShell: "Memoria: la pega Shell",
+  },
+  claudePanels: {
+    statusTitle: "Estado de Claude Code",
+    labelVersion: "Versión", labelSession: "Sesión", labelFolder: "Carpeta", labelEmail: "Correo", labelOrganization: "Organización", labelPlan: "Plan",
+    labelApiKey: "Llave de API", labelProvider: "Proveedor", labelModel: "Modelo", labelPermissionMode: "Modo de permisos", labelSettingSources: "Fuentes de configuración", labelMcpServers: "Servidores MCP",
+    apiKeyFromEnvironment: "de ANTHROPIC_API_KEY", apiKeyFromHelper: "de apiKeyHelper", apiKeyFromLogin: "creada con /login", apiKeyNone: "ninguna en uso",
+    settingSourceUser: "usuario", settingSourceProject: "proyecto", settingSourceLocal: "local",
+    mcpNone: "ninguno", mcpConnected: "conectado", mcpFailed: "falló", mcpNeedsSignIn: "necesita iniciar sesión", mcpConnecting: "conectando", mcpDisabled: "desactivado",
+    statusAfterFirstMessage: "Algunos datos (versión, sesión y servidores MCP) aparecen tras el primer mensaje.",
+    helpTitle: "Ayuda de Claude Code",
+    helpCommands: "Comandos (escribe / para abrir el menú):",
+    helpShellCommands: "Los comandos propios de Shell empiezan con /f614: (/f614:commands abre su menú).",
+    helpShortcuts: "Atajos:",
+    keySend: "Enviar el mensaje", keyNewLine: "Nueva línea", keyCycleModes: "Cambiar el modo de permisos", keyAcceptCommand: "Aceptar el comando marcado en el menú /",
+    keyCloseMenu: "Cerrar un menú (en una pregunta de permiso responde «No»)", keyLeave: "Salir de Shell (pregunta antes si hay trabajo en curso; con una pregunta de permiso abierta, contéstala primero)",
   },
   telemetry: {
     notReported: "no reportado",
@@ -510,6 +526,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     questionnaireUnsupported: "Codex solicitó un cuestionario. Pídele que plantee la pregunta en el chat; no se aprobó ninguna opción.",
     engineErrorFallback: "Error del motor",
     stopNoAnswer: "Codex no respondió a la petición de detener, así que Shell dio el turno por terminado de su lado y cerró la conexión. Reinicia Shell para seguir trabajando.",
+    stopReconnected: "Codex no respondió a la petición de detener, así que Shell dio el turno por terminado de su lado y se reconectó con Codex. Tu conversación sigue aquí.",
     stopNoActiveTurn: "Codex dice que no había ningún turno en marcha, así que Shell dio el turno por terminado de su lado.",
     stopNotFinished: "Codex aceptó la petición de detener pero no terminó el turno, así que Shell dio el turno por terminado de su lado.",
     sessionTokensLine: ({ input, cached, output, lastContext, window }) => `Tokens de la sesión: entrada ${input} · en caché ${cached} · salida ${output}\nÚltimo contexto: ${lastContext} / ${window}`,
@@ -866,7 +883,6 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     subagentsEnableFailed: ({ error }) => `No se pudo guardar el ajuste de subagentes: ${error}`,
     agentsUnavailableTitle: "Agentes compartidos no disponibles",
     agentsUnavailableSubtitle: "Esta sesión no está conectada a un servidor compartido en segundo plano.",
-    agentsUnavailableNote: "Iniciar un servidor en segundo plano no interrumpirá ni moverá esta sesión.",
     agentsNoServer: "Shell no inicia ese servidor.",
   },
   permission: {

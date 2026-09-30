@@ -1498,3 +1498,135 @@ test("resume and fork show each old message with the time of its turn, or none, 
   await forker.forkThread();
   expect(forkedEvents).toEqual(expected);
 });
+
+/**
+ * Came out of the third real-account test: Codex's `/status` said «Tokens de la sesión: entrada 39356 · en caché 30208 · salida 244» and «Último contexto: 20197 / 258400»,
+ * raw numbers. The session totals now use each language's thousands separator (39 356 in Spanish, 39,356 in English) and the context uses the sidebar's short form
+ * (20.2k / 258.4k) in both, so `/status` and the sidebar read alike. The exact lines are written out.
+ */
+test("Codex /status writes the session tokens and the last context in readable numbers, in English and Spanish", async () => {
+  const usage = { total: { inputTokens: 39356, cachedInputTokens: 30208, outputTokens: 244 }, last: { totalTokens: 20197 }, modelContextWindow: 258400 };
+  for (const [locale, expected] of [
+    ["en", "Session tokens: input 39,356 · cached 30,208 · output 244\nLast context: 20.2k / 258.4k"],
+    ["es", "Tokens de la sesión: entrada 39 356 · en caché 30 208 · salida 244\nÚltimo contexto: 20.2k / 258.4k"],
+  ] as const) {
+    const rpc = codexFixture();
+    const session = new CodexSession(rpc, "/project", () => {}, async () => false, undefined, undefined, locale);
+    await session.initialize();
+    rpc.onNotification("thread/tokenUsage/updated", { tokenUsage: usage });
+    expect(session.status()).toContain(expected);
+  }
+});
+
+/** Without a context window in the report the last context still reads in short form and the window says it was not reported, never a raw number or «undefined». */
+test("Codex /status without a context window says it was not reported", async () => {
+  const rpc = codexFixture();
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.onNotification("thread/tokenUsage/updated", { tokenUsage: { total: { inputTokens: 1500, cachedInputTokens: 0, outputTokens: 20 }, last: { totalTokens: 999 } } });
+  const line = session.status().find(text => text.startsWith("Session tokens:"))!;
+  expect(line).toBe("Session tokens: input 1,500 · cached 0 · output 20\nLast context: 999 / not reported");
+});
+
+/**
+ * Came out of the third real-account test: after a `/f614:stop` that Codex never answered, Shell closed the connection and asked to restart. Now, when the composition root
+ * gives the session a way to open the app-server again, Shell reconnects by itself: it opens a new connection, greets it (`initialize`), resumes THE SAME conversation
+ * (`thread/resume` with the same id), tells the person in one line, and the next message goes through the new connection. The exact lines are written out for both languages.
+ */
+for (const [locale, notice] of [
+  ["en", "Codex did not answer the stop request, so Shell ended the turn on its side and reconnected to Codex. Your conversation is still here."],
+  ["es", "Codex no respondió a la petición de detener, así que Shell dio el turno por terminado de su lado y se reconectó con Codex. Tu conversación sigue aquí."],
+] as const) {
+  test(`after a stop Codex never answers, Shell reconnects, resumes the same thread and says so once (${locale})`, async () => {
+    const rpc = turnFixture(null); const events: any[] = [];
+    const next = new FixtureRpc();
+    next.replies.set("initialize", {});
+    next.replies.set("account/read", { account: { type: "chatgpt", planType: "plus" }, requiresOpenaiAuth: true });
+    next.replies.set("thread/resume", { thread: { id: "t" }, model: "test-model", modelProvider: "openai" });
+    next.replies.set("turn/start", { turn: { id: "u2", status: "inProgress" } });
+    let opened = 0;
+    const session = new CodexSession(rpc, "/project", event => events.push(event), async () => false, undefined, undefined, locale, undefined, () => { opened++; return next; });
+    await session.initialize();
+    const pending = session.send("hello");
+    await new Promise(resolve => setImmediate(resolve));
+    rpc.handler = async method => {
+      if (method !== "turn/interrupt") throw new Error(`Unexpected ${method}`);
+      const error = new ShellError("engine-request-timeout", { method });
+      rpc.onClose(error);
+      throw error;
+    };
+    expect(await session.cancel()).toBe("no-answer");
+    await pending;
+    expect(opened).toBe(1);
+    expect(next.calls.map(call => call.method)).toEqual(["initialize", "initialized", "thread/resume"]);
+    expect(next.calls[0]!.params).toMatchObject({ clientInfo: { name: "forge614_shell" }, capabilities: { experimentalApi: true } });
+    expect(next.calls[2]!.params).toMatchObject({ threadId: "t", cwd: "/project", modelProvider: "openai" });
+    expect(session.busy).toBe(false);
+    expect(events.filter(event => event.type === "text").map(event => event.text)).toEqual([notice]);
+    // The next message goes through the new connection, on the same conversation.
+    const again = session.send("again");
+    await new Promise(resolve => setImmediate(resolve));
+    expect(next.calls.find(call => call.method === "turn/start")!.params).toMatchObject({ threadId: "t" });
+    expect(next.calls.filter(call => call.method === "thread/resume" || call.method === "thread/start")).toHaveLength(1);
+    expect(rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(1);
+    next.onNotification("turn/completed", { threadId: "t", turn: { id: "u2", status: "completed" } });
+    await again;
+    expect(session.busy).toBe(false);
+  });
+}
+
+/**
+ * If Shell cannot reconnect — it cannot open the app-server, or the conversation does not resume — the person gets today's message (the connection is closed, restart Shell),
+ * once, and the connection that was opened for nothing is closed. Nothing is claimed that did not happen.
+ */
+for (const [name, failure] of [["cannot open the app-server", "open"], ["cannot resume the conversation", "resume"]] as const) {
+  test(`if Shell ${name} after a stop Codex never answers, the person gets the message that says to restart Shell`, async () => {
+    const rpc = turnFixture(null); const events: any[] = [];
+    const next = new FixtureRpc(); let closed = 0;
+    next.close = () => { closed++; };
+    next.replies.set("initialize", {});
+    const session = new CodexSession(rpc, "/project", event => events.push(event), async () => false, undefined, undefined, "en", undefined, () => {
+      if (failure === "open") throw new Error("spawn failed");
+      return next;
+    });
+    await session.initialize();
+    const pending = session.send("hello");
+    await new Promise(resolve => setImmediate(resolve));
+    rpc.handler = async method => { const error = new ShellError("engine-request-timeout", { method }); rpc.onClose(error); throw error; };
+    expect(await session.cancel()).toBe("no-answer");
+    await pending;
+    expect(session.busy).toBe(false);
+    expect(events.filter(event => event.type === "text").map(event => event.text)).toEqual(["Codex did not answer the stop request, so Shell ended the turn on its side and closed the connection. Restart Shell to keep working."]);
+    expect(closed).toBe(failure === "resume" ? 1 : 0);
+  });
+}
+
+/** A message sent while the reconnection is still resuming the conversation waits for it: it never goes to the closed connection and never to a connection that has not resumed the thread yet. */
+test("a message sent while Shell is reconnecting waits and goes through the new connection", async () => {
+  const rpc = turnFixture(null); const next = new FixtureRpc();
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  next.handler = async method => {
+    if (method === "initialize") return {};
+    if (method === "account/read") return { account: { type: "chatgpt", planType: "plus" }, requiresOpenaiAuth: true };
+    if (method === "thread/resume") { await gate; return { thread: { id: "t" }, model: "test-model", modelProvider: "openai" }; }
+    if (method === "turn/start") return { turn: { id: "u2", status: "inProgress" } };
+    throw new Error(`Unexpected ${method}`);
+  };
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false, undefined, undefined, "en", undefined, () => next);
+  await session.initialize();
+  const first = session.send("hello");
+  await new Promise(resolve => setImmediate(resolve));
+  rpc.handler = async method => { const error = new ShellError("engine-request-timeout", { method }); rpc.onClose(error); throw error; };
+  const cancelled = session.cancel();
+  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+  const second = session.send("while reconnecting");
+  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+  expect(next.calls.some(call => call.method === "turn/start")).toBe(false);
+  release();
+  await cancelled; await first;
+  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+  expect(next.calls.map(call => call.method)).toContain("turn/start");
+  expect(rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(1);
+  next.onNotification("turn/completed", { threadId: "t", turn: { id: "u2", status: "completed" } });
+  await second;
+});

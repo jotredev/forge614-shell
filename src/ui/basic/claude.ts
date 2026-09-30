@@ -4,11 +4,12 @@ import type { Terminal } from "@earendil-works/pi-tui";
 import { getSessionMessages, listSessions } from "@anthropic-ai/claude-agent-sdk";
 import { claudeResumeEntries, resumeChoice, sortRecentFirst } from "./resume-picker.ts";
 import type { ResumeEntry } from "./resume-picker.ts";
-import type { EffortLevel, ModelInfo, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { EffortLevel, ModelInfo, SDKMessage, SlashCommand } from "@anthropic-ai/claude-agent-sdk";
 import { claudeEnvironment, claudeLoginState, findClaude, officialLogin } from "../../engines/claude/auth.ts";
 import { confirmedLogout } from "../../engines/logout.ts";
 import { ClaudeSession } from "../../engines/claude/session.ts";
-import { isUnconnectedClaudeCommand } from "../../engines/claude/commands.ts";
+import { claudeHelpLines, claudeStatusLines } from "../../engines/claude/panels.ts";
+import type { ClaudeStatusInfo } from "../../engines/claude/panels.ts";
 import { emptyTelemetry, telemetryLines, updateTelemetry } from "../../engines/claude/telemetry.ts";
 import { createComposer } from "./composer.ts";
 import { askPermission, askQuit } from "./permission-choice.ts";
@@ -84,6 +85,21 @@ function editContent(name: string, input: unknown): { before: string; after: str
   return undefined;
 }
 
+/**
+ * The rows of the `/` menu's CLAUDE CODE group, and of `/help`: first the commands Claude Code reports (each with its own description), then the ones Shell carries
+ * out with Claude Code's meaning — `/model`, `/effort`, `/resume`, `/new`, `/login`, `/logout`, `/exit`, `/status` and `/help` — and none twice when Claude Code lists
+ * one of them as well. One function for both, so the menu and the help cannot disagree.
+ */
+export function claudeMenuCommands(commands: SlashCommand[], t: ReturnType<typeof getCatalog>["chat"]): { value: string; label: string }[] {
+  const native = commands.map(command => ({ value: `/${command.name}`, label: command.description || command.argumentHint || t.genericCommandLabel }));
+  const names = new Set(native.map(command => command.value));
+  const providerControls = [
+    ["/model", t.commandSelectModel], ["/effort", t.commandSelectReasoning], ["/resume", t.commandChatHistory], ["/new", t.commandNewConversation], ["/login", t.commandConnectAccount], ["/logout", t.commandDisconnectLocally], ["/exit", t.commandExitShell],
+    ["/status", t.commandShowStatus], ["/help", t.commandShowHelp],
+  ].map(([value, label]) => ({ value: value!, label: label! })).filter(command => !names.has(command.value));
+  return [...native, ...providerControls];
+}
+
 export async function startClaudeUI(args: string[], selectedExecutable?: string, terminal?: Terminal, version?: string, locale: Locale = "en"): Promise<void> {
   const t = getCatalog(locale).chat;
   const tc = getCatalog(locale).claudeChat;
@@ -151,15 +167,9 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     catch { if (!closed && !signal?.aborted) write(tc.catalogLoadFailed); }
   };
   const syncCommandGroups = () => {
-    const native = session.commands.map(command => ({ value: `/${command.name}`, label: command.description || command.argumentHint || t.genericCommandLabel }));
-    const names = new Set(native.map(command => command.value));
-    // The commands Shell carries out with Claude Code's own meaning; `/status` and `/help` are not here because Shell has not connected them.
-    const providerControls = [
-      ["/model", t.commandSelectModel], ["/effort", t.commandSelectReasoning], ["/resume", t.commandChatHistory], ["/new", t.commandNewConversation], ["/login", t.commandConnectAccount], ["/logout", t.commandDisconnectLocally], ["/exit", t.commandExitShell],
-    ].map(([value, label]) => ({ value: value!, label: label! })).filter(command => !names.has(command.value));
     // Under FORGE614 only Shell's own commands, every one with the `/f614:` prefix.
     input.setCommandGroups([
-      { title: "CLAUDE CODE", items: [...native, ...providerControls] },
+      { title: "CLAUDE CODE", items: claudeMenuCommands(session.commands, t) },
       { title: "FORGE614", items: [
         { value: "/f614:refresh", label: t.commandRefreshPlanUsage }, { value: "/f614:status", label: t.commandSessionDetails },
         { value: "/f614:commands", label: t.commandBrowseCommands }, { value: "/f614:stop", label: t.commandCancelActiveTurn },
@@ -249,7 +259,6 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     const approval = approvals[0];
     if (!approval) return;
     writeActivity(t.permissionRequestedTitle, approval.label, true);
-    input.setStatus(t.awaitingPermission);
     void askPermission(input, locale).then(allowed => approval.finish(allowed));
   };
   /** A tool permission request, shown in plain words (`formatClaudePermission`) instead of the tool's JSON input. */
@@ -347,6 +356,14 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     if (session.busy || loginAbort) write(tc.workOrAuthActive);
     else await shutdown();
   };
+  /** What Shell has for Claude Code's `/status` right now: the newest init message, the handshake's account, the model and permission mode as the box shows them, and where the memory comes from. */
+  const statusInfo = async (): Promise<ClaudeStatusInfo> => ({
+    ...session.initInfo, ...(session.sessionId ? { sessionId: session.sessionId } : {}), folder: cwd,
+    ...(session.account?.email ? { email: session.account.email } : {}), ...(session.account?.organization ? { organization: session.account.organization } : {}),
+    ...(session.account?.subscriptionType ? { plan: session.account.subscriptionType } : {}), ...(session.account?.apiProvider ? { provider: session.account.apiProvider } : {}),
+    ...(modelDisplay() ? { model: modelDisplay()! } : {}), ...(session.workModes().find(mode => mode.id === session.workMode())?.label ? { permissionMode: session.workModes().find(mode => mode.id === session.workMode())!.label } : {}),
+    memoryByAssistant: await session.memoryDeliveredByAssistant(), settingSources: session.settingSources,
+  });
   const command = async (value: string) => {
     const [name, ...rest] = value.trim().split(/\s+/);
     const argument = rest.join(" ");
@@ -369,9 +386,11 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     if (name === "/f614:stop") { loginAbort?.abort(); session.stop(); return; }
     if (name === "/exit" || name === "/quit") { await quitLikeClaude(); return; }
     if (name === "/f614:quit") { await quit(); return; }
-    // Shell's own session telemetry. Claude Code's `/status` (and `/help`) are its own, which Shell has not connected: said honestly.
+    // Shell's own session telemetry.
     if (name === "/f614:status") { write([...telemetryLines(telemetry, locale), memorySourceLine(await session.memoryDeliveredByAssistant(), locale)].join("\n")); return; }
-    if (isUnconnectedClaudeCommand(name)) { write(tc.commandNotAllowed({ name: name ?? "" })); return; }
+    // Claude Code's own `/status` and `/help`, answered with what Shell has (see `claudeStatusLines` and `claudeHelpLines`); like Claude Code's, they run also while a turn does.
+    if (name === "/status") { write(claudeStatusLines(await statusInfo(), locale).join("\n")); return; }
+    if (name === "/help") { write(claudeHelpLines(claudeMenuCommands(session.commands, t), locale).join("\n")); return; }
     if (name === "/f614:help" || name === "/f614:commands") {
       if (approvals.length) { write(t.answerPendingPermissionFirst); return; }
       const selected = await input.chooseCommand();
@@ -406,7 +425,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         const done = await confirmedLogout("Claude Code", askApproval, loginAbort.signal,
           async () => { disconnected = true; accountConnected = false; accountChecked = true; accountUnknown = false; }, locale);
         if (done) {
-          session.reset(); session.models = []; session.model = undefined; session.effort = undefined;
+          // The account goes too, so `/status` does not keep showing the email, organization and plan of the one just disconnected.
+          session.reset(); session.models = []; session.model = undefined; session.effort = undefined; session.account = undefined; session.user = undefined;
           telemetry = emptyTelemetry(); sessions = [];
           write(tc.disconnectedLocally);
         } else write(tc.logoutCancelled);

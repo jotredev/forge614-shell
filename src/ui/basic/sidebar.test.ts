@@ -248,9 +248,9 @@ test("context and plan-usage rows never overflow or end in an ellipsis at any re
 });
 
 /**
- * The context ring grew one cell (13 wide) to hold its block digits. At every width the sidebar can really have (27–37 columns), in both
- * languages, each of its six rows still fits, keeps its 13 ring cells whole, and the text beside it (title, «N% used», «N% free»)
- * is not cut off.
+ * The context ring is 13 cells wide and seven rows tall (its number is normal text on the middle row, «8%»). At every width the sidebar can
+ * really have (27–37 columns), in both languages, each of its seven rows still fits, keeps its 13 ring cells whole, and the text beside
+ * it (title, «N% used», «N% free», on the three rows around the middle one) is not cut off.
  */
 test("the context ring's rows fit at every real sidebar width and keep their 13 cells whole, in both languages", () => {
   const ring = contextRing(17).map(stripVTControlCharacters);
@@ -260,13 +260,32 @@ test("the context ring's rows fit at every real sidebar width and keep their 13 
       const start = rows.findIndex(row => row.startsWith(ring[0]!));
       expect(start).toBeGreaterThan(-1);
       const t = getCatalog(locale).sidebar;
-      const beside = ["", t.conversationLabel, t.percentUsed({ percent: 17 }), t.percentFree({ percent: 83 }), "", ""];
-      rows.slice(start, start + 6).forEach((row, i) => {
+      const beside = ["", "", t.conversationLabel, t.percentUsed({ percent: 17 }), t.percentFree({ percent: 83 }), "", ""];
+      rows.slice(start, start + 7).forEach((row, i) => {
         expect({ locale, width, row, fits: visibleWidth(row) <= width }).toEqual({ locale, width, row, fits: true });
         expect(row.startsWith(ring[i]!)).toBe(true);
         expect(row.slice(15).trimEnd()).toBe(beside[i]!);
       });
     }
+  }
+});
+
+/**
+ * Came out of the third real-account test: the percentage inside the CONTEXT ring was drawn with block digits and could not be read. In the
+ * sidebar it now shows as normal text («8%») on the ring's middle row, at a narrow and at a wide sidebar, and the same text is what the
+ * person reads beside it («8% used»).
+ */
+test("the sidebar shows the context percentage as normal text «8%» inside the ring, at a narrow and at a wide width", () => {
+  const snapshot = (): ShellSnapshot => ({ account: "connected", provider: "Claude Code", sessionId: "s-1", context: { used: 80_000, window: 1_000_000 } });
+  for (const width of [27, 37]) {
+    const rows = new ShellSidebar(snapshot, undefined, undefined, "en").render(width).map(stripVTControlCharacters);
+    const start = rows.findIndex(row => row.startsWith(contextRing(8).map(stripVTControlCharacters)[0]!));
+    expect(start).toBeGreaterThan(-1);
+    const ringRows = rows.slice(start, start + 7).map(row => row.slice(0, 13).replace(/\u2800/g, " "));
+    expect(ringRows[3]!.slice(2, 11)).toBe("   8%    ");
+    expect(ringRows.filter((row, i) => i !== 3 && /[0-9%]/.test(row))).toEqual([]);
+    expect(ringRows.join("")).not.toMatch(/[█▀▄]/);
+    expect(rows[start + 3]!.slice(15).trimEnd()).toBe("8% used");
   }
 });
 

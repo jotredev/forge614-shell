@@ -1,6 +1,9 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { SDKUserMessage, Query } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKUserMessage, Query, SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { claudeEnvironment } from "./auth.ts";
+
+/** The setting files Shell asks Claude Code to load, for the handshake and for every turn; `/status` reports this same list. */
+export const CLAUDE_SETTING_SOURCES: readonly SettingSource[] = ["user", "project", "local"];
 
 /** Control-plane handshake only: this stream never yields a user message. */
 export async function loadClaudeCatalog(
@@ -20,7 +23,7 @@ export async function loadClaudeCatalog(
   try {
     connection = connect({ prompt: idleInput(), options: {
       cwd: config.cwd, env: claudeEnvironment(config.env), pathToClaudeCodeExecutable: config.executable,
-      abortController: controller, persistSession: false, settingSources: ["user", "project", "local"],
+      abortController: controller, persistSession: false, settingSources: [...CLAUDE_SETTING_SOURCES],
       permissionMode: "default", canUseTool: async () => ({ behavior: "deny", message: "Catalog discovery cannot execute tools." }),
     } });
     const result = await connection.initializationResult();

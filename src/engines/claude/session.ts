@@ -1,7 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { EffortLevel, ModelInfo, Options, PermissionMode, Query, SDKMessage, SDKUserMessage, SlashCommand } from "@anthropic-ai/claude-agent-sdk";
+import type { AccountInfo, EffortLevel, ModelInfo, Options, PermissionMode, Query, SDKMessage, SDKUserMessage, SlashCommand } from "@anthropic-ai/claude-agent-sdk";
 import { checkAuthentication, claudeEnvironment } from "./auth.ts";
-import { loadClaudeCatalog, readPlanUsage } from "./catalog.ts";
+import { CLAUDE_SETTING_SOURCES, loadClaudeCatalog, readPlanUsage } from "./catalog.ts";
 import type { getStartupContext } from "../../infrastructure/forge614-engram.ts";
 import { ShellError } from "../../shell-error.ts";
 import type { BackgroundActivity, BackgroundActivityKind, NativeWorkMode, WorkModeChange } from "../types.ts";
@@ -110,6 +110,24 @@ function applyTaskEvent(tasks: Map<string, TrackedTask>, event: SDKMessage): voi
   }
 }
 
+/**
+ * What the SDK's `init` message of the newest turn reports that `/status` shows: the Claude Code version, where the API key comes from and the MCP servers with
+ * their state. Each field is only there when the message carried it — an older Claude Code sends fewer — and none is made up.
+ */
+export interface ClaudeInitInfo {
+  version?: string;
+  apiKeySource?: string;
+  mcpServers?: { name: string; status: string }[];
+}
+
+function readInit(event: Record<string, any>): ClaudeInitInfo {
+  return {
+    ...(typeof event.claude_code_version === "string" ? { version: event.claude_code_version } : {}),
+    ...(typeof event.apiKeySource === "string" ? { apiKeySource: event.apiKeySource } : {}),
+    ...(Array.isArray(event.mcp_servers) ? { mcpServers: event.mcp_servers.map((server: any) => ({ name: String(server.name), status: String(server.status) })) } : {}),
+  };
+}
+
 export class ClaudeSession {
   busy = false;
   sessionId?: string;
@@ -118,6 +136,12 @@ export class ClaudeSession {
   models: ModelInfo[] = [];
   commands: SlashCommand[] = [];
   user?: string;
+  /** The whole account the catalog handshake reported (email, organization, plan, provider), for `/status`. */
+  account?: AccountInfo;
+  /** The `init` message of the newest turn, for `/status`; undefined until a turn has run. */
+  initInfo?: ClaudeInitInfo;
+  /** The setting files requested from Claude Code (`settingSources`). */
+  readonly settingSources: readonly string[] = CLAUDE_SETTING_SOURCES;
   usage: { label: string; usedPercent: number; reset?: string }[] = [];
   context?: { used: number; window: number };
   backgroundActivity: BackgroundActivity[] = [];
@@ -136,17 +160,20 @@ export class ClaudeSession {
     { id: "auto", label: "Auto", tone: "auto" }, { id: "bypassPermissions", label: "Bypass Permissions", tone: "danger" },
   ];
   async initialize(signal?: AbortSignal): Promise<void> {
-    const catalog = await loadClaudeCatalog(this.dependencies, signal);
+    // Whether the startup hook delivers the memory is asked now, in the background, so the first message finds the answer instead of waiting for it (it is decided once per run).
+    void this.memoryDeliveredByAssistant();
+    const catalog = await loadClaudeCatalog(this.dependencies, signal, this.dependencies.connect);
     this.models = catalog.models;
     this.commands = catalog.commands;
     this.user = catalog.account.email;
+    this.account = catalog.account;
     this.usage = catalog.usage;
     this.model ??= catalog.models.find(model => model.value === "default")?.value;
   }
   private abort?: AbortController;
   private startupContextText?: string;
   private startupContextStale = true;
-  /** The one answer of the run to «does the startup hook deliver the memory?», asked lazily and never again. */
+  /** The one answer of the run to «does the startup hook deliver the memory?»: asked in the background when the session opens (`initialize`), or by whoever needs it first, and never again. */
   private hookDelivers?: Promise<boolean>;
 
   constructor(private readonly dependencies: Dependencies) {}
@@ -157,10 +184,12 @@ export class ClaudeSession {
     this.startupContextStale = true;
   }
 
+  /** Starts a new conversation: forgets the session, the context and the newest turn's `init` (version, MCP servers), which the first message of the new conversation reports again. */
   reset(): void {
     if (this.busy) throw new ShellError("claude-new-chat-busy");
     this.sessionId = undefined;
     this.context = undefined;
+    this.initInfo = undefined;
     this.startupContextStale = true;
   }
 
@@ -243,7 +272,7 @@ export class ClaudeSession {
         systemPrompt: this.startupContextText
           ? { type: "preset", preset: "claude_code", append: wrapStartupContext(this.startupContextText) }
           : { type: "preset", preset: "claude_code" },
-        settingSources: ["user", "project", "local"],
+        settingSources: [...CLAUDE_SETTING_SOURCES],
         // `allowDangerouslySkipPermissions` only makes «Bypass Permissions» reachable — the SDK refuses to
         // switch to it live on a query opened without it. The mode the turn starts in is still `permissionMode`.
         permissionMode: this.permissionMode, persistSession: true, includePartialMessages: true,
@@ -262,7 +291,7 @@ export class ClaudeSession {
       const run = this.dependencies.run ?? ((input: RunInput) => this.officialRun(input));
       let resultSeen = false;
       for await (const event of run({ prompt, options })) {
-        if (event.type === "system" && event.subtype === "init") this.sessionId = event.session_id;
+        if (event.type === "system" && event.subtype === "init") { this.sessionId = event.session_id; this.initInfo = readInit(event); }
         if (event.type === "system" && event.subtype === "commands_changed") this.commands = event.commands;
         if (event.type === "result") resultSeen = true;
         applyTaskEvent(tasks, event);

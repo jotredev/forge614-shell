@@ -213,7 +213,7 @@ Usage: forge614-shell [--engine claude|codex]
 
 Every interactive startup asks for visual interface, then installed AI engine.
 Basic is available; Full — Coming later is disabled.
-Selections are not saved. Even a single available option waits for confirmation.
+Shell remembers the assistant you used last (it comes highlighted) and each assistant's model, reasoning and work mode. It still asks every time: even a single available option waits for confirmation.
 The selected native CLI must already be installed. Sign-in (/login in Claude Code, /f614:login in Codex) uses its official account flow.
 Shell does not store subscription credentials or manage billing.
 
@@ -236,7 +236,7 @@ Shell's own commands start with /f614: — /f614:login (Codex), /f614:status (Cl
 Claude sessions: managed by Claude Code, shared with its native history.
 Codex: native history, model catalog, reasoning and reported account limits.
 Login reuses existing accounts.
-Headless uses native permissions, with no interactive tool approvals.
+Starting a chat needs an interactive terminal; without one Shell refuses to start.
 
 The selected engine's project settings and permissions apply. This is not a sandbox.`,
   },
@@ -261,6 +261,8 @@ The selected engine's project settings and permissions apply. This is not a sand
     commandSelectReasoning: "Select reasoning",
     commandChatHistory: "Chat history",
     commandNewConversation: "New conversation",
+    commandShowStatus: "Show version, session, model, account and MCP servers",
+    commandShowHelp: "Show help and available commands",
     commandConnectAccount: "Connect account",
     commandDisconnectLocally: "Disconnect locally",
     commandSessionDetails: "Session details",
@@ -269,7 +271,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     commandBrowseCommands: "Browse commands",
     commandExitShell: "Exit Shell",
     permissionRequestedTitle: "Permission requested",
-    awaitingPermission: "Awaiting permission",
+    awaitingAnswer: "Waiting for your answer",
     noPermissionPending: "No permission request is pending.",
     answerPendingPermissionFirst: "Answer the pending permission with the selector first.",
     unknownCommand: ({ name }) => `Unknown command: ${name}. Use /f614:help.`,
@@ -327,7 +329,6 @@ The selected engine's project settings and permissions apply. This is not a sand
     questionnaireUnsupported: "Claude requested a questionnaire. This first connector does not support questionnaire forms yet; ask Claude to put its question in the chat.",
     claudeError: ({ message }) => `Claude error: ${message}`,
     finishOrStopFirst: "Finish or /f614:stop the current turn first.",
-    commandNotAllowed: ({ name }) => `Claude Code doesn't allow ${name} from Shell yet.`,
     workOrAuthActive: "Work or authentication is active. Use /f614:quit to leave: it asks before stopping anything. Nothing was stopped.",
     checkingAccount: "Checking your Claude account…",
     connectedExistingAccount: "Connected to Claude in Shell using your existing account. No new login is needed.",
@@ -357,6 +358,21 @@ The selected engine's project settings and permissions apply. This is not a sand
   memorySource: {
     byAssistant: "Memory: the assistant delivers it at startup",
     byShell: "Memory: Shell pastes it",
+  },
+  claudePanels: {
+    statusTitle: "Claude Code status",
+    labelVersion: "Version", labelSession: "Session", labelFolder: "Folder", labelEmail: "Email", labelOrganization: "Organization", labelPlan: "Plan",
+    labelApiKey: "API key", labelProvider: "Provider", labelModel: "Model", labelPermissionMode: "Permission mode", labelSettingSources: "Setting sources", labelMcpServers: "MCP servers",
+    apiKeyFromEnvironment: "from ANTHROPIC_API_KEY", apiKeyFromHelper: "from apiKeyHelper", apiKeyFromLogin: "created by /login", apiKeyNone: "none in use",
+    settingSourceUser: "user", settingSourceProject: "project", settingSourceLocal: "local",
+    mcpNone: "none", mcpConnected: "connected", mcpFailed: "failed", mcpNeedsSignIn: "needs sign-in", mcpConnecting: "connecting", mcpDisabled: "disabled",
+    statusAfterFirstMessage: "Some details (version, session and MCP servers) appear after your first message.",
+    helpTitle: "Claude Code help",
+    helpCommands: "Commands (type / to open the menu):",
+    helpShellCommands: "Shell's own commands start with /f614: (/f614:commands opens their menu).",
+    helpShortcuts: "Shortcuts:",
+    keySend: "Send the message", keyNewLine: "New line", keyCycleModes: "Cycle permission modes", keyAcceptCommand: "Accept the highlighted command in the / menu",
+    keyCloseMenu: "Close a menu (on a permission question it answers «No»)", keyLeave: "Leave Shell (asks first while work is in progress; with a permission question open, answer it first)",
   },
   telemetry: {
     notReported: "not reported",
@@ -510,6 +526,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     questionnaireUnsupported: "Codex requested a questionnaire. Ask it to pose the question in chat; no option was approved.",
     engineErrorFallback: "Engine error",
     stopNoAnswer: "Codex did not answer the stop request, so Shell ended the turn on its side and closed the connection. Restart Shell to keep working.",
+    stopReconnected: "Codex did not answer the stop request, so Shell ended the turn on its side and reconnected to Codex. Your conversation is still here.",
     stopNoActiveTurn: "Codex says no turn was running, so Shell ended the turn on its side.",
     stopNotFinished: "Codex accepted the stop request but did not finish the turn, so Shell ended the turn on its side.",
     sessionTokensLine: ({ input, cached, output, lastContext, window }) => `Session tokens: input ${input} · cached ${cached} · output ${output}\nLast context: ${lastContext} / ${window}`,
@@ -866,7 +883,6 @@ The selected engine's project settings and permissions apply. This is not a sand
     subagentsEnableFailed: ({ error }) => `Failed to save Subagents setting: ${error}`,
     agentsUnavailableTitle: "Shared agents unavailable",
     agentsUnavailableSubtitle: "This session isn’t connected to a shared background server.",
-    agentsUnavailableNote: "Starting a background server will not interrupt or move this session.",
     agentsNoServer: "Shell does not start that server.",
   },
   permission: {
