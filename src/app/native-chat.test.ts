@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { codexStartupContext } from "./native-chat.ts";
+import { codexStartupContext, createCodexSession } from "./native-chat.ts";
+import { FixtureRpc } from "../../tests/support/rpc-fixture.ts";
+import { ShellError } from "../shell-error.ts";
 
 function withEnvVar(name: string, value: string | undefined, run: () => Promise<void>): Promise<void> {
   const original = process.env[name];
@@ -63,3 +65,35 @@ test("codexStartupContext never leaks the resolved FORGE614_HOME path in its una
     }
   });
 });
+
+/**
+ * The composition root gives the Codex session a way to open the app-server again (`createCodexSession`), which is what lets a `/f614:stop` that Codex never
+ * answers end in a reconnection instead of «restart Shell». Here the process starter is a stand-in: it is asked once when the session is created and once more, with
+ * the same folder and executable, when the stop times out, and the second connection is the one that resumes the conversation. `FORGE614_HOME` points to a folder
+ * that does not exist, so the memory check and Engram's digest find no Forge614 binary and nothing of the person's machine is touched.
+ */
+test("createCodexSession opens the app-server again after a stop Codex never answers, with the same executable and folder", () => withEnvVar("FORGE614_HOME", "/nonexistent/forge-for-native-chat-test", async () => {
+  const started: { id: string; executable: string; cwd: string }[] = [];
+  const first = new FixtureRpc(); const second = new FixtureRpc();
+  first.replies.set("initialize", {});
+  first.replies.set("account/read", { account: { type: "chatgpt", planType: "plus" }, requiresOpenaiAuth: true });
+  first.replies.set("model/list", { data: [], nextCursor: null });
+  first.replies.set("thread/start", { thread: { id: "t" }, model: "m", modelProvider: "openai" });
+  first.replies.set("turn/start", { turn: { id: "u", status: "inProgress" } });
+  second.replies.set("initialize", {});
+  second.replies.set("thread/resume", { thread: { id: "t" }, model: "m", modelProvider: "openai" });
+  const connections = [first, second];
+  const events: { type: string; text?: string }[] = [];
+  const session = createCodexSession("codex", "/bin/codex", "/project", event => events.push(event), async () => false, "en",
+    (id, executable, cwd) => { started.push({ id, executable, cwd }); return connections[started.length - 1]!; });
+  expect(started).toEqual([{ id: "codex", executable: "/bin/codex", cwd: "/project" }]);
+  await session.initialize();
+  const pending = session.send("hello");
+  await new Promise(resolve => setImmediate(resolve));
+  first.handler = async method => { const error = new ShellError("engine-request-timeout", { method }); first.onClose(error); throw error; };
+  await session.cancel();
+  await pending;
+  expect(started).toEqual([{ id: "codex", executable: "/bin/codex", cwd: "/project" }, { id: "codex", executable: "/bin/codex", cwd: "/project" }]);
+  expect(second.calls.find(call => call.method === "thread/resume")!.params).toMatchObject({ threadId: "t" });
+  expect(events.filter(event => event.type === "text").map(event => event.text)).toEqual([expect.stringContaining("reconnected to Codex")]);
+}));

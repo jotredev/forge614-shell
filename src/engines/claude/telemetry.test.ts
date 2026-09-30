@@ -55,6 +55,20 @@ test("the quota lines of /f614:status use plain names, a translated status and a
   }
 });
 
+/**
+ * `/f614:status` writes the counters like `/status` of Codex does: the tokens of the last query with the thousands separator of each language («20 240» / «20,240»),
+ * the context in compact form («20.2k / 258.4k»); a counter Claude Code did not report stays «not reported». It used to print the raw numbers («20240», «258400»).
+ */
+test("the token and context lines of /f614:status are readable: separator per language and compact context", () => {
+  let state = updateTelemetry(emptyTelemetry(), { type: "assistant", parent_tool_use_id: null, message: { model: "claude-test", usage: { input_tokens: 20_000, cache_read_input_tokens: 100, cache_creation_input_tokens: 100, output_tokens: 40 } } });
+  state = updateTelemetry(state, { type: "result", total_cost_usd: 0.1, modelUsage: { "claude-test": { inputTokens: 20_240, outputTokens: 1_234_567, cacheReadInputTokens: 700, cacheCreationInputTokens: 2_996, contextWindow: 258_400 } } });
+  expect(telemetryLines(state, "en")[1]).toContain("input 20,240 | output 1,234,567 | cache read 700 | cache write 2,996");
+  expect(telemetryLines(state, "en")[2]).toBe("Last reported context: 20.2k / 258.4k");
+  expect(telemetryLines(state, "es")[1]).toContain("entrada 20 240 | salida 1 234 567 | lectura de caché 700 | escritura de caché 2 996");
+  expect(telemetryLines(state, "es")[2]).toBe("Último contexto reportado: 20.2k / 258.4k");
+  expect(telemetryLines(emptyTelemetry(), "en")[2]).toBe("Last reported context: not reported / not reported");
+});
+
 test("token counters are per query and subagent input is not main context occupancy", () => {
   let state = updateTelemetry(emptyTelemetry(), { type: "assistant", parent_tool_use_id: null, message: { model: "claude-test", usage: { input_tokens: 10, cache_read_input_tokens: 30, cache_creation_input_tokens: 40, output_tokens: 20 } } });
   expect(state.contextTokens).toBe(100);

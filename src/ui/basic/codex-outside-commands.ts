@@ -134,9 +134,9 @@ async function importSetup(screen: CodexCommandScreen): Promise<void> {
   for (;;) {
     const chosenItems = source.items.filter((_, index) => marked[index]);
     const rows: ComposerChoice[] = [
-      { value: "proceed", display: nt.importProceed({ count: chosenItems.length }), label: "" },
+      { value: "proceed", display: nt.importProceed({ count: chosenItems.length }), label: "", action: true },
       ...source.items.map((item, index) => ({ value: `item:${index}`, display: `[${marked[index] ? "x" : " "}] ${nt.importItemLabel({ type: item.type })}`, label: importWhere(nt, item) })),
-      { value: "cancel", display: nt.importCancel, label: "" },
+      { value: "cancel", display: nt.importCancel, label: "", action: true },
     ];
     const picked = await screen.choose(nt.importTitle({ source: source.label }), rows, undefined, { body: nt.importHelp, ...(startAt ? { startAt } : {}) });
     if (!picked || picked === "cancel") return;
@@ -231,7 +231,7 @@ async function plugins(screen: CodexCommandScreen): Promise<void> {
         value: plugin.key, display: plugin.displayName, search: `${plugin.displayName} ${plugin.name} ${plugin.marketplace}`,
         label: [pluginStatus(nt, plugin), plugin.marketplace, ...(plugin.description ? [plugin.description] : [])].join(" · "),
       })),
-      { value: "@marketplaces", display: nt.pluginMarketplaces, label: nt.pluginMarketplacesDescription, search: nt.pluginMarketplaces },
+      { value: "@marketplaces", display: nt.pluginMarketplaces, label: nt.pluginMarketplacesDescription, search: nt.pluginMarketplaces, action: true },
     ], undefined, { searchable: true, body: nt.pluginsBody });
     if (!picked) return;
     if (picked === "@marketplaces") { write(nt.pluginMarketplacesNotConnected); return; }

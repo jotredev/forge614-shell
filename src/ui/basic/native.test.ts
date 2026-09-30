@@ -154,6 +154,33 @@ test("Shift+Tab works while a Codex permission question is pending", async () =>
   } finally { enter("/f614:quit"); await ui; }
 });
 
+/**
+ * Came out of the third real-account test, with Codex: while a permission question waits for the person the box said «Working». It says «Waiting for your answer»
+ * ("Esperando tu respuesta" in Spanish) while the question is open, and once it is answered, with the turn still running, it says «Working» again.
+ */
+test("with Codex the box says it waits for the person's answer while a permission question is open, and Working again after", async () => {
+  const pause = () => new Promise(resolve => setTimeout(resolve, 600));
+  for (const [locale, waiting, working] of [["en", "Waiting for your answer", "Working"], ["es", "Esperando tu respuesta", "Trabajando"]] as const) {
+    const { terminal, rpc, ui, enter, plain } = codexUi(locale);
+    try {
+      await tick(); enter("run something"); await tick(); await pause();
+      expect(plain()).toContain(working);
+      terminal.output = "";
+      const answer = rpc.onRequest("item/commandExecution/requestApproval", { threadId: "t", turnId: "u", itemId: "i", command: "touch x" });
+      await tick(); await pause();
+      expect(plain()).toContain(waiting);
+      expect(plain()).not.toContain(working);
+      terminal.output = "";
+      enter("/f614:no"); expect(await answer).toEqual({ decision: "decline" });
+      await tick(); await pause();
+      expect(plain()).toContain(working);
+      expect(plain()).not.toContain(waiting);
+      rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+      await tick();
+    } finally { enter("/f614:quit"); await ui; }
+  }
+}, 20000);
+
 /** Idea 23: `/compact` reaches Codex's own compaction and the person is told when it is done. */
 test("/compact with Codex calls thread/compact/start and reports the result", async () => {
   const { rpc, ui, enter, plain } = codexUi();
@@ -1709,6 +1736,35 @@ test("/plugins lists installed and available plugins, opens the detail and reads
     h.terminal.output = ""; h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
     expect(pluginCalls(h, "plugin/read").map(call => call.params)).toEqual([{ marketplacePath: "/m/.agents/plugins/marketplace.json", pluginName: "figma" }]);
     for (const line of ["Figma · Can be installed · Local", "Turn Figma files into implementation context.", "Auth: Auth on install", "Skills: design-review", "Hooks: PreToolUse (1)", "Apps: No plugin apps", "MCP servers: figma-mcp", "1. Back to plugins", "2. Install plugin", "Install this plugin now"]) expect(h.plain()).toContain(line);
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/**
+ * Came out of the third real-account test: `/plugins` said «Installed 11 of 5015 available plugins» above and «1–5 of 5016» in the footer, because the
+ * «Marketplaces» row (not a plugin) was counted. The footer now counts only plugins, so both numbers say the same, in Spanish and in English.
+ */
+test("/plugins footer counts only plugins, so it agrees with the count above the list", async () => {
+  for (const [locale, top, footer, wrong] of [["en", "Installed 1 of 2 available plugins.", "1–2 of 2 ·", "of 3"], ["es", "Instalados 1 de 2 plugins disponibles.", "1–2 de 2 ·", "de 3"]] as const) {
+    const h = codexUi(locale, pluginsSetup, undefined, 220);
+    try {
+      await tick(); h.terminal.output = ""; h.enter("/plugins"); await tick();
+      expect(h.plain()).toContain(top);
+      expect(h.plain()).toContain(footer);
+      expect(h.plain()).not.toContain(wrong);
+      h.terminal.input("\x1b"); await tick();
+    } finally { h.enter("/f614:quit"); await h.ui; }
+  }
+});
+
+/** Same care in `/import`: its «Import selected» and «Cancel» rows are actions, not items, so the footer counts the three items the list holds and not five rows. */
+test("/import footer counts only the items, not its Import and Cancel rows", async () => {
+  const h = codexUi("en", rpc => importSetup(rpc), undefined, 220);
+  try {
+    await tick(); h.terminal.output = ""; h.enter("/import"); await tick();
+    expect(h.plain()).toContain("5. Cancel");
+    expect(h.plain()).toContain("1–3 of 3 ·");
+    expect(h.plain()).not.toContain("of 5");
+    h.terminal.input("\x1b"); await tick();
   } finally { h.enter("/f614:quit"); await h.ui; }
 });
 

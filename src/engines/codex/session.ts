@@ -27,7 +27,7 @@ import { ShellError, describeError } from "../../shell-error.ts";
 import { MEMORY_HOOK_TIMEOUT_MS } from "../../infrastructure/memory-hook.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
-import { formatMoment } from "../../i18n/status-text.ts";
+import { compactNumber, formatCount, formatMoment } from "../../i18n/status-text.ts";
 
 /** How long `/f614:stop` waits, first for Codex to answer `turn/interrupt` and then, once it has, for Codex to end the turn (`turn/completed`), before it stops waiting and ends the turn on Shell's side. */
 export const INTERRUPT_TIMEOUT_MS = 5000;
@@ -212,6 +212,8 @@ export class CodexSession implements NativeSession {
   private interrupting = false;
   /** How long to wait for `turn/completed` after Codex accepted `turn/interrupt`: the same as the request's wait, a field only so tests can shorten it. */
   private stopWaitMs = INTERRUPT_TIMEOUT_MS;
+  /** The reconnection in progress after a stop Codex never answered (see `reconnectAfterStop`); a message waits for it, and a connection that closes meanwhile is that attempt failing. */
+  private reconnecting?: Promise<boolean>;
   /** The last completed answer, for `/copy`. */
   private lastAgentMessage?: string;
   /** «Generate memories» as last read or saved, to know when the open thread must be told (`thread/memoryMode/set`). */
@@ -260,18 +262,29 @@ export class CodexSession implements NativeSession {
      * (`createMemoryHookProbe`). Left undefined, Shell never counts the hook as delivering and always sends its own block, as before the hook existed.
      */
     private memoryHookVerified?: () => Promise<boolean>,
+    /**
+     * Injected by the composition root (`app/native-chat.ts`): opens a new connection to the app-server. With it, a `/f614:stop` that Codex never answers (which closes the
+     * connection) is followed by a reconnection that resumes the same conversation; without it the connection stays closed and the person is told to restart Shell.
+     */
+    private reconnectFn?: () => RpcConnection,
   ) {
     this.locale = locale;
     this.auth = this.t.notLoggedIn;
     this.quotas = this.t.quotaNotReported;
     this.tokens = this.t.tokensNotReported;
+    this.attach(rpc);
+  }
+
+  /**
+   * Wires a connection to this session: its notifications and requests, and what happens when it closes. The reason the transport (`RpcConnection`) closed is shown once:
+   * by the turn that was waiting (its rejection reaches the screen), or here when no turn waits. A Shell error (the request timeout) is written in the person's language;
+   * anything else is the transport's own text and stays literal. The timeout of the stop request itself is left to `interruptTurn`, which ends the turn quietly and tells
+   * the person in its own words; and a connection that closes while Shell is reconnecting is that attempt failing, which `interruptTurn` reports.
+   */
+  private attach(rpc: RpcConnection): void {
     rpc.onNotification = (method, params) => this.notification(method, params);
-    rpc.onRequest = (method, params) => this.request(method, params);
-    // The reason the transport (`RpcConnection`) closed is shown once: by the turn that was waiting (its rejection reaches the
-    // screen), or here when no turn waits. A Shell error (the request timeout) is written in the person's language; anything
-    // else is the transport's own text and stays literal. The timeout of the stop request itself is left to `interruptTurn`,
-    // which ends the turn quietly and tells the person in its own words.
-    rpc.onClose = error => {
+    rpc.onRequest = (method, params) => this.request(method, params);    rpc.onClose = error => {
+      if (this.reconnecting && rpc !== this.rpc) return;
       const stopTimedOut = this.interrupting && isRequestTimeout(error);
       const reported = this.finishTurn !== undefined;
       this.aborted.abort(); this.loginId = undefined; this.busy = false;
@@ -305,6 +318,8 @@ export class CodexSession implements NativeSession {
       cursor = response.nextCursor ?? undefined;
     } while (cursor);
     await this.readQuotas();
+    // Whether the startup hook delivers the memory is asked now, in the background (it needs this connection for `hooks/list`), so the first message finds the answer instead of waiting for it.
+    void this.memoryDeliveredByAssistant();
   }
   /**
    * Builds the mode list from what Codex allows (`configRequirements/read`) and from whether its
@@ -565,6 +580,8 @@ export class CodexSession implements NativeSession {
     }
   }
   async send(text: string): Promise<void> {
+    // Only waits when a reconnection is really in progress: an `await` on nothing would still give up a turn of the event loop, and `busy` (which the screen reads right after calling this) would be set late.
+    if (this.reconnecting) await this.reconnecting;
     if (this.detourState) return this.sendInDetour(text);
     this.idle(); if (!text.trim()) return;
     if (this.disconnected) throw new ShellError("codex-requires-login-to-send");
@@ -1423,10 +1440,46 @@ export class CodexSession implements NativeSession {
       return "requested";
     } catch (error) {
       const timedOut = isRequestTimeout(error);
-      this.emit({ type: "text", text: timedOut ? this.t.stopNoAnswer : this.t.stopNoActiveTurn });
+      // Codex did not answer, so the transport closed itself: open the app-server again and resume the same conversation; only if that cannot be done is the person told to restart Shell.
+      const reconnected = timedOut && await this.startReconnecting();
+      this.emit({ type: "text", text: reconnected ? this.t.stopReconnected : timedOut ? this.t.stopNoAnswer : this.t.stopNoActiveTurn });
       this.finishTurn?.();
       return timedOut ? "no-answer" : "no-active-turn";
     } finally { this.interrupting = false; }
+  }
+  /** Runs `reconnectAfterStop` once and keeps its promise in `reconnecting` until it ends, so a message sent meanwhile waits for it. */
+  private startReconnecting(): Promise<boolean> {
+    const attempt = this.reconnectAfterStop().finally(() => { if (this.reconnecting === attempt) this.reconnecting = undefined; });
+    this.reconnecting = attempt;
+    return attempt;
+  }
+  /**
+   * Opens a new connection with the injected factory, greets it (`initialize`, `initialized`), makes it the session's own and resumes THE SAME conversation on it
+   * (`thread/resume` with the same id, through `openThread`). The memory block already went into that conversation, so it is not queued again. Any failure closes the
+   * new connection and answers false: the caller then says what it always said (the connection is closed, restart Shell). Nothing else about the session changes:
+   * model, work mode, account and the rest were read from the first connection and are kept.
+   */
+  private async reconnectAfterStop(): Promise<boolean> {
+    const open = this.reconnectFn;
+    if (!open) return false;
+    let next: RpcConnection | undefined;
+    try {
+      next = open();
+      this.attach(next);
+      await next.request("initialize", { clientInfo: { name: "forge614_shell", title: "Forge614-Shell", version: "0.1.0" }, capabilities: { experimentalApi: true } });
+      next.notify("initialized");
+      this.rpc = next;
+      this.aborted = new AbortController();
+      if (this.sessionId) {
+        const pending = this.pendingStartupContext;
+        this.loaded = false;
+        try { await this.openThread(this.selectedMode); } finally { this.pendingStartupContext = pending; }
+      }
+      return true;
+    } catch {
+      next?.close();
+      return false;
+    }
   }
   close(): void { this.aborted.abort(); this.rpc.close(); }
   private notification(method: string, params: any): void {
@@ -1475,8 +1528,8 @@ export class CodexSession implements NativeSession {
     if (method === "thread/tokenUsage/updated") {
       const usage = params.tokenUsage;
       this.tokens = this.t.sessionTokensLine({
-        input: String(usage.total.inputTokens), cached: String(usage.total.cachedInputTokens), output: String(usage.total.outputTokens),
-        lastContext: String(usage.last.totalTokens), window: usage.modelContextWindow !== undefined ? String(usage.modelContextWindow) : this.t.notReported,
+        input: formatCount(usage.total.inputTokens, this.locale), cached: formatCount(usage.total.cachedInputTokens, this.locale), output: formatCount(usage.total.outputTokens, this.locale),
+        lastContext: compactNumber(usage.last.totalTokens), window: usage.modelContextWindow !== undefined ? compactNumber(usage.modelContextWindow) : this.t.notReported,
       });
       if (typeof usage.last?.totalTokens === "number" && typeof usage.modelContextWindow === "number") this.context = { used: usage.last.totalTokens, window: usage.modelContextWindow };
       this.emit({ type: "status", text: "" });

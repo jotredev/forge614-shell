@@ -27,7 +27,7 @@ const RETIRED_BARE_NAMES = ["refresh", "yes", "no", "commands", "help", "thinkin
 /** The texts that may still say `/login` on its own: Claude Code's own command, named by Claude-only texts (with Codex it is `/f614:login`). */
 const CLAUDE_ONLY_LOGIN_TEXTS = [
   "chat.reconnectBeforeMessage", "claudeChat.couldNotVerifyAccount", "claudeChat.disconnectedLocally", "claudeChat.loginNotVerified",
-  "cli.help", "errors.claude-login-required", "errors.claude-subscription-required",
+  "claudePanels.apiKeyFromLogin", "cli.help", "errors.claude-login-required", "errors.claude-subscription-required",
 ];
 
 /** The Codex-only texts that send the person to sign in: they name Shell's `/f614:login` because Codex has no `/login` of its own. */
@@ -54,7 +54,7 @@ for (const locale of ["en", "es"] as const) {
 
   /**
    * `/login` is Claude Code's own command, so only Claude-only texts may say it bare; every other text that mentions it
-   * (the shared ones fill in the right command per assistant, the Codex ones say `/f614:login`).
+   * (the shared ones fill in the right command per assistant, the Codex ones say `/f614:login`). «created by /login» in `/status` is one: it says where Claude Code's own key came from.
    */
   test(`in ${locale} only Claude-only texts say /login without a prefix, and the Codex ones say /f614:login`, () => {
     const texts = catalogTexts(locale);

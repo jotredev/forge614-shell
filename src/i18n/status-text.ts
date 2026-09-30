@@ -38,3 +38,20 @@ export function quotaStatusText(status: string | undefined, locale: Locale = "en
   const words: Record<string, string> = { allowed: t.statusAllowed, allowed_warning: t.statusAllowedWarning, rejected: t.statusRejected };
   return words[status] ?? status.replaceAll("_", " ");
 }
+
+/** "1M", not "1000k" — and keeps one decimal (e.g. "1.5k") when rounding to a whole unit would lose real precision. */
+export function compactNumber(value: number): string {
+  const unit = (divisor: number, suffix: string) => {
+    const scaled = value / divisor;
+    const rounded = Math.round(scaled * 10) / 10;
+    return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}${suffix}`;
+  };
+  if (value >= 1_000_000) return unit(1_000_000, "M");
+  if (value >= 1_000) return unit(1_000, "k");
+  return String(value);
+}
+
+/** Whole number with the language's thousands separator: "2 996" in Spanish, "2,996" in English. Written by hand because `Intl` skips the separator on four-digit numbers in Spanish. */
+export function formatCount(value: number, locale: Locale = "en"): string {
+  return String(Math.round(value)).replace(/\B(?=(\d{3})+(?!\d))/g, locale === "es" ? " " : ",");
+}

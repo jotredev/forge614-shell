@@ -1,6 +1,6 @@
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
-import { formatMoment, limitName, quotaStatusText } from "../../i18n/status-text.ts";
+import { compactNumber, formatCount, formatMoment, limitName, quotaStatusText } from "../../i18n/status-text.ts";
 
 export interface Quota {
   status?: string;
@@ -55,18 +55,18 @@ export function updateTelemetry(state: Telemetry, event: Record<string, any>): T
 
 /**
  * The lines of `/f614:status`. Each limit shows with the sidebar's plain name, its status in words and its reset in local time
- * (`formatMoment`): never the provider's key (`five_hour`), its raw status (`allowed`) or a machine date.
+ * (`formatMoment`): never the provider's key (`five_hour`), its raw status (`allowed`) or a machine date. The counters read like Codex's
+ * `/status`: the tokens with the thousands separator of the language (`formatCount`), the context compact (`compactNumber`, «20.2k / 258.4k»).
  */
 export function telemetryLines(state: Telemetry, locale: Locale = "en"): string[] {
   const t = getCatalog(locale).telemetry;
   const unknown = t.notReported;
+  const count = (value: number | undefined) => value === undefined ? unknown : formatCount(value, locale);
+  const compact = (value: number | undefined) => value === undefined ? unknown : compactNumber(value);
   return [
     t.modelLine({ model: state.model ?? unknown, effort: state.effort === null ? t.effortNone : state.effort ?? unknown }),
-    t.tokensLine({
-      input: String(state.inputTokens ?? unknown), output: String(state.outputTokens ?? unknown),
-      cacheRead: String(state.cacheRead ?? unknown), cacheWrite: String(state.cacheWrite ?? unknown),
-    }),
-    t.contextLine({ used: String(state.contextTokens ?? unknown), window: String(state.contextWindow ?? unknown) }),
+    t.tokensLine({ input: count(state.inputTokens), output: count(state.outputTokens), cacheRead: count(state.cacheRead), cacheWrite: count(state.cacheWrite) }),
+    t.contextLine({ used: compact(state.contextTokens), window: compact(state.contextWindow) }),
     t.costLine({ estimate: state.estimateUSD === undefined ? unknown : `$${state.estimateUSD.toFixed(4)}` }),
     ...(["five_hour", "seven_day", ...Object.keys(state.quotas).filter(key => key !== "five_hour" && key !== "seven_day")].map(key => {
       const quota = state.quotas[key];

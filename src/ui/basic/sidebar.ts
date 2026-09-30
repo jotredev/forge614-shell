@@ -86,8 +86,9 @@ export class ShellSidebar implements Component {
     }
     if (snapshot.context) {
       const used = percent(snapshot.context.used, snapshot.context.window);
+      // The three lines beside the ring sit on its rows 3 to 5 of 7, around the middle row where the percentage is written.
       const details = [t.conversationLabel, t.percentUsed({ percent: used }), t.percentFree({ percent: Math.max(0, 100 - used) })];
-      lines.push("", ...heading(t.headingContext), ...contextRing(used).map((ring, i) => line(ring + "  " + muted(details[i - 1] ?? ""))), line(`${compactNumber(snapshot.context.used)} / ${compactNumber(snapshot.context.window)} tokens`));
+      lines.push("", ...heading(t.headingContext), ...contextRing(used).map((ring, i) => line(ring + "  " + muted(details[i - 2] ?? ""))), line(`${compactNumber(snapshot.context.used)} / ${compactNumber(snapshot.context.window)} tokens`));
     } else lines.push("", ...heading(t.headingContext), ...note(snapshot.sessionId ? t.contextAfterNextMessage : t.contextAfterFirstMessage));
     const usage = snapshot.usage?.filter(item => isDisplayableUsage(item.label)) ?? [];
     if (usage.length) {

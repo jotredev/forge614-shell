@@ -19,8 +19,9 @@ function defaultForgeCommands(locale: Locale): ComposerChoice[] {
 /**
  * `search`, when set, is the text a searchable picker matches typed words against; without it the row's display and label are searched.
  * `key`, when set, is a single letter that picks the row straight away in a picker that is not searchable (uppercase or lowercase).
+ * `action: true` marks a row that does something (Marketplaces, Import selected, Cancel) instead of being one of the listed elements: the footer's count leaves it out.
  */
-export interface ComposerChoice { value: string; label: string; display?: string; group?: string; search?: string; key?: string; }
+export interface ComposerChoice { value: string; label: string; display?: string; group?: string; search?: string; key?: string; action?: boolean; }
 /**
  * How a picker opens: `searchable` filters as the person types; `numbered: false` drops the «1.» before each row; `footer` replaces the
  * default «title · 1–2 of 2 · …» line; `body` is an explanation of the question, drawn wrapped under its title and gone with the picker;
@@ -28,6 +29,16 @@ export interface ComposerChoice { value: string; label: string; display?: string
  */
 export interface ComposerChooseOptions { searchable?: boolean; numbered?: boolean; footer?: string; body?: string; startAt?: string; }
 export interface ComposerCommandGroup { title: string; items: ComposerChoice[]; }
+
+/**
+ * The footer's «from–to of total» counted in elements only: rows marked `action` are not elements, so «Marketplaces» does not make 5015 plugins 5016.
+ * `start` and `end` are the window of rows shown (`end` exclusive); a window of nothing but actions reads «total of total» instead of running past the end.
+ */
+export function elementRange(items: ComposerChoice[], start: number, end: number): { from: number; to: number; total: number } {
+  const elements = (upTo: number) => items.slice(0, upTo).filter(item => !item.action).length;
+  const total = elements(items.length);
+  return { from: Math.min(elements(start) + 1, total), to: elements(end), total };
+}
 
 /** Lowercase and without accents, so «CAFÉ», «Café» and «cafe» all read the same when searching. */
 export function normalizeSearch(text: string): string {
@@ -100,7 +111,7 @@ function statusColor(status: string): (text: string) => string {
   const en = getCatalog("en").chat; const es = getCatalog("es").chat;
   const enTc = getCatalog("en").claudeChat; const esTc = getCatalog("es").claudeChat;
   if (status === en.statusReady || status === es.statusReady) return success;
-  if (status === en.awaitingPermission || status === es.awaitingPermission) return danger;
+  if (status === en.awaitingAnswer || status === es.awaitingAnswer) return danger;
   if (status === enTc.statusCheckingAccount || status === esTc.statusCheckingAccount) return muted;
   return warning; // e.g. "Connect with /login" — needs the person's attention
 }
@@ -313,6 +324,11 @@ export class ForgeComposer extends Editor {
   }
   setValue(value: string): void { this.setText(value); }
   setStatus(status: string): void { this.status = status; }
+  /**
+   * The status the box shows: while a selector or a question is open Shell waits for the person, and says so — «Waiting for your answer» — instead of
+   * the assistant's «Working», however often the status is set meanwhile; when it closes, the assistant's own status shows again.
+   */
+  private shownStatus(): string { return this.picker || this.textPrompt ? getCatalog(this.locale).chat.awaitingAnswer : this.status; }
   /** The work mode to show under the input, as its adapter lists it (none shows the engine's own default), and the collaboration modes when Shift+Tab switches those. */
   setWorkModeHint(mode?: NativeWorkMode, collaboration?: CollaborationHint): void { this.workModeHint = mode; this.collaborationHint = collaboration; this.repaint(); }
   handleMouse(event: TuiMouseEvent) {
@@ -355,7 +371,8 @@ export class ForgeComposer extends Editor {
     const innerWidth = Math.max(1, width - 4);
     if (width < 10) return super.render(Math.max(1, width));
     const editor = super.render(innerWidth).slice(1, -1);
-    const title = `  ${statusDot(this.status)} ${isWorkingStatus(this.status) ? fitStatus(this.status, width - 11) : this.status}  `;
+    const shown = this.shownStatus();
+    const title = `  ${statusDot(shown)} ${isWorkingStatus(shown) ? fitStatus(shown, width - 11) : shown}  `;
     const topFill = rule(Math.max(0, width - visibleWidth(title) - 5));
     const mode = this.workModeHint || this.collaborationHint?.modes.length ? workModePresentation(this.workModeHint, this.locale, this.collaborationHint) : undefined;
     const hint = mode ? mode.text : muted(t.helpOrCommandsHint);
@@ -390,12 +407,12 @@ export class ForgeComposer extends Editor {
           return item.label ? `${left}  ${muted(item.label)}` : left;
         })(), width),
       ]),
-      fit(muted(this.picker?.footer ?? t.menuFooter({ title: this.picker?.title ?? (skillList ? t.skillsFooterTitle : t.commandsFallbackTitle), from: start + 1, to: Math.min(start + 5, items.length), total: items.length })), width),
+      fit(muted(this.picker?.footer ?? t.menuFooter({ title: this.picker?.title ?? (skillList ? t.skillsFooterTitle : t.commandsFallbackTitle), ...elementRange(items, start, start + 5) })), width),
     ] : searchRow.length ? [...searchRow, fit(muted(t.searchNoMatches), width)] : [];
     return [
       ...menu,
       "",
-      fit(`${cyan("╭─")} ${statusColor(this.status)(title)} ${cyan(`${topFill}╮`)}`, width),
+      fit(`${cyan("╭─")} ${statusColor(shown)(title)} ${cyan(`${topFill}╮`)}`, width),
       `${cyan("│")} ${" ".repeat(innerWidth)} ${cyan("│")}`,
       ...editor.map(line => `${cyan("│")} ${fit(line, innerWidth)} ${cyan("│")}`),
       `${cyan("│")} ${" ".repeat(innerWidth)} ${cyan("│")}`,

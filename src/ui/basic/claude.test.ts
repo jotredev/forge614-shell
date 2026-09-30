@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { startClaudeUI } from "./claude.ts";
+import { claudeMenuCommands, startClaudeUI } from "./claude.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import { emptyTelemetry, telemetryLines } from "../../engines/claude/telemetry.ts";
 
@@ -209,13 +209,15 @@ else {
     expect(screen).toContain(`Carpeta: ${process.cwd()}`);
     expect(screen).toContain("rtk grep -rn changelog .");
     expect(screen).toContain("› Sí");
+    // While the question waits the box says so (it used to say «Trabajando»).
+    expect(screen).toContain("Esperando tu respuesta");
     for (const internal of ["\"command\"", "\"description\"", "Permiso solicitado: Bash", "/yes", "/no denegar", "Denegar"]) expect(screen).not.toContain(internal);
     terminal.input("\r");
     for (let i = 0; i < 60 && !existsSync(marker); i++) await tick();
     expect(readFileSync(marker, "utf8")).toBe("allow\n");
     for (let i = 0; i < 60 && !plain().includes(getCatalog("es").chat.statusReady); i++) await tick();
     enter("run it again"); await tick();
-    for (let i = 0; i < 60 && !plain().includes(getCatalog("es").chat.awaitingPermission); i++) await tick();
+    for (let i = 0; i < 60 && !plain().includes(getCatalog("es").chat.awaitingAnswer); i++) await tick();
     await tick();
     terminal.input("\x1b");
     for (let i = 0; i < 60 && readFileSync(marker, "utf8") === "allow\n"; i++) await tick();
@@ -311,9 +313,11 @@ else {
  * A Claude Code screen over a fake `claude` that is signed in, reports `commands` as the assistant's own list, never answers a
  * prompt (so a turn stays open until it is stopped) and writes what it receives to a marker file: one `control` line per control
  * request and one `prompt:` line per chat prompt. With `rateLimit`, each prompt is also answered with that `rate_limit_event`
- * (the turn still stays open). No real account or network is involved. `finish` leaves the screen and cleans up.
+ * (the turn still stays open), and with `events`, each prompt is also answered with those messages (an `init`, say). `account` is what the handshake
+ * reports. `beforeStart` runs with the `$FORGE614_HOME` of the test before the screen opens (to install a stand-in for Engines, whose startup-hook check runs at
+ * opening). No real account or network is involved. `finish` leaves the screen and cleans up.
  */
-async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120) {
+async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120, events: object[] = [], account: object = { email: "test@example.com" }, beforeStart?: (forgeHome: string) => void) {
   const root = await mkdtemp(join(tmpdir(), "forge614-prefix-ui-"));
   const executable = join(root, "claude"); const marker = join(root, "calls");
   const terminal = new TestTerminal(); terminal.columns = columns;
@@ -321,14 +325,15 @@ async function claudeUi(commands: { name: string; description: string; argumentH
   const plain = () => stripVTControlCharacters(terminal.output);
   const previousForgeHome = process.env.FORGE614_HOME;
   process.env.FORGE614_HOME = join(root, "forge614-home");
+  beforeStart?.(process.env.FORGE614_HOME);
   await writeFile(executable, `#!${process.execPath}
 const fs=require('fs');
 if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
 else {
   require('readline').createInterface({input:process.stdin}).on('line',line=>{
     const msg=JSON.parse(line);
-    if(msg.type==='control_request') { fs.appendFileSync(${JSON.stringify(marker)},'control\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:${JSON.stringify(commands)},agents:[],output_style:'default',available_output_styles:[]}}})); }
-    if(msg.type==='user') { fs.appendFileSync(${JSON.stringify(marker)},'prompt:'+JSON.stringify(msg.message.content)+'\\n'); for (const info of ${JSON.stringify(rateLimit ?? [])}) console.log(JSON.stringify({type:'rate_limit_event',rate_limit_info:info,uuid:'00000000-0000-4000-8000-000000000001',session_id:'s'})); }
+    if(msg.type==='control_request') { fs.appendFileSync(${JSON.stringify(marker)},'control\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:${JSON.stringify(account)},commands:${JSON.stringify(commands)},agents:[],output_style:'default',available_output_styles:[]}}})); }
+    if(msg.type==='user') { fs.appendFileSync(${JSON.stringify(marker)},'prompt:'+JSON.stringify(msg.message.content)+'\\n'); for (const info of ${JSON.stringify(rateLimit ?? [])}) console.log(JSON.stringify({type:'rate_limit_event',rate_limit_info:info,uuid:'00000000-0000-4000-8000-000000000001',session_id:'s'})); for (const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event)); }
   });
 }`, { mode: 0o755 });
   const ui = startClaudeUI([], executable, terminal, undefined, locale);
@@ -394,28 +399,160 @@ test.skipIf(process.platform === "win32")("Claude UI: the old unprefixed Shell n
 });
 
 /**
- * `/status` and `/help` are Claude Code's own commands now (Shell's telemetry is `/f614:status`, Shell's menu `/f614:help`).
- * Shell has not connected them, so they answer with the honest message, never as unknown and never as a chat prompt; when
- * Claude Code itself reports one of them in its command list, it is forwarded as Claude Code's own instead.
+ * `/status` and `/help` are Claude Code's own commands (Shell's telemetry is `/f614:status`, Shell's menu `/f614:help`) and Shell answers them with what it has:
+ * they used to say «Claude Code doesn't allow /x from Shell yet». Neither is unknown, neither is sent to the model as a chat prompt, and when Claude Code itself
+ * reports one of them in its command list, it is forwarded as Claude Code's own instead.
  */
-test.skipIf(process.platform === "win32")("Claude UI: /status and /help are Claude Code's own: an honest message, or forwarded when Claude Code lists them", async () => {
+test.skipIf(process.platform === "win32")("Claude UI: /status and /help answer with what Shell has, send nothing, and are forwarded when Claude Code lists them", async () => {
   const bare = await claudeUi();
   try {
     for (const name of ["/status", "/help"]) {
       bare.terminal.output = ""; bare.enter(name); await tick();
-      expect(bare.plain(), name).toContain(getCatalog("en").claudeChat.commandNotAllowed({ name }));
+      expect(bare.plain(), name).not.toContain("doesn't allow");
       expect(bare.plain(), name).not.toContain(getCatalog("en").chat.unknownCommand({ name }));
     }
     expect(bare.calls().filter(line => line.startsWith("prompt:"))).toEqual([]);
   } finally { await bare.finish(); }
-  expect(getCatalog("en").claudeChat.commandNotAllowed({ name: "/status" })).toBe("Claude Code doesn't allow /status from Shell yet.");
-  expect(getCatalog("es").claudeChat.commandNotAllowed({ name: "/status" })).toBe("Claude Code no permite /status desde Shell todavía.");
   const listed = await claudeUi([{ name: "status", description: "Show status", argumentHint: "" }]);
   try {
     listed.enter("/status");
     for (let i = 0; i < 30 && !listed.calls().some(line => line.startsWith("prompt:")); i++) await tick();
     expect(listed.calls().filter(line => line.startsWith("prompt:"))).toEqual(["prompt:\"/status\""]);
   } finally { await listed.finish(); }
+});
+
+/**
+ * Before any message Claude Code's `/status` in Shell shows what Shell has without a turn: the folder, the account of the handshake, the permission mode, the memory
+ * and the setting sources — and says that version, session and MCP servers appear after the first message. Spanish and English; the lines are Claude Code's Status panel's.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: /status before any message shows the account, folder and mode, and says what appears later", async () => {
+  for (const locale of ["en", "es"] as const) {
+    const h = await claudeUi([], locale, undefined, 200, [], { email: "test@example.com", organization: "Acme", subscriptionType: "max", apiProvider: "firstParty" });
+    try {
+      h.terminal.output = ""; h.enter("/status");
+      const t = getCatalog(locale).claudePanels;
+      for (let i = 0; i < 60 && !h.plain().includes(t.statusTitle); i++) await tick();
+      const shown = h.plain();
+      for (const line of [t.statusTitle, `${t.labelFolder}: ${process.cwd()}`, `${t.labelEmail}: test@example.com`, `${t.labelOrganization}: Acme`, `${t.labelPlan}: max`,
+        `${t.labelPermissionMode}: Manual`, `${t.labelSettingSources}: ${locale === "en" ? "user, project, local" : "usuario, proyecto, local"}`, t.statusAfterFirstMessage]) expect(shown).toContain(line);
+      for (const label of [t.labelVersion, t.labelSession, t.labelMcpServers]) expect(shown).not.toContain(`${label}:`);
+      expect(shown).not.toMatch(/undefined|desconocid/);
+      expect(h.calls().filter(line => line.startsWith("prompt:"))).toEqual([]);
+    } finally { await h.finish(); }
+  }
+});
+
+/**
+ * After a turn has started, the SDK's `init` message gives Shell the Claude Code version, the session, where the API key comes from and the MCP servers with their
+ * state; `/status` shows them — also while the turn is still open, as Claude Code's own does. The exact values come from the stand-in's message.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: /status shows the version, session, API key and MCP servers from the init message, also mid-turn", async () => {
+  const init = { type: "system", subtype: "init", session_id: "s-status-1", claude_code_version: "2.1.274", apiKeySource: "none", model: "claude-test", permissionMode: "default", cwd: process.cwd(),
+    mcp_servers: [{ name: "forge614-engram", status: "connected", source: "user" }, { name: "github", status: "failed", source: "project" }], slash_commands: [], tools: [], output_style: "default", skills: [], plugins: [],
+    uuid: "00000000-0000-4000-8000-000000000002" };
+  const h = await claudeUi([], "en", undefined, 200, [init]);
+  try {
+    h.enter("go"); await tick();
+    for (let i = 0; i < 60 && !h.plain().includes(getCatalog("en").chat.statusWorking); i++) await tick();
+    for (let i = 0; i < 60 && !h.plain().includes("s-status-1"); i++) await tick();
+    h.terminal.output = ""; h.enter("/status");
+    for (let i = 0; i < 60 && !h.plain().includes("MCP servers:"); i++) await tick();
+    const shown = h.plain();
+    for (const line of ["Claude Code status", "Version: 2.1.274", "Session: s-status-1", `Folder: ${process.cwd()}`, "Email: test@example.com", "API key: none in use", "Permission mode: Manual",
+      "MCP servers: forge614-engram (connected), github (failed)"]) expect(shown).toContain(line);
+    expect(shown).not.toContain(getCatalog("en").claudePanels.statusAfterFirstMessage);
+  } finally { await h.finish(); }
+});
+
+/**
+ * After a confirmed `/logout` the account is gone from the session, so `/status` no longer shows the email, the organization or the plan of the account that was
+ * disconnected (it kept them, because `reset()` only forgot the conversation). It still answers, with the folder and the mode.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: /status after a confirmed /logout shows no account data", async () => {
+  const h = await claudeUi([], "en", undefined, 200, [], { email: "test@example.com", organization: "Acme", subscriptionType: "max", apiProvider: "firstParty" });
+  try {
+    const t = getCatalog("en").claudePanels;
+    h.enter("/logout"); await tick();
+    h.terminal.input("\r");
+    const confirmed = getCatalog("en").claudeChat.disconnectedLocally.slice(0, 40);
+    for (let i = 0; i < 30 && !h.plain().includes(confirmed); i++) await tick();
+    h.terminal.output = ""; h.enter("/status");
+    for (let i = 0; i < 60 && !h.plain().includes(t.statusTitle); i++) await tick();
+    const shown = h.plain();
+    expect(shown).toContain(`${t.labelFolder}: ${process.cwd()}`);
+    for (const label of [t.labelEmail, t.labelOrganization, t.labelPlan]) expect(shown).not.toContain(`${label}:`);
+    expect(shown).not.toContain("test@example.com");
+    expect(shown).not.toContain("Acme");
+  } finally { await h.finish(); }
+});
+
+/**
+ * `/new` forgets what the newest turn's `init` message reported, as it forgets the session: `/status` shows no Version and no MCP servers until the first message
+ * of the new conversation brings them again (it kept the previous turn's). The values are the stand-in's own.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: /status after /new drops the version and MCP servers until the first message", async () => {
+  const init = { type: "system", subtype: "init", session_id: "s-new-1", claude_code_version: "2.1.274", apiKeySource: "none", model: "claude-test", permissionMode: "default", cwd: process.cwd(),
+    mcp_servers: [{ name: "forge614-engram", status: "connected", source: "user" }], slash_commands: [], tools: [], output_style: "default", skills: [], plugins: [],
+    uuid: "00000000-0000-4000-8000-000000000003" };
+  const h = await claudeUi([], "en", undefined, 200, [init]);
+  try {
+    h.enter("go");
+    for (let i = 0; i < 60 && !h.plain().includes("s-new-1"); i++) await tick();
+    h.enter("/status");
+    for (let i = 0; i < 60 && !h.plain().includes("Version: 2.1.274"); i++) await tick();
+    expect(h.plain()).toContain("MCP servers: forge614-engram (connected)");
+    h.enter("/f614:stop"); await tick(); await tick(); await tick();
+    h.enter("/new"); await tick(); await tick();
+    h.terminal.output = ""; h.enter("/status");
+    const t = getCatalog("en").claudePanels;
+    for (let i = 0; i < 60 && !h.plain().includes(t.statusTitle); i++) await tick();
+    const shown = h.plain();
+    expect(shown).toContain(t.statusAfterFirstMessage);
+    for (const label of [t.labelVersion, t.labelSession, t.labelMcpServers]) expect(shown).not.toContain(`${label}:`);
+    expect(shown).not.toContain("2.1.274");
+    // The first message of the new conversation brings them back.
+    h.enter("again");
+    for (let i = 0; i < 60 && !h.calls().filter(line => line.startsWith("prompt:")).length; i++) await tick();
+    await tick(); await tick();
+    h.terminal.output = ""; h.enter("/status");
+    for (let i = 0; i < 60 && !h.plain().includes("MCP servers:"); i++) await tick();
+    expect(h.plain()).toContain("Version: 2.1.274");
+  } finally { await h.finish(); }
+}, 30_000);
+
+/**
+ * `/help` lists the commands of the `/` menu with their description — Claude Code's own (from its list), the ones Shell carries out with Claude Code's meaning
+ * (`/status` and `/help` among them now) — and the shortcuts Shell respects. It sends nothing to the model.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: /help lists the menu's commands with their description and the shortcuts, in both languages", async () => {
+  const commands = [{ name: "compact", description: "Clear conversation history but keep a summary in context", argumentHint: "<instructions>" }];
+  for (const locale of ["en", "es"] as const) {
+    const h = await claudeUi(commands, locale, undefined, 200);
+    try {
+      h.terminal.output = ""; h.enter("/help");
+      const t = getCatalog(locale).claudePanels; const c = getCatalog(locale).chat;
+      for (let i = 0; i < 60 && !h.plain().includes(t.helpShortcuts); i++) await tick();
+      const shown = h.plain();
+      for (const line of [t.helpTitle, t.helpCommands, "/compact  Clear conversation history but keep a summary in context", `/status   ${c.commandShowStatus}`, `/help     ${c.commandShowHelp}`,
+        `/model    ${c.commandSelectModel}`, t.helpShellCommands, t.helpShortcuts, `Shift+Tab      ${t.keyCycleModes}`]) expect(shown).toContain(line);
+      expect(shown).not.toContain("Ctrl+R");
+      expect(h.calls().filter(line => line.startsWith("prompt:"))).toEqual([]);
+    } finally { await h.finish(); }
+  }
+});
+
+/**
+ * The `/` menu's Claude Code group and `/help` are made by one function, so they cannot disagree. It lists the commands Claude Code reports first, then the ones Shell
+ * carries out with Claude Code's meaning (`/status` and `/help` included, with Claude Code's descriptions), and never one twice when Claude Code lists it as well.
+ */
+test("the menu's Claude Code commands come from one function: Claude Code's own first, then Shell's, none twice", () => {
+  const c = getCatalog("en").chat;
+  const rows = claudeMenuCommands([{ name: "status", description: "Its own status", argumentHint: "" }, { name: "compact", description: "Compact", argumentHint: "" }], c);
+  expect(rows.map(row => row.value)).toEqual(["/status", "/compact", "/model", "/effort", "/resume", "/new", "/login", "/logout", "/exit", "/help"]);
+  expect(rows.find(row => row.value === "/status")!.label).toBe("Its own status");
+  expect(rows.at(-1)).toEqual({ value: "/help", label: "Show help and available commands" });
+  expect(claudeMenuCommands([], c).find(row => row.value === "/status")!.label).toBe(c.commandShowStatus);
+  expect(claudeMenuCommands([{ name: "x", description: "", argumentHint: "<file>" }], c)[0]).toEqual({ value: "/x", label: "<file>" });
 });
 
 /**
@@ -549,6 +686,7 @@ test.skipIf(process.platform === "win32")("Claude UI: the / menu keeps the assis
  * `/f614:status` says where the memory comes from, so the person can check it without asking the model (the memory used to arrive twice: measured with a
  * real account on 2026-09-29, build of 067e348). Through the real composition root: with no Engines under `$FORGE614_HOME` Shell cannot know that the
  * startup hook delivers, so it says «Shell pastes it»; with an Engines that reports the hook active, it says the assistant delivers it (the exact words in both languages are checked in `memory-source.test.ts`).
+ * The check runs when the session opens (not at the first message), once for the whole run: an Engines installed after opening is not noticed until the next run.
  */
 test.skipIf(process.platform === "win32")("Claude UI: /f614:status says who delivers the memory, from the one detection of the run", async () => {
   const h = await claudeUi();
@@ -557,11 +695,19 @@ test.skipIf(process.platform === "win32")("Claude UI: /f614:status says who deli
     expect(h.plain()).toContain("Memory: Shell pastes it");
     expect(h.plain()).not.toContain("delivers it at startup");
   } finally { await h.finish(); }
-  const second = await claudeUi();
-  try {
-    const bin = join(process.env.FORGE614_HOME!, "engines", "bin"); mkdirSync(bin, { recursive: true });
-    const verification = { agentId: "claude-code", mcp: { path: "/x", present: true }, instructions: { supported: true, paths: [], present: true }, hook: { supported: true, path: "/x", present: true, dryRunOk: true, runtimeStatus: { kind: "runtime-observed" } }, overallStatus: "complete" };
+  const verification = { agentId: "claude-code", mcp: { path: "/x", present: true }, instructions: { supported: true, paths: [], present: true }, hook: { supported: true, path: "/x", present: true, dryRunOk: true, runtimeStatus: { kind: "runtime-observed" } }, overallStatus: "complete" };
+  const installEngines = (forgeHome: string) => {
+    const bin = join(forgeHome, "engines", "bin"); mkdirSync(bin, { recursive: true });
     writeFileSync(join(bin, "forge614-engines"), `#!${process.execPath}\nconsole.log(JSON.stringify({schemaVersion:1,verification:${JSON.stringify(verification)}}));\n`, { mode: 0o755 });
+  };
+  const late = await claudeUi();
+  try {
+    installEngines(process.env.FORGE614_HOME!);
+    late.terminal.output = ""; late.enter("/f614:status"); await tick(); await tick();
+    expect(late.plain()).toContain("Memory: Shell pastes it");
+  } finally { await late.finish(); }
+  const second = await claudeUi([], "en", undefined, 120, [], { email: "test@example.com" }, installEngines);
+  try {
     second.terminal.output = ""; second.enter("/f614:status");
     for (let i = 0; i < 60 && !second.plain().includes("Memory: "); i++) await tick();
     expect(second.plain()).toContain("Memory: the assistant delivers it at startup");

@@ -123,9 +123,9 @@ async function enableSubagents(screen: CodexCommandScreen): Promise<void> {
 
 /**
  * `/agents` with the embedded server, which is Shell's case (`open_agents_overview`): Codex's «Shared agents unavailable» and why. Codex would offer to start a background
- * server; Shell does not connect one, so it says that instead and offers nothing to start.
+ * server; Shell does not connect one, so it says that instead and offers nothing to start (and leaves out Codex's note about starting one, which only confused).
  */
 function agents(screen: CodexCommandScreen): void {
   const nt = getCatalog(screen.locale).codexNative;
-  screen.write([nt.agentsUnavailableTitle, nt.agentsUnavailableSubtitle, nt.agentsUnavailableNote, nt.agentsNoServer].join("\n"));
+  screen.write([nt.agentsUnavailableTitle, nt.agentsUnavailableSubtitle, nt.agentsNoServer].join("\n"));
 }

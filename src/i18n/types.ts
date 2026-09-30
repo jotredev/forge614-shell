@@ -255,6 +255,8 @@ export interface Catalog {
     commandSelectReasoning: string;
     commandChatHistory: string;
     commandNewConversation: string;
+    commandShowStatus: string;
+    commandShowHelp: string;
     commandConnectAccount: string;
     commandDisconnectLocally: string;
     commandSessionDetails: string;
@@ -263,7 +265,7 @@ export interface Catalog {
     commandBrowseCommands: string;
     commandExitShell: string;
     permissionRequestedTitle: string;
-    awaitingPermission: string;
+    awaitingAnswer: string;
     noPermissionPending: string;
     answerPendingPermissionFirst: string;
     unknownCommand: (params: { name: string }) => string;
@@ -328,7 +330,6 @@ export interface Catalog {
     claudeError: (params: { message: string }) => string;
     finishOrStopFirst: string;
     /** A command of Claude Code's own that Shell has not connected yet (`/status`, `/help`): said honestly, never as an unknown command. */
-    commandNotAllowed: (params: { name: string }) => string;
     workOrAuthActive: string;
     checkingAccount: string;
     connectedExistingAccount: string;
@@ -359,6 +360,18 @@ export interface Catalog {
   memorySource: {
     byAssistant: string;
     byShell: string;
+  };
+  /** The texts of Claude Code's own `/status` and `/help` as Shell shows them (`claudeStatusLines`, `claudeHelpLines`). */
+  claudePanels: {
+    statusTitle: string;
+    labelVersion: string; labelSession: string; labelFolder: string; labelEmail: string; labelOrganization: string; labelPlan: string;
+    labelApiKey: string; labelProvider: string; labelModel: string; labelPermissionMode: string; labelSettingSources: string; labelMcpServers: string;
+    apiKeyFromEnvironment: string; apiKeyFromHelper: string; apiKeyFromLogin: string; apiKeyNone: string;
+    settingSourceUser: string; settingSourceProject: string; settingSourceLocal: string;
+    mcpNone: string; mcpConnected: string; mcpFailed: string; mcpNeedsSignIn: string; mcpConnecting: string; mcpDisabled: string;
+    statusAfterFirstMessage: string;
+    helpTitle: string; helpCommands: string; helpShellCommands: string; helpShortcuts: string;
+    keySend: string; keyNewLine: string; keyCycleModes: string; keyAcceptCommand: string; keyCloseMenu: string; keyLeave: string;
   };
   telemetry: {
     notReported: string;
@@ -518,6 +531,7 @@ export interface Catalog {
     engineErrorFallback: string;
     /** What the person is told, once, when `/f614:stop` ends the turn on Shell's side: Codex did not answer in time (the connection is closed), or said no turn was running. */
     stopNoAnswer: string;
+    stopReconnected: string;
     stopNoActiveTurn: string;
     stopNotFinished: string;
     sessionTokensLine: (params: { input: string; cached: string; output: string; lastContext: string; window: string }) => string;
@@ -901,7 +915,6 @@ export interface Catalog {
     /** `/agents` with the embedded server: Codex's «Shared agents unavailable», and Shell's line saying it does not start that server. */
     agentsUnavailableTitle: string;
     agentsUnavailableSubtitle: string;
-    agentsUnavailableNote: string;
     agentsNoServer: string;
   };
   /**

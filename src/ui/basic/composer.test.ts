@@ -2,8 +2,9 @@ import { expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
-import { ForgeComposer } from "./composer.ts";
+import { ForgeComposer, elementRange } from "./composer.ts";
 import type { ComposerChoice } from "./composer.ts";
+import { getCatalog } from "../../i18n/index.ts";
 
 const fakeTui = { requestRender() {}, terminal: { rows: 40, columns: 100 } } as unknown as TUI;
 const items: ComposerChoice[] = [
@@ -232,4 +233,57 @@ test("startAt starts the cursor on the named row without marking it as the curre
   expect(screen(composer)).not.toContain("✓");
   composer.handleInput("\r");
   expect(await result).toBe("c");
+});
+
+/**
+ * Came out of the third real-account test (`/plugins` said 5015 above and 5016 in the footer): rows marked `action` are not elements of the list, so the
+ * footer's «from–to of total» leaves them out. Exact values for a window at the start, one that ends on the action row, one holding only actions, and no actions at all.
+ */
+test("the footer range counts elements only and leaves out rows marked as actions", () => {
+  const plugins: ComposerChoice[] = [
+    ...Array.from({ length: 7 }, (_, i) => ({ value: `p${i}`, label: "" })),
+    { value: "@marketplaces", label: "", action: true },
+  ];
+  expect(elementRange(plugins, 0, 5)).toEqual({ from: 1, to: 5, total: 7 });
+  expect(elementRange(plugins, 3, 8)).toEqual({ from: 4, to: 7, total: 7 });
+  expect(elementRange(plugins, 7, 8)).toEqual({ from: 7, to: 7, total: 7 });
+  expect(elementRange(plugins.slice(0, 7), 0, 5)).toEqual({ from: 1, to: 5, total: 7 });
+  expect(elementRange([{ value: "x", label: "", action: true }], 0, 1)).toEqual({ from: 0, to: 0, total: 0 });
+});
+
+/**
+ * Came out of the third real-account test: while Shell waited for the person (a confirmation, a command's selector, a permission question) the box
+ * still said «Working». The box now says «Waiting for your answer» for as long as a selector or a question is open — even if the busy status is set again
+ * meanwhile, as the refresh ticker does — and goes back to the assistant's own status when it closes. Exact texts, in both languages.
+ */
+test("while a selector or a question is open the box says it waits for the person's answer, and goes back to Working after", async () => {
+  for (const locale of ["en", "es"] as const) {
+    const t = getCatalog(locale).chat;
+    const composer = new ForgeComposer(fakeTui, locale);
+    composer.setStatus(`${t.statusWorking} · 5s`);
+    expect(screen(composer)).toContain(`${t.statusWorking} · 5s`);
+    const chosen = composer.choose("Resume", items);
+    composer.setStatus(`${t.statusWorking} · 6s`);
+    expect(t.awaitingAnswer).toBe(locale === "en" ? "Waiting for your answer" : "Esperando tu respuesta");
+    expect(screen(composer)).toContain(t.awaitingAnswer);
+    expect(screen(composer)).not.toContain(t.statusWorking);
+    composer.handleInput("\x1b"); expect(await chosen).toBeUndefined();
+    expect(screen(composer)).toContain(`${t.statusWorking} · 6s`);
+    expect(screen(composer)).not.toContain(t.awaitingAnswer);
+    const answered = composer.ask("Note", "Write here");
+    expect(screen(composer)).toContain(t.awaitingAnswer);
+    expect(screen(composer)).not.toContain(t.statusWorking);
+    composer.handleInput("\x1b"); expect(await answered).toBeUndefined();
+    expect(screen(composer)).toContain(`${t.statusWorking} · 6s`);
+  }
+});
+
+/** With the assistant idle the box says «Ready» again after the selector closes, not «Waiting for your answer»: the wait belongs to the open question, not to the status. */
+test("after a selector closes an idle box says Ready", async () => {
+  const composer = new ForgeComposer(fakeTui, "en");
+  const chosen = composer.choose("Resume", items);
+  expect(screen(composer)).toContain("Waiting for your answer");
+  composer.handleInput("\r"); expect(await chosen).toBe("a");
+  expect(screen(composer)).toContain("Ready");
+  expect(screen(composer)).not.toContain("Waiting for your answer");
 });

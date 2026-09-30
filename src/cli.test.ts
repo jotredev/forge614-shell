@@ -68,3 +68,29 @@ test("--help prints Shell commands with the /f614: prefix in both languages", ()
     }
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+/**
+ * Came out of the third real-account test: `--help` said «Selections are not saved», which stopped being true when Shell began to remember the assistant used last (it
+ * comes highlighted) and each assistant's model, reasoning and work mode; and it said «Headless uses native permissions», when a start without an interactive terminal is refused.
+ * The real `--help`, in both languages, says what is true: the exact new lines are written out, and the two old claims are gone.
+ */
+test("--help says what Shell remembers and that a chat needs an interactive terminal, and no longer the old claims", () => {
+  const home = mkdtempSync(join(tmpdir(), "forge614-shell-cli-help-truth-"));
+  const expected = {
+    en: ["Shell remembers the assistant you used last (it comes highlighted) and each assistant's model, reasoning and work mode. It still asks every time: even a single available option waits for confirmation.",
+      "Starting a chat needs an interactive terminal; without one Shell refuses to start."],
+    es: ["Shell recuerda el último asistente que usaste (aparece resaltado) y el modelo, el razonamiento y el modo de trabajo de cada uno. Aun así pregunta cada vez: incluso con una sola opción disponible se espera confirmación.",
+      "Abrir un chat necesita una terminal interactiva; sin ella Shell no arranca."],
+  } as const;
+  try {
+    for (const locale of ["en", "es"] as const) {
+      const result = spawnSync("bun", [new URL("./cli.ts", import.meta.url).pathname, "--help"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000,
+        env: { PATH: process.env.PATH, HOME: home, FORGE614_HOME: join(home, "forge614"), FORGE614_SHELL_LOCALE: locale },
+      });
+      expect(result.status, locale).toBe(0);
+      for (const line of expected[locale]) expect(result.stdout, `${locale} ${line}`).toContain(line);
+      for (const old of ["Selections are not saved", "Las selecciones no se guardan", "Headless", "headless"]) expect(result.stdout, `${locale} ${old}`).not.toContain(old);
+    }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});

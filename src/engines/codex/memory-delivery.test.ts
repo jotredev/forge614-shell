@@ -152,3 +152,45 @@ test("memoryDeliveredByAssistant() is true only when verify and hooks/list agree
   expect(await plain.memoryDeliveredByAssistant()).toBe(false);
   expect(plainRpc.calls.some(call => call.method === "hooks/list")).toBe(false);
 });
+
+/**
+ * Came out of the third real-account test: the check of whether the startup hook delivers the memory (`verify memory-integration` and this session's `hooks/list`) was
+ * made when the first message was sent and delayed it by about a second. It is now asked when the session opens, in the background: before any message, once for the
+ * whole run, and every later message only reads its answer.
+ */
+test("Codex asks whether the startup hook delivers the memory when the session opens, before any message, and only once", async () => {
+  const engines = activeVerify(); const rpc = codexRpc(hooksListWithEngramHook());
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false, undefined, fetchMemory({ count: 0 }), "en", createMemoryHookProbe("codex", { home: "/Users/tester", run: engines.run }));
+  await session.initialize();
+  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+  expect(rpc.calls.some(call => call.method === "turn/start")).toBe(false);
+  expect(engines.commands).toEqual([["verify", "memory-integration", "--agent", "codex"]]);
+  expect(rpc.calls.filter(call => call.method === "hooks/list")).toHaveLength(1);
+  await runTurn(rpc, session, "first"); await runTurn(rpc, session, "second");
+  expect(engines.commands).toHaveLength(1);
+  expect(rpc.calls.filter(call => call.method === "hooks/list")).toHaveLength(1);
+  expect(inputsOf(rpc)).toEqual([[{ type: "text", text: "first" }], [{ type: "text", text: "second" }]]);
+});
+
+/**
+ * The check runs in the background: `initialize()` does not wait for it, so a slow check no longer holds the session opening. The first message waits for it only if it has
+ * not finished, and a check that ends with «no» (or fails) means Shell pastes its own block, as always.
+ */
+test("a slow startup-hook check does not hold the session opening; the first message waits for it and, if it says no, sends the block", async () => {
+  let release!: (delivers: boolean) => void; let asked = 0;
+  const probe = () => { asked++; return new Promise<boolean>(resolve => { release = resolve; }); };
+  const rpc = codexRpc(hooksListWithEngramHook());
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false, undefined, fetchMemory({ count: 0 }), "en", probe);
+  await session.initialize();
+  expect(asked).toBe(1);
+  const pending = session.send("hello");
+  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+  expect(rpc.calls.some(call => call.method === "turn/start")).toBe(false);
+  release(false);
+  await new Promise(resolve => setImmediate(resolve));
+  for (let i = 0; i < 5 && !rpc.calls.some(call => call.method === "turn/start"); i++) await new Promise(resolve => setImmediate(resolve));
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await pending;
+  expect(asked).toBe(1);
+  expect(JSON.stringify(inputsOf(rpc)[0])).toContain("forge614-engram-memory");
+});
