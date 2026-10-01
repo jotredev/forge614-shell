@@ -336,17 +336,35 @@ test("the assembled screen draws no box-drawing lines anywhere", () => {
   expect(lines[2]!.slice(0, 95).trim()).toBe(""); // the header keeps its third row, now blank
 });
 
+/** The footer needs one full-width breathing row above it while its text remains in its existing left and right columns and its own lower blank row stays. */
+test("workspace leaves one blank row above the status bar without moving its text", () => {
+  const terminal = { rows: 36 } as Terminal;
+  const empty = { invalidate() {}, render: () => [] as string[] };
+  const footer = new ShellStatusBar(() => ({ account: "connected", provider: "Claude Code" }), "/Users/forge/project", () => ({ path: "/p", git: true, branch: "main", changedFiles: 1 }), "/Users/forge");
+  const frame = renderLayoutFrame(workspaceLayout(empty, createComposer().component, fullSidebar(), footer, terminal, "/project"), 133, 36, () => {});
+  const rows = frame.lines;
+  const lines = plain(rows);
+  expect(frame.root.children.map(child => child.rect.height)).toEqual([33, 1, 2]);
+  const footerRow = lines.findIndex(line => line.includes("F614 ·"));
+  expect(lines[footerRow]!.indexOf("F614")).toBe(2);
+  expect(lines[footerRow - 1]!.trim()).toBe("");
+  expect(visibleWidth(rows[footerRow - 1]!)).toBe(133);
+  expect(backgrounds(rows[footerRow - 2]!).slice(2, 93).every(background => background === SURFACE)).toBe(true);
+  expect(backgrounds(rows[footerRow - 2]!).slice(97, 133).every(background => background === SURFACE)).toBe(true);
+  expect(lines.at(-1)!.trim()).toBe("");
+});
+
 /**
  * The sidebar column is one block of the surface gray from the top row to the bottom row of the screen's body, and the two columns of gap between the chat
- * and it keep the general background (that is where the contrast comes from). Read from the escape codes of every row at 133 columns: the rail starts at column
- * 97 (133 − 36), the gap is columns 95–96.
+ * and it keep the general background (that is where the contrast comes from). The one full-width breathing row before the footer is intentionally outside the
+ * rail. Read from the escape codes of every body row at 133 columns: the rail starts at column 97 (133 − 36), the gap is columns 95–96.
  */
 test("the sidebar column is the surface background on every row and the gap before it is the general one", () => {
   const terminal = { rows: 36 } as Terminal;
   const empty = { invalidate() {}, render: () => [] as string[] };
   const root = workspaceLayout(empty, empty, fullSidebar(), empty, terminal, "/project");
   const rows = renderLayoutFrame(root, 133, 36, () => {}).lines;
-  for (const [index, row] of rows.slice(0, 34).entries()) {
+  for (const [index, row] of rows.slice(0, 33).entries()) {
     const colored = backgrounds(row);
     expect({ index, rail: colored.slice(97, 133).every(background => background === SURFACE) }).toEqual({ index, rail: true });
     expect({ index, gap: colored.slice(95, 97) }).toEqual({ index, gap: [null, null] });
