@@ -2,11 +2,10 @@ import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works
 import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
 import type { ShellSnapshot } from "./shell-state.ts";
 import { readProjectInfo, type ProjectInfo } from "../../infrastructure/project-info.ts";
-import { formatMemory } from "../../infrastructure/runtime-resources.ts";
 import { ActivityCard } from "./transcript.ts";
 import { formatDuration } from "./duration.ts";
 
-import { accent as mint, warning as amber, muted, border, success } from "./theme.ts";
+import { accent as mint, warning as amber, bold, muted } from "./theme.ts";
 import { compactNumber, contextRing, formatCount, formatUsd, isDisplayableUsage, progressBar, resetLabel, usageTitle } from "./metrics.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
@@ -69,7 +68,8 @@ export class ShellSidebar implements Component {
     const line = (text = "") => cut(text, width);
     // Explanatory text wraps instead of being cut with "…": a reason the person cannot read is worse than a second row.
     const note = (text: string) => wrapTextWithAnsi(muted(text), Math.max(1, width));
-    const heading = (title: string) => [line(mint(`// ${title}`)), border("─".repeat(Math.max(0, width)))];
+    // A section title is one row in the accent color, bold: the space above it separates the sections, no rule is drawn under it.
+    const heading = (title: string) => [line(bold(mint(`// ${title}`)))];
     if (snapshot.account !== "connected") {
       const label = snapshot.account === "checking" ? t.checking : snapshot.account === "unknown" ? t.unverified : t.disconnected;
       return [...heading(t.headingSession), line(`${t.fieldAccount}  ${amber(label)}`), "", ...(snapshot.account === "checking" ? [line(muted(t.checkingNativeAccount))] : [line(mint(t.loginToConnect({ command: snapshot.loginCommand ?? "/login" })))])];
@@ -100,8 +100,7 @@ export class ShellSidebar implements Component {
       ]));
     } else lines.push("", ...heading(t.headingPlanUsage), ...note(t.usageUnavailable));
     // The last message's tokens and the pay-per-use estimate live right under PLAN USAGE — they're
-    // consumption info too, not a system resource like RAM below. Each is a short title followed by
-    // plain-language rows, so nothing has to fit on one line.
+    // consumption info too. Each is a short title followed by plain-language rows, so nothing has to fit on one line.
     if (snapshot.inputTokens !== undefined || snapshot.outputTokens !== undefined) {
       lines.push(line(t.lastMessageTitle));
       if (snapshot.inputTokens !== undefined) lines.push(...note(t.lastMessageRead({ tokens: formatCount(snapshot.inputTokens, this.locale) })));
@@ -112,10 +111,6 @@ export class ShellSidebar implements Component {
       lines.push(line(t.payPerUseTitle));
       lines.push(...note(snapshot.estimateUSD < 0.01 ? t.payPerUseUnderOneCent : t.payPerUseAmount({ amount: formatUsd(snapshot.estimateUSD, this.locale) })));
       lines.push(...note(t.planDoesNotBill));
-    }
-    if (snapshot.resources) {
-      lines.push("", ...heading(t.headingResources), line(`${muted(t.fieldShellRam)}  ${formatMemory(snapshot.resources.shellRssBytes)}`));
-      lines.push(line(`${muted(t.fieldEngineRam)}  ${snapshot.resources.engineRssBytes === undefined ? t.notReportedByEngine : formatMemory(snapshot.resources.engineRssBytes)}`));
     }
     this.activityRows = new Map();
     if (snapshot.backgroundActivitySupported !== undefined) {

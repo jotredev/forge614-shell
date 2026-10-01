@@ -449,7 +449,6 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     headingSession: "SESIÓN",
     headingContext: "CONTEXTO",
     headingPlanUsage: "USO DEL PLAN",
-    headingResources: "RECURSOS",
     fieldAccount: "Cuenta",
     fieldConnected: "Conectado",
     fieldProvider: "Proveedor",
@@ -475,9 +474,6 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     payPerUseAmount: ({ amount }) => `≈ ${amount}`,
     payPerUseUnderOneCent: "menos de $0,01",
     planDoesNotBill: "tu plan no lo cobra",
-    fieldShellRam: "RAM de Shell",
-    fieldEngineRam: "RAM del motor",
-    notReportedByEngine: "No reportado por el motor",
   },
   statusBar: {
     checkingAccount: "Verificando cuenta…",

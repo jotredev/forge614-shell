@@ -1,4 +1,4 @@
-import { accent, border, danger, warning } from "./theme.ts";
+import { accent, danger, faint, warning } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 import { compactNumber, formatCount, limitName } from "../../i18n/status-text.ts";
@@ -59,7 +59,7 @@ export function resetLabel(reset?: string, now = Date.now(), locale: Locale = "e
 export function progressBar(percent: number, width: number): string {
   const cells = Math.max(1, Math.floor(width));
   const used = Math.max(0, Math.min(cells, Math.round(percent / 100 * cells)));
-  return usageColor(percent)("█".repeat(used)) + border("░".repeat(cells - used));
+  return usageColor(percent)("█".repeat(used)) + faint("░".repeat(cells - used));
 }
 
 /** Cells the context ring is wide and rows it is tall. Both are odd on purpose: its center falls on the middle cell of the middle row, which is where the number is written. */
@@ -101,7 +101,7 @@ export function contextRing(percent: number): string[] {
         const angle = (Math.atan2(dx, -dy) + Math.PI * 2) % (Math.PI * 2);
         if (angle / (Math.PI * 2) < Math.max(0, Math.min(100, percent)) / 100) filled++;
       }
-      cells.push((filled ? color : border)(String.fromCharCode(0x2800 + mask)));
+      cells.push((filled ? color : faint)(String.fromCharCode(0x2800 + mask)));
     }
     return cells.join("");
   });

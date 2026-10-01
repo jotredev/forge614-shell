@@ -1,17 +1,56 @@
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
 import { createComposer, workModePresentation, spinnerFrame } from "./composer.ts";
 import { ShellStatusBar } from "./status-bar.ts";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { resetCapabilitiesCache, setCapabilityOverrides, visibleWidth } from "@earendil-works/pi-tui";
 import { renderLayoutFrame } from "../../../node_modules/@earendil-works/pi-tui/dist/layout.js";
 import { ChatText, accent, muted, warning } from "./theme.ts";
-import { workspaceLayout, IndependentScrollView, attachJumpToLatest } from "./workspace.ts";
+import { workspaceLayout, sidebarRail, IndependentScrollView, attachJumpToLatest } from "./workspace.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { ShellState } from "./shell-state.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Component, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
 
 const plain = (lines: string[]) => lines.map(stripVTControlCharacters);
+
+/** These tests read the exact RGB codes the screen emits, so they pin the color mode instead of taking whatever terminal runs the suite. */
+beforeAll(() => setCapabilityOverrides({ trueColor: true }));
+afterAll(() => resetCapabilitiesCache());
+
+const BACKGROUND = "48;2;10;10;11";
+const SURFACE = "48;2;24;24;27";
+const ELEVATED = "48;2;39;39;42";
+
+/**
+ * The background each visible column of a row is drawn on, read from its escape codes: `48;…` sets it and `49`, `0` or an empty code clears it
+ * (`null` means the terminal's own background, i.e. the general one). Every character in these screens is one column wide; pi-tui's hyperlink
+ * sequences (`ESC ] 8 ; ; BEL`), which take no column, are left out first.
+ */
+function backgrounds(row: string): (string | null)[] {
+  const columns: (string | null)[] = [];
+  let current: string | null = null;
+  for (const part of row.replace(/\x1b\]8;;[^\x07]*\x07/g, "").split(/(\x1b\[[0-9;]*m)/)) {
+    const code = /^\x1b\[([0-9;]*)m$/.exec(part)?.[1];
+    if (code === undefined) { for (const _ of Array.from(part)) columns.push(current); continue; }
+    if (code.startsWith("48;")) current = code;
+    else if (code === "" || code === "0" || code === "49") current = null;
+  }
+  return columns;
+}
+
+/** The text of the rows above the writing block: the block is the first row painted with the surface background, so what comes before it is the menu. */
+function aboveBox(rows: string[]): string {
+  return plain(rows.slice(0, rows.findIndex(row => row.includes(`\x1b[${SURFACE}m`)))).join("\n");
+}
+
+/** A connected sidebar with every section on screen: session, context ring, plan-usage bars and background activity. */
+function fullSidebar(): ShellSidebar {
+  return new ShellSidebar(() => ({
+    account: "connected", provider: "Claude Code", model: "claude-opus", reasoning: "medium",
+    context: { used: 18_000, window: 128_000 }, usage: [{ label: "Weekly", usedPercent: 74, reset: "22h" }],
+    backgroundActivitySupported: true, backgroundActivity: [{ id: "t1", kind: "agent", label: "Research X", state: "running", startedAt: Date.now() - 5000 }],
+  }));
+}
 
 test("both workspace panes keep scrollbars hidden even after scrolling", () => {
   const content = { render: () => Array(100).fill("line") as string[], invalidate() {} };
@@ -113,13 +152,13 @@ test("command menu describes commands and returns the keyboard selection", async
 test("the default command menu is only Shell's own /f614: commands", () => {
   const { input } = createComposer();
   void input.chooseCommand();
-  const menu = plain(input.render(100)).join("\n").split("╭")[0]!; // the rows above the input box, not the hint line inside it
+  const menu = aboveBox(input.render(100)); // the rows above the input box, not the hint line inside it
   expect(menu.match(/\/f614:[a-z]+/g)).toEqual(["/f614:refresh", "/f614:stop", "/f614:quit"]);
   for (const old of ["/model", "/effort", "/resume", "/new", "/login", "/logout", "/status", "/help", "/commands", "/quit"]) expect(menu, old).not.toMatch(new RegExp(`${old}(?![\\w:])`));
   input.cancelChoice();
   const typed = createComposer().input;
   for (const key of "/f614:") typed.handleInput(key);
-  expect(plain(typed.render(100)).join("\n").split("╭")[0]!.match(/\/f614:[a-z]+/g)).toEqual(["/f614:refresh", "/f614:stop", "/f614:help", "/f614:commands", "/f614:quit"]);
+  expect(aboveBox(typed.render(100)).match(/\/f614:[a-z]+/g)).toEqual(["/f614:refresh", "/f614:stop", "/f614:help", "/f614:commands", "/f614:quit"]);
 });
 
 test("command menu visibly groups provider commands before Forge614 controls", () => {
@@ -182,7 +221,31 @@ test("choice picker numbers rows and marks the active value with a checkmark, ev
   input.handleInput("\x1b[B"); // cursor moves to Haiku, active value stays on Sonnet
   const after = plain(input.render(90)).join("\n");
   expect(after).toContain("2. Sonnet ✓");
-  expect(after).toMatch(/›\s+3\. Haiku/);
+  expect(after).toMatch(/▎\s+3\. Haiku/);
+  expect(after).not.toContain("›");
+});
+
+/**
+ * In a menu of the composer the row under the cursor is the only one with a background (the elevated gray, across the whole row) and starts with the accent bar «▎»
+ * where the old «›» was; the other rows have no background. It exists because the selection used to be told apart by color and a «›» alone; now the contrast does it.
+ */
+test("the cursor row of a menu is an elevated block with a bar, and the other rows have no background", () => {
+  const { input } = createComposer();
+  void input.choose("Select model", [{ value: "opus", label: "Best" }, { value: "sonnet", label: "Efficient" }, { value: "haiku", label: "Fastest" }], "sonnet");
+  input.handleInput("\x1b[B"); // the cursor goes to Haiku
+  const rows = input.render(90);
+  const cursor = rows.find(row => stripVTControlCharacters(row).includes("▎"))!;
+  expect(stripVTControlCharacters(cursor)).toMatch(/^ {2}▎ 3\. haiku {5}Fastest/); // no `display`, so the row shows the value
+  expect(cursor).toContain(`\x1b[${ELEVATED}m`);
+  expect(cursor).toContain("\x1b[38;2;70;222;224m▎"); // the bar in the accent
+  const colored = backgrounds(cursor);
+  expect(colored.slice(0, 2)).toEqual([null, null]); // the outer margin stays on the general background
+  expect(colored.slice(2, 88).every(background => background === ELEVATED)).toBe(true);
+  for (const name of ["1. opus", "2. sonnet"]) {
+    const other = rows.find(row => stripVTControlCharacters(row).includes(name))!;
+    expect(other).not.toContain("48;");
+    expect(stripVTControlCharacters(other)).not.toContain("▎");
+  }
 });
 
 test("choice picker navigates and cancels without changing a model", async () => {
@@ -209,50 +272,155 @@ test("chat header and session heading occupy the same row", () => {
   expect(header).toBe(session);
 });
 
-test("Forge composer is a framed writing surface instead of a highlighted placeholder", () => {
-  const { component } = createComposer();
-  const lines = plain(component.render(72));
+/**
+ * The whole screen, put together as it is at 133×36 (header, chat area, composer, sidebar with every section, footer), draws none of the box characters
+ * ╭ ╮ ╰ ╯ │ ─: zones are told apart by background and space, not by lines. The chat's own text is not in this frame, so it is not what is checked.
+ * It exists so a border that sneaks back into the header, the sidebar's rail, a heading, the composer or a pill fails here.
+ */
+test("the assembled screen draws no box-drawing lines anywhere", () => {
+  const terminal = { rows: 36 } as Terminal;
+  const empty = { invalidate() {}, render: () => [] as string[] };
+  const footer = new ShellStatusBar(() => ({ account: "connected", provider: "Claude Code" }), "/Users/forge/project", () => ({ path: "/p", git: true, branch: "main", changedFiles: 1 }), "/Users/forge");
+  const root = workspaceLayout(empty, createComposer().component, fullSidebar(), footer, terminal, "/project");
+  const frame = renderLayoutFrame(root, 133, 36, () => {});
+  const lines = plain(frame.lines);
+  expect(lines).toHaveLength(36);
+  expect(lines.join("\n")).toContain("SESSION");
+  expect(lines.join("\n")).not.toMatch(/[╭╮╰╯│─]/);
+  expect(lines[2]!.slice(0, 95).trim()).toBe(""); // the header keeps its third row, now blank
+});
 
-  expect(lines).toHaveLength(7);
+/**
+ * The sidebar column is one block of the surface gray from the top row to the bottom row of the screen's body, and the two columns of gap between the chat
+ * and it keep the general background (that is where the contrast comes from). Read from the escape codes of every row at 133 columns: the rail starts at column
+ * 97 (133 − 36), the gap is columns 95–96.
+ */
+test("the sidebar column is the surface background on every row and the gap before it is the general one", () => {
+  const terminal = { rows: 36 } as Terminal;
+  const empty = { invalidate() {}, render: () => [] as string[] };
+  const root = workspaceLayout(empty, empty, fullSidebar(), empty, terminal, "/project");
+  const rows = renderLayoutFrame(root, 133, 36, () => {}).lines;
+  for (const [index, row] of rows.slice(0, 34).entries()) {
+    const colored = backgrounds(row);
+    expect({ index, rail: colored.slice(97, 133).every(background => background === SURFACE) }).toEqual({ index, rail: true });
+    expect({ index, gap: colored.slice(95, 97) }).toEqual({ index, gap: [null, null] });
+  }
+  expect(BACKGROUND).not.toBe(SURFACE); // the general background is the terminal's own (workspaceTerminal paints it), so the gap carries no code of its own
+});
+
+/**
+ * A click on a row of the sidebar still reaches it after the rail lost its bar: the rail now starts its content two columns in (it was three) and one row
+ * down, so a click on the first column of an activity row, in the rail's own coordinates, lands on that row and expands it, while a click on the padding
+ * column before it (x = 1) reaches nothing. Without the new offset the click would land one column to the left of the content.
+ */
+test("a click on a background-activity row in the rail still expands it, and one on the padding does not", () => {
+  const terminal = { rows: 36 } as Terminal;
+  const sidebar = new ShellSidebar(() => ({
+    account: "connected", provider: "Claude", backgroundActivitySupported: true,
+    backgroundActivity: [{ id: "t1", kind: "agent", label: "Research X", state: "done", startedAt: Date.now() - 5000, endedAt: Date.now(), detail: "first\nsecond line of the result" }],
+  }));
+  const rail = sidebarRail(sidebar, terminal);
+  const rowY = plain(rail.render(36)).findIndex(line => line.includes("Research X"));
+  expect(rowY).toBeGreaterThan(0);
+  const click = (x: number) => rail.handleMouse!({ type: "click", button: "left", x, y: rowY, width: 36, height: 34 } as TuiMouseEvent);
+  expect(click(1)).toBeUndefined();
+  expect(plain(rail.render(36)).join("\n")).not.toContain("second line of the result");
+  expect(click(2)).toMatchObject({ handled: true });
+  expect(plain(rail.render(36)).join("\n")).toContain("second line of the result");
+});
+
+/** The rail is the sidebar with a block of the surface gray behind it: two columns of padding each side, one blank row above, and gray down to the bottom of the screen even where the content ends. */
+test("the rail pads the sidebar by two columns and fills the whole height with the surface background", () => {
+  const terminal = { rows: 36 } as Terminal;
+  const rows = sidebarRail(fullSidebar(), terminal).render(36);
+  expect(rows.length).toBeGreaterThanOrEqual(35);
+  for (const row of rows) {
+    expect(visibleWidth(row)).toBe(36);
+    expect(backgrounds(row).every(background => background === SURFACE)).toBe(true);
+  }
+  expect(stripVTControlCharacters(rows[0]!).trim()).toBe("");
+  expect(stripVTControlCharacters(rows[1]!)).toStartWith("  // SESSION");
+  expect(stripVTControlCharacters(rows[1]!)).toContain("SESSION");
+});
+
+/** The «jump to latest» pill is one row of the elevated gray with its label, not a three-row box of lines. */
+test("the jump-to-latest pill is a single elevated row without a box", () => {
+  const content = { render: () => Array(50).fill("line") as string[], invalidate() {} };
+  const scroll = new IndependentScrollView(content, { follow: "end", primary: true, scrollbar: "hidden" });
+  let pill: Component | undefined;
+  const fakeTui = { showOverlay: (component: Component) => { pill = component; return { hide() {}, setHidden() {}, isHidden: () => false, focus() {}, unfocus() {}, isFocused: () => false, getBounds: () => undefined }; } } as unknown as TUI;
+  attachJumpToLatest(fakeTui, scroll, "en");
+  const rows = pill!.render(40);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toContain(`\x1b[${ELEVATED}m`);
+  expect(stripVTControlCharacters(rows[0]!)).toBe(getCatalog("en").jumpToLatest.label);
+  expect(stripVTControlCharacters(rows[0]!)).not.toMatch(/[╭╮╰╯│─]/);
+});
+
+/** A screen and a clock that never move or tick, so these tests read static colors and leave no repaint timer behind. */
+const quietTui = { requestRender() {}, terminal: { rows: 40, columns: 100 } } as unknown as TUI;
+const stillClock = { now: () => 0, every: () => () => {} };
+
+/**
+ * The writing box is a block of the surface gray with no line drawn around it: six rows (a blank one, a padding row, the editor, a padding row, the status-and-mode row,
+ * a closing padding row), each as wide as the screen minus a two-column margin on each side, where the general background shows. The status is no longer a row of its own
+ * above the editor: it sits at the left of the mode row. It exists because the owner asked for contrast and space to separate the zones instead of boxes of lines,
+ * and then asked for the status to move to the mode row.
+ */
+test("Forge composer is a borderless block of the surface background, with its status on the mode row and nothing above the editor", () => {
+  const { component } = createComposer(quietTui, "en", stillClock);
+  const rows = component.render(100);
+  const lines = plain(rows);
+
+  expect(lines).toHaveLength(6);
   expect(lines[0]!.trim()).toBe("");
-  expect(lines[1]).toContain("╭─");
-  expect(lines[1]).toContain("  ● Ready  ");
-  expect(lines[2]!.replaceAll("│", "").trim()).toBe("");
-  expect(lines[4]!.replaceAll("│", "").trim()).toBe("");
-  expect(lines[5]).toContain("/f614:help or /f614:commands");
-  expect(lines[6]).toContain("╰");
+  expect(rows[0]).not.toContain("48;"); // the separator row above the block has no background
+  for (const index of [1, 2, 3, 5]) expect(lines[index]!.trim()).toBe(""); // padding, the empty editor, padding, closing padding: no row opens with the status
+  expect(lines[4]!.trim()).toStartWith("✓ Ready · /f614:help or /f614:commands");
+  expect(lines[4]!.trimEnd()).toEndWith("Shift+Enter newline");
+  expect(lines[4]).toStartWith("    ✓ Ready"); // two columns of margin, two of padding, then the status
+  expect(lines.join("\n")).not.toMatch(/[╭╮╰╯│─]/);
   expect(lines.join("\n")).not.toContain("Ask anything");
+  for (const row of rows.slice(1)) {
+    expect(visibleWidth(row)).toBeLessThanOrEqual(100);
+    const colored = backgrounds(row);
+    expect(colored.slice(0, 2)).toEqual([null, null]);
+    expect(colored.slice(2, 98).every(background => background === SURFACE)).toBe(true);
+  }
 });
 
-test("the status dot changes color so Working reads as busy instead of blending into Ready", () => {
-  const { component, input } = createComposer();
-  const readyLine = component.render(72)[1]!;
+/** Each state reads differently on the mode row, so Working never blends into Ready: the icon and the color of the text are each state's own. */
+test("the status on the mode row changes icon and color so Working reads as busy instead of blending into Ready", () => {
+  const { component, input } = createComposer(quietTui, "en", stillClock);
+  const modeRow = () => component.render(100).at(-2)!;
+  const readyRow = modeRow();
   input.setStatus("Working");
-  const workingLine = component.render(72)[1]!;
+  const workingRow = modeRow();
   input.setStatus("Awaiting permission");
-  const awaitingLine = component.render(72)[1]!;
+  const awaitingRow = modeRow();
 
-  expect(readyLine).not.toBe(workingLine);
-  expect(readyLine).not.toBe(awaitingLine);
-  expect(workingLine).not.toBe(awaitingLine);
-  expect(stripVTControlCharacters(workingLine)).toContain("Working");
-  expect(stripVTControlCharacters(awaitingLine)).toContain("Awaiting permission");
+  expect(readyRow).not.toBe(workingRow);
+  expect(readyRow).not.toBe(awaitingRow);
+  expect(workingRow).not.toBe(awaitingRow);
+  expect(stripVTControlCharacters(readyRow)).toContain("✓ Ready");
+  expect(stripVTControlCharacters(workingRow)).toContain("Working");
+  expect(stripVTControlCharacters(awaitingRow)).toContain("● Awaiting permission");
 });
 
-test("a running elapsed-time counter still reads as the busy color, and the dot itself is a spinner frame instead of the static bullet", () => {
+/** A running elapsed-time counter keeps its place on the mode row, the icon is a spinner frame instead of the static bullet, and Ready has none of it. */
+test("a running elapsed-time counter stays on the mode row, and the icon is a spinner frame instead of the static bullet", () => {
   const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-  const { component, input } = createComposer();
+  const { component, input } = createComposer(quietTui, "en", stillClock);
   input.setStatus("Ready");
-  const readyLine = stripVTControlCharacters(component.render(72)[1]!);
-  const readyDot = readyLine.match(/╭─\s+(\S)/)?.[1];
+  const readyLine = stripVTControlCharacters(component.render(100).at(-2)!);
   input.setStatus("Working · 12s");
-  const workingLine = component.render(72)[1]!;
-  const workingDot = stripVTControlCharacters(workingLine).match(/╭─\s+(\S)/)?.[1];
+  const workingLine = component.render(100).at(-2)!;
+  const workingIcon = stripVTControlCharacters(workingLine).match(/^\s*(\S)/)?.[1]; // the mode row opens with the icon
 
-  expect(readyDot).toBe("●");
-  expect(SPINNER_FRAMES).toContain(workingDot!);
+  expect(readyLine.trim()).toStartWith("✓");
+  expect(SPINNER_FRAMES).toContain(workingIcon!);
   expect(stripVTControlCharacters(workingLine)).toContain("Working · 12s");
-  expect(workingLine).toContain("237;183;88"); // same warning color as plain "Working"
+  expect(workingLine).toContain("237;183;88"); // the spinner is the warning color
   expect(readyLine).not.toContain("12s");
 });
 

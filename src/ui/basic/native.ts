@@ -7,7 +7,6 @@ import { askPermission, askQuit, askShellQuestion } from "./permission-choice.ts
 import { resumeChoice, sortRecentFirst } from "./resume-picker.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
-import { readRuntimeResources } from "../../infrastructure/runtime-resources.ts";
 import { loadEnginePreference, saveEngineCollaborationMode, saveEngineMode, saveEnginePreference } from "../../infrastructure/shell-preferences.ts";
 import { gitBranches, gitCommits, gitCurrentBranch, gitDiff } from "../../infrastructure/git-local.ts";
 import { copyToClipboard, saveNewFile } from "../../infrastructure/clipboard.ts";
@@ -105,7 +104,7 @@ export async function runNativeUI(
       else shellState.connect({
         user: visual.user, sessionId: session.sessionId,
         model: session.models.find(model => model.id === visual.model)?.name ?? visual.model,
-        reasoning: effortLabel(visual.reasoning, locale), context: visual.context, usage: visual.usage, resources: readRuntimeResources(),
+        reasoning: effortLabel(visual.reasoning, locale), context: visual.context, usage: visual.usage,
         backgroundActivity: session.backgroundActivity?.() ?? [],
         backgroundActivitySupported: typeof session.backgroundActivity === "function",
       });
@@ -113,7 +112,6 @@ export async function runNativeUI(
       const status = session.status().join(" ");
       if (/disconnected|login required|sign-in required|not logged in|not checked|could not be verified/i.test(status)) shellState.disconnect();
       else shellState.connect({
-        resources: readRuntimeResources(),
         backgroundActivity: session.backgroundActivity?.() ?? [],
         backgroundActivitySupported: typeof session.backgroundActivity === "function",
       });

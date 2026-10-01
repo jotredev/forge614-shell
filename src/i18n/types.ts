@@ -455,7 +455,6 @@ export interface Catalog {
     headingSession: string;
     headingContext: string;
     headingPlanUsage: string;
-    headingResources: string;
     fieldAccount: string;
     fieldConnected: string;
     fieldProvider: string;
@@ -481,9 +480,6 @@ export interface Catalog {
     payPerUseAmount: (params: { amount: string }) => string;
     payPerUseUnderOneCent: string;
     planDoesNotBill: string;
-    fieldShellRam: string;
-    fieldEngineRam: string;
-    notReportedByEngine: string;
   };
   statusBar: {
     checkingAccount: string;

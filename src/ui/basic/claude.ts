@@ -16,7 +16,6 @@ import { askPermission, askQuit, askShellQuestion } from "./permission-choice.ts
 import { formatClaudePermission } from "../../engines/permission-text.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
-import { readRuntimeResources } from "../../infrastructure/runtime-resources.ts";
 import { loadEnginePreference, saveEngineMode, saveEnginePreference } from "../../infrastructure/shell-preferences.ts";
 import { cycleWorkMode, restoreWorkMode } from "../../engines/work-mode.ts";
 import { getStartupContext } from "../../infrastructure/forge614-engram.ts";
@@ -219,7 +218,6 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         reasoning: effortLabel(telemetry.effort ?? session.effort, locale),
         ...(session.context ? { context: session.context } : telemetry.contextTokens !== undefined && telemetry.contextWindow !== undefined ? { context: { used: telemetry.contextTokens, window: telemetry.contextWindow } } : {}),
         usage: usage.length ? usage : session.usage,
-        resources: readRuntimeResources(),
         backgroundActivity: session.backgroundActivity,
         backgroundActivitySupported: true,
       });

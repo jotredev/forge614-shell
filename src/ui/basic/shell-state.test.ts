@@ -18,12 +18,13 @@ test("connected state exposes only engine details owned by Shell", () => {
   expect(state.snapshot().startedAt).toBeLessThanOrEqual(Date.now());
 });
 
-test("connected state preserves measured Shell memory without inventing engine memory", () => {
+/** The sidebar no longer has a Resources section, so the state carries no memory figures: a snapshot is only what Shell draws (account, session, usage, background work). */
+test("the snapshot carries no memory figures", () => {
   const state = new ShellState("Codex");
-  state.connect({ resources: { shellRssBytes: 48 * 1024 * 1024 } });
+  state.connect({ model: "gpt-5.6" });
 
-  expect(state.snapshot().resources).toEqual({ shellRssBytes: 48 * 1024 * 1024 });
-  expect(state.snapshot().resources?.engineRssBytes).toBeUndefined();
+  expect(Object.keys(state.snapshot())).not.toContain("resources");
+  expect(JSON.stringify(state.snapshot())).not.toMatch(/rss/i);
 });
 
 test("connect() carries background activity and its support flag through to the snapshot", () => {

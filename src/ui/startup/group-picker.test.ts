@@ -34,18 +34,22 @@ function setup(list: readonly EngramGroup[] = groups, locale: "es" | "en" = "es"
 /** The last full frame as plain text: what the person actually sees. */
 const visible = (terminal: TestTerminal) => stripTerminalSequences(terminal.output);
 
-const plainTheme = { cursor: (x: string) => x, heading: (x: string) => x, description: (x: string) => x, divider: (x: string) => x };
+const plainTheme = { cursor: (x: string) => x, heading: (x: string) => x, description: (x: string) => x };
 const renderList = (list: readonly EngramGroup[], locale: "es" | "en" = "es", width = 80) =>
   new GroupSelectList(list, getCatalog(locale).groupPicker, plainTheme).render(width);
 
-test("with existing groups the list shows the heading, each group with its projects, a divider, then the two actions (es)", () => {
+/**
+ * With existing groups the list shows the heading, each group with its projects, a blank row (where the «───» divider used to be: space separates the
+ * groups from the two actions, no line does), then the two actions. It exists so the divider cannot come back and the screen keeps its height.
+ */
+test("with existing groups the list shows the heading, each group with its projects, a blank row, then the two actions (es)", () => {
   expect(renderList(groups)).toEqual([
     "Grupos existentes",
     "> mi-tienda",
     "    Proyectos: frontend, api",
     "  forge614",
     "    Aún sin proyectos",
-    "─".repeat(40),
+    "",
     "  Crear un grupo nuevo…",
     "  Es un proyecto suelto (sin grupo)",
   ]);
@@ -94,7 +98,7 @@ test("the standalone-project action returns loose", async () => {
   expect(await result).toEqual({ kind: "loose" });
 });
 
-test("with no groups the first section and the divider do not appear, only the two actions", () => {
+test("with no groups the first section and the blank separator do not appear, only the two actions", () => {
   expect(renderList([])).toEqual(["> Crear un grupo nuevo…", "  Es un proyecto suelto (sin grupo)"]);
 });
 

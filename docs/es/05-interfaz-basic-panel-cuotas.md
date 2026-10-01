@@ -97,15 +97,46 @@ En una terminal interactiva, Shell muestra el spinner `Detecting installed AI en
 
 La bienvenida destaca `FORGE614` en negritas y muestra la versión de Shell como `v<versión>` a la derecha cuando el ancho de la terminal alcanza. Es información de identidad de la aplicación, no una afirmación sobre la versión de Claude Code o Codex.
 
+## Aspecto: bloques sin bordes, grises neutros y colores que se adaptan
+
+Como una sala oscura donde cada mesa es un poco más clara que el piso, la pantalla no dibuja cajas de líneas: cada zona (barra lateral, cuadro de escribir, tarjetas, bloques de código, opción elegida) es un bloque de fondo un poco más claro que el fondo general, y la separación sale del contraste y del espacio. Lo secundario va en gris apagado y los estados se distinguen por el color y el icono de su texto. La pantalla es siempre oscura: mientras está en la pantalla alterna, Shell pone el fondo general y el color base del texto detrás de todo lo que escribe (`workspaceTerminal`), también en las pantallas de arranque, y los restablece al salir.
+
+Todos los colores están en un solo archivo, `src/ui/basic/theme.ts`. Los grises no tienen tinte azul; el índice de 256 colores es el que usa una terminal sin color verdadero:
+
+| Nombre | RGB | Índice de 256 colores | Dónde se usa |
+|---|---|---|---|
+| `background` | 10;10;11 | 232 | fondo general de la pantalla |
+| `surface` | 24;24;27 | 234 | barra lateral, cuadro de escribir, tarjetas, bloques de código |
+| `elevated` | 39;39;42 | 235 | la opción del cursor en los menús del cuadro de escribir, el botón «ir al final» |
+| `foreground` | 228;228;231 | 254 | texto |
+| `muted` | 161;161;170 | 248 | texto secundario |
+| `faint` | 63;63;70 | 238 | huecos de las barras de uso y del anillo, la regla `---` del Markdown |
+| `accent` | 70;222;224 | 80 | acento (la rayita «▎» del cursor, títulos del chat, títulos de sección de la barra lateral) |
+
+El estado (`success`, `warning`, `danger`), el diff (`added`, `removed`, `addedBackground`, `removedBackground`) y los colores de modo (`purple`, `planning`, `magenta`) conservan su valor.
+
+**Colores que se adaptan.** `theme.ts` pregunta, cada vez que pinta, a `getCapabilities().trueColor` de pi-tui, que lo decide según la terminal: una reconocida (kitty, Ghostty, WezTerm, Warp, iTerm2, Windows Terminal, Alacritty, VS Code, Zed, JetBrains, la consola de Windows) tiene color verdadero; dentro de tmux o screen, y en cualquier terminal no reconocida, solo si `COLORTERM` vale `truecolor` o `24bit`; `PI_TRUE_COLOR` (`1` o `0`) manda sobre todo lo demás. Con color verdadero emite `38;2` / `48;2` (RGB); sin él, usa el índice más cercano de la paleta de 256 colores (el cubo de 6×6×6 y la rampa de 24 grises) con `38;5` / `48;5`, también para el fondo general y el texto base de la pantalla alterna. No se le avisa nada a la persona. Hay una sola función de conversión (`nearestAnsi256`), con pruebas de valores exactos. Con 256 colores, el fondo rojo y el verde de las filas de un diff caen ambos en el gris 235 (el cubo no tiene verdes ni rojos tan oscuros); sus signos `+` / `-` y el color del texto siguen distinguiéndolas.
+
+**Qué cambió de forma.**
+
+- El cuadro de escribir es un bloque de fondo `surface` de lado a lado, con dos columnas de margen sobre el fondo general y seis filas: una en blanco, un relleno, el editor, un relleno, el renglón de estado y modo y un relleno final. El estado ya no tiene fila propia arriba del editor: vive a la izquierda del renglón del modo (ver «Estado vivo, modelo y razonamiento»). En los menús del cuadro de escribir (comandos con `/`, selectores), la opción del cursor va en una fila de fondo `elevated` con una rayita «▎» en el acento en lugar de «›»; las demás filas no tienen fondo.
+- El encabezado conserva sus tres filas, sin la regla de abajo.
+- La barra lateral es una columna de fondo `surface` de arriba abajo, sin «│» y con dos columnas de relleno a cada lado; las dos columnas entre el chat y ella quedan con el fondo general, y de ahí sale el contraste. Los títulos de sección (`// SESIÓN`…) van en el color de acento (cian) y en negrita, sin regla debajo. El clic en las filas de actividad en segundo plano sigue funcionando.
+- El botón «ir al final» es una sola fila de fondo `elevated`, sin caja.
+- La tarjeta completa de una herramienta (un diff o un permiso) es un bloque `surface` con una columna de relleno a cada lado y una fila de relleno arriba y abajo, metido dos columnas desde el borde del chat, sin «│».
+- Los bloques de código del chat ya no tienen la línea «───»: el código va sobre `surface`, la fila de apertura conserva solo el lenguaje (si lo hay) en gris secundario y la de cierre queda vacía. El componente Markdown de pi-tui solo le entrega al tema el texto de esas dos filas, así que no se pueden rellenar de lado a lado ni con fondo; el fondo del bloque queda detrás de cada fila de código, hasta donde llega su texto.
+- En el arranque, la regla debajo de «FORGE614 / SHELL» y la que separaba los grupos de las acciones en la pantalla de grupo son ahora una fila en blanco: la altura es la misma.
+- Las barras de uso y el anillo conservan `█`, `░` y el braille, con el hueco en `faint`.
+
 ## Transcripción: actividad, cambios y errores
 
 Como un registro de vuelo, el historial separa los eventos rutinarios de los momentos que exigen inspección o una decisión.
 
-Las llamadas rutinarias de herramientas —búsquedas, lecturas, Bash, MCP/Engram y similares— se renderizan como una viñeta no interactiva y, si hay detalle, una sola línea de vista previa debajo. No tienen borde, fondo ni control para expandir: la actividad resumida es todo lo que se presenta. Las solicitudes de permiso mantienen una tarjeta completa porque la persona debe poder leer el contexto antes de decidir.
+Las llamadas rutinarias de herramientas —búsquedas, lecturas, Bash, MCP/Engram y similares— se renderizan como una viñeta no interactiva y, si hay detalle, una sola línea de vista previa debajo. No tienen borde, fondo ni control para expandir: la actividad resumida es todo lo que se presenta. Las solicitudes de permiso mantienen una tarjeta completa (un bloque de fondo `surface`, sin bordes) porque la persona debe poder leer el contexto antes de decidir.
 
 Cuando Claude Code informa una edición `Edit` o `Write`, Shell presenta un diff por línea en vez del objeto JSON de la herramienta: líneas eliminadas en rojo, agregadas en verde, líneas de contexto atenuadas y un canal de numeración. Para proteger la fluidez del chat, el cálculo usa una comparación de subsecuencias comunes para cambios habituales, cae a una vista gruesa para archivos demasiado grandes y muestra como máximo 60 filas antes de indicar que quedan más.
 
-Claude Code y Codex mantienen una vista de transcripción independiente. Al alejarse del último mensaje aparece, centrado bajo el encabezado, el botón flotante `↓ New messages · jump to latest`; al pulsarlo vuelve al final. El botón se oculta automáticamente al volver a seguir el final del chat.
+Claude Code y Codex mantienen una vista de transcripción independiente. Al alejarse del último mensaje aparece, centrado bajo el encabezado, el botón flotante `↓ Mensajes nuevos · ir al final` (una sola fila de fondo elevado, sin caja); al pulsarlo vuelve al final. El botón se oculta automáticamente al volver a seguir el final del chat.
 
 Errores como un turno detenido, un comando inválido, una solicitud de permiso sin respuesta válida o un fallo de conexión se insertan con texto rojo. `ChatText` acepta un color base para que el formato Markdown del error conserve esa señal visual, en lugar de confundirse con una respuesta normal.
 
@@ -113,7 +144,9 @@ Errores como un turno detenido, un comando inválido, una solicitud de permiso s
 
 Como el semáforo de una consola de operaciones, el compositor comunica si se puede escribir, si el motor está ocupado o si espera una decisión humana.
 
-«Listo» usa verde; «Trabajando» usa ámbar y reemplaza el punto estático por un spinner; «Esperando tu respuesta» usa rojo y sale mientras Shell espera lo que respondas — una confirmación, el selector de un comando, una pregunta o una petición de permiso —, incluso si el asistente sigue trabajando, y la caja vuelve a «Trabajando» (o a «Listo») cuando respondes. Mientras hay un turno activo, Claude Code y Codex actualizan el estado cada medio segundo y muestran el tiempo transcurrido, por ejemplo `Trabajando · 12s`; durante `/compact` en Codex la caja dice «Compactando el contexto · …» en lugar de eso. Si hay una herramienta o un comando en curso, el estado dice también qué hace, por ejemplo `Trabajando · Esperando los checks del PR #3 · 8m 23s` (la descripción de la herramienta en Claude Code; el comando, en una sola línea, en Codex); si no hay ninguno, solo el tiempo. Todo contador de tiempo de Shell (este indicador, cada herramienta y la barra lateral) usa el mismo formato: `45s`, `1m 27s`, `8m 23s`, `1h 02m`. Un comando largo ocupa un solo renglón en el chat que se actualiza en su lugar y queda fijo con su resultado al terminar. Al terminar o cancelarse el turno, el contador se detiene.
+El estado vive en el renglón del modo, a la izquierda del texto del modo y separado de él por « · » en gris tenue: «<estado> · <modo>», con los atajos a la derecha. Si no cabe, se quitan primero los atajos, luego la parte del medio del estado (nunca el tiempo) y al final se recorta el renglón. El estado se distingue solo por el color del texto y su icono, sin fondos propios, cajas ni líneas: «✓ Listo» usa verde; «Trabajando» (y «Compactando…» o el resumen) lleva el giro braille en ámbar, su primera parte con una franja de luz que la recorre y el resto («· leyendo hola.sh · 12 s») en gris; «Esperando tu respuesta» usa rojo con un «●» que late; los demás estados («Verificando cuenta», «Conecta con /login») llevan un «●» fijo en el color que ya tenían. «Esperando tu respuesta» sale mientras Shell espera lo que respondas — una confirmación, el selector de un comando, una pregunta o una petición de permiso —, incluso si el asistente sigue trabajando, y la caja vuelve a «Trabajando» (o a «Listo») cuando respondes.
+
+Tres animaciones, todas calculadas mezclando los colores de la paleta (y por eso se adaptan a 256 colores): la franja de luz avanza 7,5 letras por segundo desde 3 letras antes del inicio de la palabra hasta 3 después del final y vuelve a empezar, y cada letra mezcla entre un ámbar apagado y uno brillante según su distancia a la franja; el «●» de «Esperando tu respuesta» va y viene entre el rojo y el rojo mezclado a medias con el gris de la superficie, una vuelta cada 1,6 s; y cuando el estado pasa de trabajando a «Listo», «✓ Listo» arranca mezclado 60 % hacia blanco y vuelve al verde en 0,6 s (un «Listo» que no viene de trabajar, como el de al abrir, no destella). Mientras haya algo animado (trabajando, esperando o el destello) la pantalla se repinta cada 100 ms; cuando no hay nada animado no queda ningún temporizador corriendo. Mientras hay un turno activo, Claude Code y Codex actualizan además el estado cada medio segundo y muestran el tiempo transcurrido, por ejemplo `Trabajando · 12s`; durante `/compact` en Codex la caja dice «Compactando el contexto · …» en lugar de eso. Si hay una herramienta o un comando en curso, el estado dice también qué hace, por ejemplo `Trabajando · Esperando los checks del PR #3 · 8m 23s` (la descripción de la herramienta en Claude Code; el comando, en una sola línea, en Codex); si no hay ninguno, solo el tiempo. Todo contador de tiempo de Shell (este indicador, cada herramienta y la barra lateral) usa el mismo formato: `45s`, `1m 27s`, `8m 23s`, `1h 02m`. Un comando largo ocupa un solo renglón en el chat que se actualiza en su lugar y queda fijo con su resultado al terminar. Al terminar o cancelarse el turno, el contador se detiene.
 
 Los menús de `/model` y `/effort` son elecciones explícitas: numeran las opciones, alinean la columna principal y marcan con `✓` el valor activo aunque el cursor esté sobre otra opción. Esto evita confundir la opción enfocada con la configuración que se usará realmente.
 
@@ -125,9 +158,9 @@ En el sidebar, la ausencia de razonamiento explícito se llama `Default (auto)`.
 
 ## Métricas del sidebar
 
-Como agrupar los instrumentos de consumo junto al medidor de combustible, el sidebar coloca los datos de uso donde se interpretan juntos y deja la RAM como recurso del proceso.
+Como agrupar los instrumentos de consumo junto al medidor de combustible, el sidebar coloca los datos de uso donde se interpretan juntos. Desde 1.13.0 ya no tiene la sección `RECURSOS` (la RAM de Shell y la del motor): se quitó entera, con su texto en español e inglés.
 
-Los tokens del último mensaje y el importe estimado quedan debajo de `PLAN USAGE`, antes de `RESOURCES`; ya no se mezclan con la RAM de Shell o del motor. Se escriben en palabras normales y en renglones cortos, sin cortes: `Este mensaje` / `leyó 2 996 tokens` / `escribió 700`, y luego `Si pagaras por uso` / `≈ $0,67` / `tu plan no lo cobra`. El importe es una referencia estimada, no un cargo de Shell ni de tu plan; si es menos de un centavo dice `menos de $0,01` en vez de cero.
+Los tokens del último mensaje y el importe estimado quedan debajo de `USO DEL PLAN`. Se escriben en palabras normales y en renglones cortos, sin cortes: `Este mensaje` / `leyó 2 996 tokens` / `escribió 700`, y luego `Si pagaras por uso` / `≈ $0,67` / `tu plan no lo cobra`. El importe es una referencia estimada, no un cargo de Shell ni de tu plan; si es menos de un centavo dice `menos de $0,01` en vez de cero.
 
 Mientras el contexto no tiene cifra, la sección `CONTEXTO` dice cuándo aparecerá, con un texto corto que cabe en el ancho del panel: `tras el 1.er mensaje` en una conversación nueva, `tras el próximo mensaje` en una reanudada que aún no se ha medido. Cuando ya hay cifra, el porcentaje del círculo se escribe como texto normal con su «%» («8%»), en la fila del medio del círculo y centrado en él (un ancho de dos o cuatro celdas, «8%» o «100%», solo puede quedar media celda a la izquierda del centro exacto); el porcentaje también está escrito al lado. El círculo mide siempre 13 celdas de ancho y 7 filas de alto, así que el panel angosto no se rompe.
 

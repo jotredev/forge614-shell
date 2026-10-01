@@ -4,14 +4,13 @@ import type { EngramGroup, GroupChoice } from "../../contracts/engram-group.ts";
 import { isValidGroupName } from "../../contracts/engram-group.ts";
 import type { EngramFlowScreen } from "./frame.ts";
 import { bindAbort } from "./engram-init.ts";
-import { accent, border, muted } from "../basic/theme.ts";
+import { accent, muted } from "../basic/theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Catalog, Locale } from "../../i18n/index.ts";
 import { describeError, ShellError } from "../../shell-error.ts";
 
 /** How many existing groups are visible at once; more are windowed so the screen fits 80×24. */
 const VISIBLE_GROUPS = 4;
-const DIVIDER_WIDTH = 40;
 
 type Row =
   | { readonly kind: "group"; readonly group: EngramGroup }
@@ -22,15 +21,14 @@ export interface GroupListTheme {
   readonly cursor: (text: string) => string;
   readonly heading: (text: string) => string;
   readonly description: (text: string) => string;
-  readonly divider: (text: string) => string;
 }
 
-const defaultTheme: GroupListTheme = { cursor: accent, heading: muted, description: muted, divider: border };
+const defaultTheme: GroupListTheme = { cursor: accent, heading: muted, description: muted };
 
 /**
- * The group-selection list (acta 0023 §5): "Existing groups" with each group's projects, a divider
- * line, then "Create a new group…" and "It is a standalone project". With no groups the first section
- * — and the divider — do not appear. Arrows move, Enter chooses, Esc cancels. The list only reports
+ * The group-selection list (acta 0023 §5): "Existing groups" with each group's projects, a blank row
+ * (space, not a drawn line, separates the groups from the actions), then "Create a new group…" and "It is a standalone project". With no groups the first section
+ * — and the blank row — do not appear. Arrows move, Enter chooses, Esc cancels. The list only reports
  * the choice; applying it is the caller's job, and it never touches anything itself.
  */
 export class GroupSelectList implements Component {
@@ -80,7 +78,7 @@ export class GroupSelectList implements Component {
           : this.t.noProjects;
         lines.push(this.theme.description(fitLine(`    ${projects}`)));
       }
-      lines.push(this.theme.divider("─".repeat(Math.max(1, Math.min(width, DIVIDER_WIDTH)))));
+      lines.push("");
     }
     lines.push(line(this.groups.length, this.t.createLabel));
     lines.push(line(this.groups.length + 1, this.t.looseLabel));

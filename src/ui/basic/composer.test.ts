@@ -179,7 +179,7 @@ test("a busy status too wide for the box keeps its label and time and drops the 
   const status = "Compactando el contexto · Haciendo espacio para continuar · 12s";
   const composer = new ForgeComposer(fakeTui, "es");
   composer.setStatus(status);
-  expect(screen(composer, 120)).toContain(status);
+  expect(screen(composer, 160)).toContain(status); // the status shares its row with the mode text now, so «whole» needs a wide screen
   const narrow = screen(composer, 60);
   expect(narrow).toContain("Compactando el contexto · 12s");
   expect(narrow).not.toContain("Haciendo espacio");

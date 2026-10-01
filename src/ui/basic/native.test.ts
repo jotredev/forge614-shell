@@ -272,9 +272,9 @@ test("Codex /logout asks with its own question and «No» marked: Enter alone an
     try {
       await tick(); terminal.output = ""; enter("/logout"); await tick();
       expect(plain()).toContain(question);
-      expect(plain()).toContain(`› 1. ${t.logout.stay}`);
+      expect(plain()).toContain(`▎ 1. ${t.logout.stay}`);
       expect(plain()).toContain(t.logout.disconnect);
-      expect(plain()).not.toContain(`› 2. ${t.logout.disconnect}`);
+      expect(plain()).not.toContain(`▎ 2. ${t.logout.disconnect}`);
       expect(plain()).not.toContain(t.chat.permissionRequestedTitle);
       expect(plain()).not.toContain(t.permission.question);
       expect(plain()).not.toContain("/f614:stop");
@@ -362,6 +362,7 @@ test("native chat waits for input and warns instead of quitting an active turn",
 /** Mejora 14 en Codex: mientras un comando corre, el indicador dice «Working · <comando> · <tiempo legible>»; cuando no hay ninguno, solo «Working · <tiempo>». Se lee de `currentActivity()` de la sesión, sin mirar el id del motor. */
 test("the working indicator names the running command for a native session, and only the time when there is none", async () => {
   const terminal = new TestTerminal(); let finishTurn!: () => void; let activity: string | undefined = "gh pr checks 3 --watch";
+  terminal.columns = 200; // the status shares its row with the mode text now, so the command only stays whole on a wide screen
   const session = {
     busy: false, models: [],
     async initialize() {}, async login() {}, async cancel() {}, reset() {}, async resume(_id: string) {},
@@ -849,7 +850,7 @@ test("a remembered Read Only is restored as Ask for approval and the notice is s
 test("Shift+Tab with Codex switches Plan and Default, keeps the permission, and the indicator says so", async () => {
   mkdirSync(join(forgeHome, "shell"), { recursive: true });
   writeFileSync(join(forgeHome, "shell", "preferences.json"), JSON.stringify({ codex: { mode: "never:danger-full-access" } }));
-  const h = codexUi();
+  const h = codexUi("en", () => {}, localDouble(), 200); // the status shares its row with the mode text now: the help (on the right) needs a wide screen
   try {
     await tick();
     expect(h.session().collaborationMode()).toBe("default");
@@ -1264,8 +1265,8 @@ test("with Codex /f614:quit, Ctrl+C and Ctrl+D leave when idle and ask first whi
       busy.terminal.input("hello"); busy.terminal.input("\r"); await tick();
       busy.terminal.output = ""; for (const key of keys) busy.terminal.input(key); await tick();
       expect(busy.plain(), name).toContain(question[locale]);
-      expect(busy.plain(), name).toContain(`› ${words[locale].no}`);
-      expect(busy.plain(), name).not.toContain(`› ${words[locale].yes}`);
+      expect(busy.plain(), name).toContain(`▎ ${words[locale].no}`);
+      expect(busy.plain(), name).not.toContain(`▎ ${words[locale].yes}`);
       // Enter takes the marked «No»: nothing is stopped.
       busy.terminal.input("\r"); await tick();
       expect(busy.closed(), name).toBe(false);
@@ -1426,7 +1427,7 @@ for (const locale of ["es", "en"] as const) {
       expect(screen).toContain("Needs to create a file");
       expect(screen).toContain(`${locale === "es" ? "Carpeta" : "Folder"}: /project`);
       expect(screen).toContain("touch example");
-      expect(screen).toContain(`› ${locale === "es" ? "Sí" : "Yes"}`);
+      expect(screen).toContain(`▎ ${locale === "es" ? "Sí" : "Yes"}`);
       for (const internal of ["\"type\"", "pluginId", "aggregatedOutput", "commandActions", "item/commandExecution/requestApproval", "/yes", "/no "]) expect(screen).not.toContain(internal);
       terminal.input("\r");
       expect(await answer).toEqual({ decision: "accept" });
@@ -2059,7 +2060,7 @@ test("/side starts during a main turn, keeps working there and Ctrl+D asks befor
     expect(h.session().mainBusy?.()).toBe(true);
     h.terminal.output = ""; h.terminal.input("\x04"); await tick();
     expect(h.plain()).toContain("Quit anyway? What is running will be stopped.");
-    expect(h.plain()).toContain("› No");
+    expect(h.plain()).toContain("▎ No");
     h.terminal.input("\x1b"); await tick();
     h.terminal.input("\x03"); await tick();
     expect(h.session().detour?.()).toBeUndefined();

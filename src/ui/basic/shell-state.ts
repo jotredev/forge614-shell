@@ -4,7 +4,6 @@ export type AccountState = "connected" | "disconnected" | "checking" | "unknown"
 
 export type ContextUsage = { used: number; window: number };
 export type ProviderUsage = { label: string; usedPercent: number; reset?: string };
-export type ResourceUsage = { shellRssBytes: number; engineRssBytes?: number };
 export type ConnectedDetails = {
   inputTokens?: number;
   outputTokens?: number;
@@ -15,7 +14,6 @@ export type ConnectedDetails = {
   reasoning?: string;
   context?: ContextUsage;
   usage?: ProviderUsage[];
-  resources?: ResourceUsage;
   backgroundActivity?: BackgroundActivity[];
   backgroundActivitySupported?: boolean;
 };
@@ -35,7 +33,6 @@ export type ShellSnapshot = {
   reasoning?: string;
   context?: ContextUsage;
   usage?: ProviderUsage[];
-  resources?: ResourceUsage;
   backgroundActivity?: BackgroundActivity[];
   backgroundActivitySupported?: boolean;
 };

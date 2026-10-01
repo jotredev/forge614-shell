@@ -1,7 +1,7 @@
 import { TuiAltScreen } from "@earendil-works/pi-tui";
 import type { Component, Terminal, TuiStopOptions } from "@earendil-works/pi-tui";
 import { workspaceTerminal } from "../basic/workspace.ts";
-import { accent, bold, border, fit, muted } from "../basic/theme.ts";
+import { accent, bold, fit, muted } from "../basic/theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -17,7 +17,7 @@ export function startupFrame(terminal: Terminal, title: string, list: Component,
       const navLine = versionText && inner >= navHint.length + versionText.length + 2
         ? `${muted(navHint)}${" ".repeat(inner - navHint.length - versionText.length)}${muted(versionText)}`
         : muted(navHint);
-      return ["", bold(accent("FORGE614")) + " / SHELL", border("─".repeat(inner)), "",
+      return ["", bold(accent("FORGE614")) + " / SHELL", "", "",
         accent(title), "",
         ...(body ? [...body.render(inner), ""] : []),
         ...list.render(inner), "",
@@ -54,7 +54,7 @@ export class EngramFlowScreen {
         const navLine = versionText && inner >= navHint.length + versionText.length + 2
           ? `${muted(navHint)}${" ".repeat(inner - navHint.length - versionText.length)}${muted(versionText)}`
           : muted(navHint);
-        return ["", bold(accent("FORGE614")) + " / SHELL", border("─".repeat(inner)), "",
+        return ["", bold(accent("FORGE614")) + " / SHELL", "", "",
           accent(this.title), "",
           ...(this.body ? [...this.body.render(inner), ""] : []),
           ...this.list.render(inner), "",

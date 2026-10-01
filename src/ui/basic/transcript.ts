@@ -1,6 +1,6 @@
 import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
-import { accent as cyan, added, addedBackground, muted, fit, panelBackground, removed, removedBackground } from "./theme.ts";
+import { accent as cyan, added, addedBackground, muted, fit, removed, removedBackground, surface } from "./theme.ts";
 import type { DiffLine } from "./diff.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
@@ -30,9 +30,9 @@ export function chatMessage(role: "user" | "assistant" | "system", content: stri
 /**
  * Activity line for a real tool event emitted by an engine.
  * Routine tool calls (searches, memory ops, reads) render as a plain, non-interactive bullet line
- * — no border, no background, no click-to-expand — matching how a plain agent CLI reports tool use.
+ * — no background, no click-to-expand — matching how a plain agent CLI reports tool use.
  * There is nothing to expand: what you see is everything there is. Only `full` cards (a file edit's
- * diff, or a permission request that needs a decision) get the bordered detail box, because those
+ * diff, or a permission request that needs a decision) get the detail block (surface background, no drawn border), because those
  * two are the cases where seeing the whole thing is the point.
  */
 export class ActivityCard implements Component {
@@ -87,12 +87,14 @@ export class ActivityCard implements Component {
     }
     const outer = Math.min(2, Math.max(0, width - 1));
     const cardWidth = Math.max(1, width - outer * 2);
-    const innerWidth = Math.max(1, cardWidth - 4);
-    const top = `${cyan("│")} ${cyan(fit(`▾ ${this.summary()}`, innerWidth))}`;
+    // A block of the surface gray with one column of padding on each side; nothing is drawn at its edge.
+    const innerWidth = Math.max(1, cardWidth - 2);
+    const row = (content: string) => ` ${fit(content, innerWidth)} `;
+    const top = row(cyan(`▾ ${this.summary()}`));
     const body = this.diffLines
-      ? this.diffBody(innerWidth).map(line => `${cyan("│")} ${line}`)
-      : wrapTextWithAnsi(muted(this.detail), innerWidth).map(line => `${cyan("│")} ${fit(line, innerWidth)}`);
-    const padding = `${cyan("│")} ${" ".repeat(innerWidth)}`;
-    return ["", ...[padding, top, ...body, padding].map(line => " ".repeat(outer) + panelBackground(fit(line, cardWidth))), ""];
+      ? this.diffBody(innerWidth).map(row)
+      : wrapTextWithAnsi(muted(this.detail), innerWidth).map(row);
+    const padding = row("");
+    return ["", ...[padding, top, ...body, padding].map(line => " ".repeat(outer) + surface(fit(line, cardWidth))), ""];
   }
 }

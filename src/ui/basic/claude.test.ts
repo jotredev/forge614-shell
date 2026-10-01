@@ -203,12 +203,12 @@ else {
     ui = startClaudeUI([], executable, terminal, undefined, "es"); await tick();
     for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
     enter("run it"); await tick();
-    for (let i = 0; i < 60 && !plain().includes("› Sí"); i++) await tick();
+    for (let i = 0; i < 60 && !plain().includes("▎ Sí"); i++) await tick();
     const screen = plain();
     expect(screen).toContain("Buscar el changelog de Engram en este repositorio");
     expect(screen).toContain(`Carpeta: ${process.cwd()}`);
     expect(screen).toContain("rtk grep -rn changelog .");
-    expect(screen).toContain("› Sí");
+    expect(screen).toContain("▎ Sí");
     // While the question waits the box says so (it used to say «Trabajando»).
     expect(screen).toContain("Esperando tu respuesta");
     for (const internal of ["\"command\"", "\"description\"", "Permiso solicitado: Bash", "/yes", "/no denegar", "Denegar"]) expect(screen).not.toContain(internal);
@@ -258,7 +258,7 @@ else {
     ui = startClaudeUI([], executable, terminal, undefined, "es"); await tick();
     for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
     enter("run it"); await tick();
-    for (let i = 0; i < 60 && !plain().includes("› Sí"); i++) await tick();
+    for (let i = 0; i < 60 && !plain().includes("▎ Sí"); i++) await tick();
     expect(plain()).toContain("Carpeta: …/another-long-folder-name-here/project");
     expect(plain()).not.toContain("a-long-folder-name-for-the-permission-card");
     terminal.input("\x1b");
@@ -283,9 +283,9 @@ test.skipIf(process.platform === "win32")("Claude UI: the /logout question has i
     try {
       h.terminal.output = ""; h.enter("/logout"); await tick();
       expect(h.plain()).toContain(t.logout.confirmTitle({ engine: "Claude Code" }));
-      expect(h.plain()).toContain(`› 1. ${t.logout.stay}`);
+      expect(h.plain()).toContain(`▎ 1. ${t.logout.stay}`);
       expect(h.plain()).toContain(t.logout.disconnect);
-      expect(h.plain()).not.toContain(`› 2. ${t.logout.disconnect}`);
+      expect(h.plain()).not.toContain(`▎ 2. ${t.logout.disconnect}`);
       expect(h.plain()).not.toContain(t.chat.permissionRequestedTitle);
       expect(h.plain()).not.toContain(t.permission.question);
       expect(h.plain()).not.toContain("/f614:stop");
@@ -343,7 +343,7 @@ else {
     terminal.output = "";
     if (byCtrlC) { terminal.input("\x1b"); terminal.input("\x03"); } else enter("/f614:quit");
     await tick();
-    if (plain().includes("› No")) { terminal.input("\x1b[B"); terminal.input("\r"); }
+    if (plain().includes("▎ No")) { terminal.input("\x1b[B"); terminal.input("\r"); }
     await ui; await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
   };
@@ -633,8 +633,8 @@ test.skipIf(process.platform === "win32")("Claude UI: /f614:quit, Ctrl+C and Ctr
       for (let i = 0; i < 30 && !busy.calls().some(line => line.startsWith("prompt:")); i++) await tick();
       busy.terminal.output = ""; for (const key of keys) busy.terminal.input(key); await tick();
       expect(busy.plain(), name).toContain(question[locale]);
-      expect(busy.plain(), name).toContain(`› ${words[locale].no}`);
-      expect(busy.plain(), name).not.toContain(`› ${words[locale].yes}`);
+      expect(busy.plain(), name).toContain(`▎ ${words[locale].no}`);
+      expect(busy.plain(), name).not.toContain(`▎ ${words[locale].yes}`);
       // Enter takes the marked «No»: nothing is stopped.
       busy.terminal.input("\r"); await tick();
       expect(left, name).toBe(false);

@@ -1,6 +1,6 @@
 import { Editor, TuiAltScreen, ProcessTerminal, visibleWidth, matchesKey, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
-import { accent as cyan, danger, muted, fit, paint, success, warning } from "./theme.ts";
+import { accent as cyan, danger, elevated, faint, fit, magenta, mix, muted, palette, paint, planning, purple, success, surface, warning } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 import type { NativeCollaborationMode, NativeWorkMode } from "../../engines/types.ts";
@@ -55,10 +55,6 @@ export function filterChoices(items: ComposerChoice[], query: string): ComposerC
   });
 }
 
-const purple = paint("176;132;255");
-const planning = paint("52;170;166");
-/** Codex's footer draws «Plan mode» in magenta (`CollaborationModeIndicator::styled_line`). */
-const magenta = paint("217;112;214");
 export type WorkModePresentation = { text: string; help: string };
 /** The assistant's collaboration modes, when Shift+Tab switches them instead of the permissions (Codex: Plan ↔ Default), and the active one. */
 export type CollaborationHint = { modes: NativeCollaborationMode[]; active?: string };
@@ -96,11 +92,6 @@ export function workModePresentation(mode?: NativeWorkMode, locale: Locale = "en
   }
 }
 
-
-function rule(width: number): string {
-  return "─".repeat(Math.max(0, width));
-}
-
 /**
  * Gives the status dot its own color per state, so a busy status reads as busy at a glance instead
  * of blending into "ready". Matches against both locales' status text (never just the active
@@ -132,14 +123,63 @@ function fitStatus(status: string, max: number): string {
   return parts.join(" · ");
 }
 
-export const SPINNER_FRAMES =["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-/** A live-moving dot while active — a static label reads as frozen once the person stares at it. */
-export function spinnerFrame(active: boolean): string {
-  return active ? SPINNER_FRAMES[Math.floor(Date.now() / 120) % SPINNER_FRAMES.length]! : "●";
+/** «Ready», in either language: the status that gets the ✓ and the flash when a turn ends. */
+function isReadyStatus(status: string): boolean {
+  return status === getCatalog("en").chat.statusReady || status === getCatalog("es").chat.statusReady;
 }
-/** A live-moving dot while busy — a static label reads as frozen once the person stares at it. */
-function statusDot(status: string): string {
-  return spinnerFrame(isWorkingStatus(status));
+
+/** «Waiting for your answer», in either language: the status whose dot pulses. */
+function isAwaitingStatus(status: string): boolean {
+  return status === getCatalog("en").chat.awaitingAnswer || status === getCatalog("es").chat.awaitingAnswer;
+}
+
+export const SPINNER_FRAMES =["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+/** A live-moving dot while active — a static label reads as frozen once the person stares at it. `now` is the clock's time in milliseconds (the real one by default). */
+export function spinnerFrame(active: boolean, now: number = Date.now()): string {
+  return active ? SPINNER_FRAMES[Math.floor(now / 120) % SPINNER_FRAMES.length]! : "●";
+}
+
+/**
+ * The time and the repaint timer the composer's animations run on, injectable so a test can set an exact instant and see that no timer is left behind.
+ * `every` starts a timer that calls `tick` every `ms` milliseconds and returns the function that stops it.
+ */
+export interface ComposerClock { now(): number; every(ms: number, tick: () => void): () => void }
+const realClock: ComposerClock = {
+  now: () => Date.now(),
+  every: (ms, tick) => { const timer = setInterval(tick, ms); timer.unref?.(); return () => clearInterval(timer); },
+};
+
+/** How often the screen repaints while something animates. */
+const REPAINT_MS = 100;
+/** How long the flash that turns Working into Ready lasts, and how far toward white it starts. */
+const FLASH_MS = 600;
+const FLASH_START = 0.6;
+/** The light band: letters per second, and how many letters it reaches on each side of its position. */
+const BAND_SPEED = 7.5;
+const BAND_REACH = 3;
+/** Seconds the «waiting» dot takes to dim and brighten once, and how far toward the surface it dims. */
+const PULSE_SECONDS = 1.6;
+const PULSE_DEPTH = 0.5;
+const WHITE = [255, 255, 255] as const;
+/** The dim end of the light band: the busy color pulled toward a dark gray; the bright end pulls it toward white. */
+const BAND_DIM = mix(palette.warning, [40, 40, 44], 0.45);
+const BAND_BRIGHT = mix(palette.warning, WHITE, 0.55);
+
+/**
+ * `word` with a band of light passing over it: each letter blends between the dim and the bright tone by its distance to a position that moves `BAND_SPEED`
+ * letters a second from `BAND_REACH` letters before the start to as many after the end, and begins again (brightness = max(0, 1 − distance / `BAND_REACH`)).
+ * Every letter is painted on its own, so the colors are exact and, like the rest, adapt to a 256-color terminal.
+ */
+function lightBand(word: string, now: number): string {
+  const letters = Array.from(word);
+  const position = ((now * BAND_SPEED) / 1000) % (letters.length + 2 * BAND_REACH) - BAND_REACH;
+  return letters.map((letter, index) => paint(mix(BAND_DIM, BAND_BRIGHT, Math.max(0, 1 - Math.abs(index - position) / BAND_REACH)))(letter)).join("");
+}
+
+/** The «waiting» dot: danger that fades toward the surface and back, a full turn every `PULSE_SECONDS`, starting at full danger. */
+function pulseDot(now: number): string {
+  const wave = (1 - Math.cos((2 * Math.PI * now) / 1000 / PULSE_SECONDS)) / 2;
+  return paint(mix(palette.danger, palette.surface, PULSE_DEPTH * wave))("●");
 }
 
 /** A focused editor rendered as Forge614's primary writing surface. */
@@ -162,7 +202,10 @@ export class ForgeComposer extends Editor {
   private textPrompt?: { title: string; placeholder: string; body?: string; resolve: (value?: string) => void };
   private pickerQuery = "";
   private repaint: () => void;
-  constructor(tui: TUI, private readonly locale: Locale = "en") {
+  /** When the flash that follows Working → Ready began (clock milliseconds), and the stop function of the repaint timer while one runs. */
+  private flashStartedAt?: number;
+  private stopRepaintTimer?: () => void;
+  constructor(tui: TUI, private readonly locale: Locale = "en", private readonly clock: ComposerClock = realClock) {
     super(tui, { borderColor: cyan, selectList: { selectedPrefix: cyan, selectedText: cyan, description: muted, scrollInfo: muted, noMatch: muted } }, { paddingX: 1 });
     this.repaint = () => tui.requestRender();
     this.status = getCatalog(locale).chat.statusReady;
@@ -323,7 +366,44 @@ export class ForgeComposer extends Editor {
     if (this.getText() !== before) { this.selectedChoice = 0; this.dismissed = ""; }
   }
   setValue(value: string): void { this.setText(value); }
-  setStatus(status: string): void { this.status = status; }
+  /** Sets the assistant's status; the one that turns Working into Ready also starts the flash on «✓ Ready». */
+  setStatus(status: string): void {
+    if (isWorkingStatus(this.status) && isReadyStatus(status)) this.flashStartedAt = this.clock.now();
+    this.status = status;
+  }
+  /** Whether the flash is still going at `now`. */
+  private flashing(now: number): boolean { return this.flashStartedAt !== undefined && now - this.flashStartedAt < FLASH_MS; }
+  /** Whether anything on screen is animated at `now`: working, waiting for an answer, or the flash. Only then does the screen repaint on its own. */
+  private animated(now: number): boolean {
+    const shown = this.shownStatus();
+    return isWorkingStatus(shown) || isAwaitingStatus(shown) || this.flashing(now);
+  }
+  /**
+   * Keeps the repaint timer in step with `animated`: one timer while something animates, none otherwise. It runs on every draw and on every tick, so the timer
+   * starts with the first frame that needs it and stops itself on the first one that does not — nothing is left running on a quiet screen.
+   */
+  private syncRepaintTimer(now: number): void {
+    if (this.animated(now)) { this.stopRepaintTimer ??= this.clock.every(REPAINT_MS, () => { this.syncRepaintTimer(this.clock.now()); this.repaint(); }); return; }
+    this.stopRepaintTimer?.(); this.stopRepaintTimer = undefined;
+  }
+  /**
+   * The status as the mode row draws it, with the room `max` columns leave for its text (a busy status gives up its middle part first, never its time):
+   * «✓ Ready» in success (flashing toward white right after a turn), the spinner in warning with the first part of a busy status under the light band and the
+   * rest in muted, the pulsing dot with «Waiting for your answer» in danger, and a fixed dot in the color `statusColor` gives any other.
+   */
+  private statusSegment(status: string, now: number, max: number): string {
+    if (isReadyStatus(status)) {
+      const age = this.flashStartedAt === undefined ? FLASH_MS : now - this.flashStartedAt;
+      const flash = age >= 0 && age < FLASH_MS ? FLASH_START * (1 - age / FLASH_MS) : 0;
+      return paint(mix(palette.success, WHITE, flash))(`✓ ${status}`);
+    }
+    if (isWorkingStatus(status)) {
+      const [first = "", ...rest] = fitStatus(status, max).split(" · ");
+      return `${warning(spinnerFrame(true, now))} ${lightBand(first, now)}${rest.length ? muted(` · ${rest.join(" · ")}`) : ""}`;
+    }
+    if (isAwaitingStatus(status)) return `${pulseDot(now)} ${danger(status)}`;
+    return statusColor(status)(`● ${status}`);
+  }
   /**
    * The status the box shows: while a selector or a question is open Shell waits for the person, and says so — «Waiting for your answer» — instead of
    * the assistant's «Working», however often the status is set meanwhile; when it closes, the assistant's own status shows again.
@@ -339,7 +419,7 @@ export class ForgeComposer extends Editor {
     const searchRows = this.picker?.searchable ? 1 : 0;
     const menuRows = this.textPrompt ? this.promptRows(Math.max(1, event.width - 4)).length + 1
       : items.length ? Math.min(5, items.length - Math.max(0, this.selectedChoice - 4)) + 2 + searchRows + this.bodyLines(event.width).length : searchRows ? 2 : 0;
-    return super.handleMouse({ ...event, x: event.x - 4, y: event.y - 2 - menuRows, width: Math.max(1, event.width - 8) });
+    return super.handleMouse({ ...event, x: event.x - 4, y: event.y - 1 - menuRows, width: Math.max(1, event.width - 8) });
   }
 
   /** An explanation wrapped for a component of `width` columns (the same margin `render` leaves), or no rows when there is none. */
@@ -366,19 +446,29 @@ export class ForgeComposer extends Editor {
     const margin = width >= 14 ? 2 : 0;
     return this.renderContent(width - margin * 2).map(line => " ".repeat(margin) + line);
   }
+  /**
+   * The box, top to bottom: the menu (when open), an empty row, then the surface-gray block of an empty row, the editor, an empty row, the status-and-mode row and an
+   * empty row. The status-and-mode row is «status · mode» on the left and the shortcuts on the right; when it does not fit the shortcuts go first, then the middle of a
+   * busy status (never its time) and last the row is clipped.
+   */
   private renderContent(width: number): string[] {
     const t = getCatalog(this.locale).chat;
     const innerWidth = Math.max(1, width - 4);
     if (width < 10) return super.render(Math.max(1, width));
     const editor = super.render(innerWidth).slice(1, -1);
     const shown = this.shownStatus();
-    const title = `  ${statusDot(shown)} ${isWorkingStatus(shown) ? fitStatus(shown, width - 11) : shown}  `;
-    const topFill = rule(Math.max(0, width - visibleWidth(title) - 5));
+    const now = this.clock.now();
+    this.syncRepaintTimer(now);
+    const block = (content: string) => surface(`  ${fit(content, innerWidth)}  `);
     const mode = this.workModeHint || this.collaborationHint?.modes.length ? workModePresentation(this.workModeHint, this.locale, this.collaborationHint) : undefined;
     const hint = mode ? mode.text : muted(t.helpOrCommandsHint);
     const shortcuts = mode ? mode.help : muted(t.shiftEnterNewline);
-    const hintWidth = visibleWidth(hint) + visibleWidth(shortcuts);
-    const hintLine = innerWidth >= hintWidth + 2 ? `${hint}${" ".repeat(innerWidth - hintWidth)}${shortcuts}` : hint;
+    const separator = faint(" · ");
+    const row = (status: string) => `${status}${separator}${hint}`;
+    const full = row(this.statusSegment(shown, now, Infinity));
+    const statusLine = innerWidth >= visibleWidth(full) + visibleWidth(shortcuts) + 2
+      ? `${full}${" ".repeat(innerWidth - visibleWidth(full) - visibleWidth(shortcuts))}${shortcuts}`
+      : row(this.statusSegment(shown, now, innerWidth - 2 - visibleWidth(separator) - visibleWidth(hint)));
 
     const items = this.activeItems();
     const start = Math.max(0, this.selectedChoice - 4);
@@ -399,30 +489,31 @@ export class ForgeComposer extends Editor {
       ...visibleItems.flatMap((item, offset) => [
         ...(offset === 0 || item.group !== visibleItems[offset - 1]?.group ? [fit(cyan(item.group ?? this.picker?.title ?? t.commandsFallbackTitle), width)] : []),
         ...(offset === 0 ? bodyRows : []),
-        fit((() => {
+        (() => {
           const isCursor = start + offset === this.selectedChoice;
           const isCurrent = item.value === this.currentValue;
           const color = isCursor ? cyan : isCurrent ? success : muted;
-          const left = color(`${isCursor ? "›" : " "} ${fit(leftText(item, offset), leftWidth)}`);
-          return item.label ? `${left}  ${muted(item.label)}` : left;
-        })(), width),
+          // The cursor's row is a block of the elevated gray with an accent bar on its left; the other rows have no background.
+          const left = color(`${isCursor ? "▎" : " "} ${fit(leftText(item, offset), leftWidth)}`);
+          const row = fit(item.label ? `${left}  ${muted(item.label)}` : left, width);
+          return isCursor ? elevated(row) : row;
+        })(),
       ]),
       fit(muted(this.picker?.footer ?? t.menuFooter({ title: this.picker?.title ?? (skillList ? t.skillsFooterTitle : t.commandsFallbackTitle), ...elementRange(items, start, start + 5) })), width),
     ] : searchRow.length ? [...searchRow, fit(muted(t.searchNoMatches), width)] : [];
     return [
       ...menu,
       "",
-      fit(`${cyan("╭─")} ${statusColor(shown)(title)} ${cyan(`${topFill}╮`)}`, width),
-      `${cyan("│")} ${" ".repeat(innerWidth)} ${cyan("│")}`,
-      ...editor.map(line => `${cyan("│")} ${fit(line, innerWidth)} ${cyan("│")}`),
-      `${cyan("│")} ${" ".repeat(innerWidth)} ${cyan("│")}`,
-      `${cyan("│")} ${fit(hintLine, innerWidth)} ${cyan("│")}`,
-      cyan(`╰${rule(width - 2)}╯`),
+      block(""),
+      ...editor.map(block),
+      block(""),
+      block(statusLine),
+      block(""),
     ];
   }
 }
 
-export function createComposer(tui: TUI = new TuiAltScreen(new ProcessTerminal()), locale: Locale = "en"): { component: ForgeComposer; input: ForgeComposer } {
-  const input = new ForgeComposer(tui, locale);
+export function createComposer(tui: TUI = new TuiAltScreen(new ProcessTerminal()), locale: Locale = "en", clock?: ComposerClock): { component: ForgeComposer; input: ForgeComposer } {
+  const input = new ForgeComposer(tui, locale, clock);
   return { component: input, input };
 }
