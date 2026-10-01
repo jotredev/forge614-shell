@@ -8,6 +8,7 @@ import { discoverSelectableEngines } from "./infrastructure/forge614-engines.ts"
 import { startTerminalSpinner } from "./app/startup-spinner.ts";
 import { getCatalog, resolveConfiguredLocale } from "./i18n/index.ts";
 import { describeError } from "./shell-error.ts";
+import { helpLogo } from "./ui/basic/logo.ts";
 
 const metadata = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
@@ -74,7 +75,8 @@ if (args.length === 1 && args[0] === "update") {
     process.exitCode = 1;
   }
 } else if (args.includes("--help") || args.includes("-h")) {
-  console.log(getCatalog(staticLocale).cli.help({ version: metadata.version }));
+  /** A terminal gets the responsive colored sign; a pipe gets stable, wide, plain rows before unchanged help text. */
+  console.log([...helpLogo(process.stdout), "", getCatalog(staticLocale).cli.help({ version: metadata.version })].join("\n"));
 } else if (args.includes("--version") || args.includes("-v")) {
   console.log(`forge614-shell ${metadata.version}`);
 } else {
