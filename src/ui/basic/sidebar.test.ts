@@ -124,16 +124,18 @@ test("sidebar has no Resources section or RAM figures in either language, even i
 });
 
 /**
- * Section titles are the accent color (cyan) in bold, so they stand out from the secondary-gray rows under them; there is no rule under them: one row per title.
- * Exists because in the secondary gray the titles could no longer be told apart from the text around them.
+ * Section titles are the accent color (cyan) in bold, so they stand out from the secondary-gray rows under them; there is no rule under them, just one empty row of air
+ * before the content. Exists because in the secondary gray the titles could no longer be told apart from the text around them. Rewritten for the empty row: it used to
+ * expect the content right on the next row.
  */
-test("section titles are bold accent with no rule under them", () => {
+test("section titles are bold accent with an empty row and no rule under them", () => {
   const rows = new ShellSidebar(() => ({ account: "connected", provider: "Claude Code" })).render(36);
   const session = rows.findIndex(row => stripVTControlCharacters(row) === "// SESSION");
   expect(session).toBe(0);
   expect(rows[session]).toBe(`\x1b[1m\x1b[38;2;70;222;224m// SESSION\x1b[39m\x1b[22m`);
   expect(rows.map(stripVTControlCharacters).join("\n")).not.toContain("─");
-  expect(stripVTControlCharacters(rows[1]!)).toStartWith("Account");
+  expect(stripVTControlCharacters(rows[1]!)).toBe("");
+  expect(stripVTControlCharacters(rows[2]!)).toStartWith("Account");
 });
 
 test("sidebar leaves project status to the footer", async () => {

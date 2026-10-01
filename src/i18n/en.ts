@@ -484,7 +484,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     clean: "Clean",
   },
   backgroundActivity: {
-    heading: "Background activity",
+    heading: "BACKGROUND ACTIVITY",
     running: "running",
     done: "done",
     failed: "failed",

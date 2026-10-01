@@ -1,7 +1,6 @@
 import { HStack, VStack, ScrollView, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component, OverlayHandle, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
-import { basename } from "node:path";
-import { accent, elevated, fit, foreground, muted, surface, workspaceColors } from "./theme.ts";
+import { accent, elevated, fit, foreground, surface, workspaceColors } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -103,7 +102,7 @@ export function workspaceTerminal(terminal: Terminal): Terminal {
 
 /**
  * The sidebar's column: the sidebar itself with two columns of padding on each side and a blank row above, all on the surface background from the top to the
- * bottom of the screen (even where its content ends), with no line drawn at its edge. The two columns of gap between it and the chat keep the general background,
+ * last row of the terminal (even where its content ends), with no line drawn at its edge. The two columns of gap between it and the chat keep the general background,
  * which is where the contrast comes from. Mouse events reach the sidebar in its own coordinates: two columns and one row in, and four columns narrower.
  */
 export function sidebarRail(sidebar: Component, terminal: Terminal): Component {
@@ -111,33 +110,32 @@ export function sidebarRail(sidebar: Component, terminal: Terminal): Component {
     return sidebar.handleMouse?.({ ...event, x: event.x - 2, y: event.y - 1, width: Math.max(1, event.width - 4) });
   }, render(width) {
     const content = sidebar.render(Math.max(1, width - 4));
-    return Array.from({ length: Math.max(content.length + 2, terminal.rows - 1) }, (_, i) => surface("  " + fit(content[i - 1] ?? "", Math.max(0, width - 4)) + "  "));
+    return Array.from({ length: Math.max(content.length + 2, terminal.rows) }, (_, i) => surface("  " + fit(content[i - 1] ?? "", Math.max(0, width - 4)) + "  "));
   } };
 }
 
-/** Builds the shared Claude Code and Codex workspace, including one full-width breathing row before the two-row status footer. */
-export function workspaceLayout(transcriptScroll: Component, composer: Component, sidebar: Component, footer: Component, terminal: Terminal, cwd: string): Component {
+/**
+ * Builds the shared Claude Code and Codex workspace in two columns: the chat column (header, transcript, composer, one breathing row and the two-row status footer, all
+ * only as wide as the chat) and, from 100 columns of terminal, the sidebar, which runs down to the last row of the terminal. The header starts in the same column as the
+ * composer's block (two columns in) and says only «FORGE614 / SHELL»: the folder lives in the footer.
+ */
+export function workspaceLayout(transcriptScroll: Component, composer: Component, sidebar: Component, footer: Component, terminal: Terminal): Component {
   const header: Component = { invalidate() {}, render(width) {
-    const title = accent("FORGE614") + " / SHELL";
-    const location = basename(cwd);
-    const line = width >= 40 ? fit(" " + title, Math.max(1, width - location.length - 3)) + muted(location) + "  " : " " + title;
-    return [" ".repeat(width), fit(line, width), " ".repeat(width)];
+    const margin = width >= 14 ? 2 : 0;
+    return [" ".repeat(width), fit(" ".repeat(margin) + accent("FORGE614") + " / SHELL", width), " ".repeat(width)];
   } };
   const rail = sidebarRail(sidebar, terminal);
-  const left = new VStack([
+  /** A non-empty rendered row is required: pi-tui measures an empty Text component as zero rows. */
+  const footerSpacer: Component = { invalidate() {}, render(width) { return [" ".repeat(width)]; } };
+  const chat = new VStack([
     header,
     { component: transcriptScroll, basis: 0, grow: 1, minSize: 1 },
     composer,
-  ], { gap: 0 });
-  const body = new HStack([
-    { component: left, basis: 0, grow: 1, minSize: 1 },
-    { component: new IndependentScrollView(rail, { follow: "none", scrollbar: "hidden", overscroll: "contain" }), basis: 36, minSize: 32, maxSize: 42, visible: viewport => viewport.width >= 100 },
-  ], { gap: 2 });
-  /** A non-empty rendered row is required: pi-tui measures an empty Text component as zero rows. */
-  const footerSpacer: Component = { invalidate() {}, render(width) { return [" ".repeat(width)]; } };
-  return new VStack([
-    { component: body, basis: 0, grow: 1, minSize: 1 },
     { component: footerSpacer, basis: 1, minSize: 1, maxSize: 1 },
     { component: footer, basis: 2, minSize: 2, maxSize: 2 },
-  ]);
+  ], { gap: 0 });
+  return new HStack([
+    { component: chat, basis: 0, grow: 1, minSize: 1 },
+    { component: new IndependentScrollView(rail, { follow: "none", scrollbar: "hidden", overscroll: "contain" }), basis: 36, minSize: 32, maxSize: 42, visible: viewport => viewport.width >= 100 },
+  ], { gap: 2 });
 }

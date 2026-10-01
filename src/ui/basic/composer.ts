@@ -1,6 +1,6 @@
 import { Editor, TuiAltScreen, ProcessTerminal, visibleWidth, matchesKey, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
-import { accent as cyan, danger, elevated, faint, fit, magenta, mix, muted, palette, paint, planning, purple, success, surface, warning } from "./theme.ts";
+import { accent as cyan, background, danger, elevated, faint, fit, magenta, mix, muted, palette, paint, planning, purple, success, surface, warning } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 import type { NativeCollaborationMode, NativeWorkMode } from "../../engines/types.ts";
@@ -442,9 +442,15 @@ export class ForgeComposer extends Editor {
     ];
   }
 
+  /**
+   * The box with a margin of two columns on each side. The left one draws nothing (it follows the general background); the right one is painted with it on purpose:
+   * the block's painter ends with «reset background», and cells that follow without a color of their own would show the terminal's own tone as a strip next to the block.
+   * Only rows that end in such a painted block get it; a row with no background at all (a plain menu row) already follows the general one.
+   */
   render(width: number): string[] {
     const margin = width >= 14 ? 2 : 0;
-    return this.renderContent(width - margin * 2).map(line => " ".repeat(margin) + line);
+    const right = margin ? background(palette.background)(" ".repeat(margin)) : "";
+    return this.renderContent(width - margin * 2).map(line => " ".repeat(margin) + line + (line.endsWith("\x1b[49m") ? right : ""));
   }
   /**
    * The box, top to bottom: the menu (when open), an empty row, then the surface-gray block of an empty row, the editor, an empty row, the status-and-mode row and an
