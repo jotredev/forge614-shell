@@ -1,9 +1,14 @@
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
+import { resetCapabilitiesCache, setCapabilityOverrides } from "@earendil-works/pi-tui";
 import { ActivityCard, chatMessage } from "./transcript.ts";
 import { ChatText } from "./theme.ts";
 import { lineDiff } from "./diff.ts";
 import { getCatalog } from "../../i18n/index.ts";
+
+/** These tests read exact RGB codes (the surface and the diff backgrounds), so they pin true color instead of depending on the terminal that runs the suite. */
+beforeAll(() => setCapabilityOverrides({ trueColor: true }));
+afterAll(() => resetCapabilitiesCache());
 
 test("chat messages render a role label separate from their content", () => {
   const message = stripVTControlCharacters(chatMessage("assistant", "I will inspect the workspace."));
@@ -20,7 +25,7 @@ test("routine tool activity is a plain bullet line — no border, no background,
   expect(output).toContain("• Read · 3 files · complete");
   expect(output).not.toContain("│");
   expect(output).not.toContain("▾"); expect(output).not.toContain("▸");
-  expect(card.render(56).join("\n")).not.toContain("\x1b[48;2;20;31;39m");
+  expect(card.render(56).join("\n")).not.toContain("\x1b[48;2;24;24;27m"); // no surface block either: only a full card has one
   expect((card as unknown as Record<string, unknown>).handleMouse).toBeUndefined();
 });
 
@@ -40,12 +45,38 @@ test("consecutive activity lines stay tight against each other instead of each c
   expect(b[0]).toBe(""); expect(b.at(-1)).not.toBe("");
 });
 
-test("a permission request still gets the full bordered box, because a decision needs the whole detail", () => {
+test("a permission request still gets the full card, because a decision needs the whole detail", () => {
   const card = new ActivityCard("Permission requested", "", "wants to save a memory", true);
   const output = stripVTControlCharacters(card.render(56).join("\n"));
 
   expect(output).toContain("▾");
   expect(output).toContain("wants to save a memory");
+});
+
+/**
+ * The full card (a diff or a permission) is a block of the surface gray with one column of padding on each side and no «│» drawn: each row between the two
+ * blank ones is painted edge to edge across the card's width, after the chat's two columns of margin. It exists so the bar that used to run down its left side cannot return.
+ */
+test("a full card is a block of the surface background with a column of padding on each side and no side bars", () => {
+  const rows = new ActivityCard("Permission requested", "", "wants to save a memory", true).render(56);
+  expect(rows[0]).toBe(""); expect(rows.at(-1)).toBe("");
+  const card = rows.slice(1, -1);
+  expect(card.length).toBeGreaterThanOrEqual(3); // padding, title, detail, padding
+  for (const row of card) {
+    expect(row.startsWith("  \x1b[48;2;24;24;27m")).toBe(true); // two columns of margin on the general background, then the block
+    expect(stripVTControlCharacters(row)).not.toContain("│");
+    expect(stripVTControlCharacters(row)).toHaveLength(54);
+  }
+  expect(stripVTControlCharacters(card[1]!)).toStartWith("   ▾ Permission requested"); // margin, one column of padding, then the title
+  expect(stripVTControlCharacters(card[0]!).trim()).toBe("");
+});
+
+/** A diff keeps the surface behind its rows after the red or green row ends: the added/removed highlight stops at its own text and the rest of the block is surface again. */
+test("a diff card keeps the surface block around its added and removed rows", () => {
+  const rows = new ActivityCard("Edit · file.ts", "Requested", "", true, lineDiff("a", "b")).render(60);
+  const removed = rows.find(row => stripVTControlCharacters(row).includes("- a"))!;
+  expect(removed).toContain("\x1b[49m\x1b[48;2;24;24;27m"); // after the red row ends, the surface comes back for the right-hand padding
+  expect(stripVTControlCharacters(removed)).not.toContain("│");
 });
 
 test("a file edit renders as a colored diff, not a JSON dump", () => {

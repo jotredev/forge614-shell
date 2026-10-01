@@ -1,7 +1,18 @@
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { usageTitle, resetLabel, progressBar, contextRing, isDisplayableUsage, effortLabel, effortDescription, REASONING_DEFAULT_LABEL, compactNumber, usageColor, formatCount, formatUsd } from "./metrics.ts";
 import { stripVTControlCharacters } from "node:util";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { resetCapabilitiesCache, setCapabilityOverrides, visibleWidth } from "@earendil-works/pi-tui";
+
+/** The color tests below read exact RGB codes, so they pin true color instead of depending on the terminal that runs the suite. */
+beforeAll(() => setCapabilityOverrides({ trueColor: true }));
+afterAll(() => resetCapabilitiesCache());
+
+/** The empty part of a usage bar and of the ring is drawn in the faint gray (63;63;70), not in the old blue-gray border color. */
+test("the empty part of the usage bar and of the ring uses the faint gray", () => {
+  expect(progressBar(50, 10)).toContain("\x1b[38;2;63;63;70m░░░░░");
+  expect(contextRing(10).join("")).toContain("\x1b[38;2;63;63;70m");
+  expect(progressBar(50, 10)).not.toContain("49;69;78");
+});
 
 test("usage labels and reset dates become human-readable without inventing provider meanings", () => {
   expect(usageTitle("five_hour")).toBe("5-hour limit");

@@ -1,11 +1,16 @@
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
+import { resetCapabilitiesCache, setCapabilityOverrides } from "@earendil-works/pi-tui";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { REASONING_DEFAULT_LABEL, contextRing } from "./metrics.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ShellSnapshot } from "./shell-state.ts";
+
+/** The heading test reads exact RGB codes, so it pins true color instead of depending on the terminal that runs the suite. */
+beforeAll(() => setCapabilityOverrides({ trueColor: true }));
+afterAll(() => resetCapabilitiesCache());
 
 test("the default-reasoning fallback text fits the sidebar's narrow column without getting cut off", () => {
   const state = new ShellState("Claude Code");
@@ -15,9 +20,9 @@ test("the default-reasoning fallback text fits the sidebar's narrow column witho
   expect(output).not.toContain("…");
 });
 
-test("token/cost figures sit right under plan usage, not down by RAM, and are explained in plain words without getting cut off", () => {
+test("token/cost figures sit right under plan usage and are explained in plain words without getting cut off", () => {
   const state = new ShellState("Claude Code");
-  state.connect({ inputTokens: 2996, outputTokens: 700, estimateUSD: 0.6723, resources: { shellRssBytes: 1_000_000 } });
+  state.connect({ inputTokens: 2996, outputTokens: 700, estimateUSD: 0.6723 });
   const output = stripVTControlCharacters(new ShellSidebar(() => state.snapshot()).render(36).join("\n"));
 
   expect(output).not.toContain("…");
@@ -28,11 +33,9 @@ test("token/cost figures sit right under plan usage, not down by RAM, and are ex
   expect(output).toContain("≈ $0.67");
   expect(output).toContain("your plan doesn't bill it");
   const planUsageAt = output.indexOf("PLAN USAGE");
-  const resourcesAt = output.indexOf("RESOURCES");
   const tokensAt = output.indexOf("read 2,996 tokens");
-  expect(planUsageAt).toBeGreaterThan(-1); expect(resourcesAt).toBeGreaterThan(-1);
+  expect(planUsageAt).toBeGreaterThan(-1);
   expect(tokensAt).toBeGreaterThan(planUsageAt);
-  expect(tokensAt).toBeLessThan(resourcesAt);
 });
 
 test("usage refresh remains callable without rendering a sidebar button", async () => {
@@ -104,20 +107,33 @@ test("disconnected sidebar hides all stale engine and work details", () => {
   expect(output).not.toContain("COMPLETED");
 });
 
-test("sidebar shows per-window Shell RAM without repeating project identity", () => {
-  const state = new ShellState("Codex");
-  state.connect({ resources: { shellRssBytes: 48 * 1024 * 1024 } });
-  const output = stripVTControlCharacters(new ShellSidebar(
-    () => state.snapshot(),
-    "/Users/forge/Desktop/project",
-    "/Users/forge",
-  ).render(45).join("\n"));
+/**
+ * The sidebar has no «Resources» section (Shell's RAM and the engine's RAM were removed in 1.13.0), in either language, and not even a caller that still hands over
+ * the old `resources` figure gets it drawn. It also still does not repeat the project's identity. It exists so the section cannot come back through an old snapshot.
+ */
+test("sidebar has no Resources section or RAM figures in either language, even if an old snapshot carries them", () => {
+  for (const locale of ["en", "es"] as const) {
+    const snapshot = { account: "connected", provider: "Codex", model: "gpt-5.6", resources: { shellRssBytes: 48 * 1024 * 1024 } } as unknown as ShellSnapshot;
+    const output = stripVTControlCharacters(new ShellSidebar(() => snapshot, "/Users/forge/Desktop/project", "/Users/forge", locale).render(45).join("\n"));
 
-  expect(output).toContain("RESOURCES");
-  expect(output).toContain("Shell RAM  48 MB");
-  expect(output).toContain("Engine RAM  Not reported by engine");
-  expect(output).not.toContain("PROJECT");
-  expect(output).not.toContain("Directory");
+    expect(output).toContain(getCatalog(locale).sidebar.headingSession);
+    expect(output).not.toMatch(/RESOURCES|RECURSOS|\bRAM\b|48 MB/);
+    expect(output).not.toContain("PROJECT");
+    expect(output).not.toContain("Directory");
+  }
+});
+
+/**
+ * Section titles are the accent color (cyan) in bold, so they stand out from the secondary-gray rows under them; there is no rule under them: one row per title.
+ * Exists because in the secondary gray the titles could no longer be told apart from the text around them.
+ */
+test("section titles are bold accent with no rule under them", () => {
+  const rows = new ShellSidebar(() => ({ account: "connected", provider: "Claude Code" })).render(36);
+  const session = rows.findIndex(row => stripVTControlCharacters(row) === "// SESSION");
+  expect(session).toBe(0);
+  expect(rows[session]).toBe(`\x1b[1m\x1b[38;2;70;222;224m// SESSION\x1b[39m\x1b[22m`);
+  expect(rows.map(stripVTControlCharacters).join("\n")).not.toContain("─");
+  expect(stripVTControlCharacters(rows[1]!)).toStartWith("Account");
 });
 
 test("sidebar leaves project status to the footer", async () => {
@@ -215,9 +231,7 @@ test("an activity's detail is truncated to 2000 characters, matching claude.ts's
 /** Rows of the CONTEXT and PLAN USAGE sections only: they are the sidebar's explanatory text, the part that used to be cut off with "…". Data values (session id, email, model) are the person's own and may legitimately be long, so they stay out of this slice. */
 function explanatorySections(lines: string[]): string[] {
   const plain = lines.map(stripVTControlCharacters);
-  const start = plain.findIndex(line => /CONTEXT/.test(line));
-  const end = plain.findIndex(line => /RESOURCES|RECURSOS/.test(line));
-  return plain.slice(start, end === -1 ? undefined : end);
+  return plain.slice(plain.findIndex(line => /CONTEXT/.test(line)));
 }
 
 const snapshotStates: Record<string, () => ShellSnapshot> = {

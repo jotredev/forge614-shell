@@ -1,7 +1,7 @@
 import { HStack, VStack, ScrollView, Text, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component, OverlayHandle, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { basename } from "node:path";
-import { accent, border, fit, foreground, muted } from "./theme.ts";
+import { accent, elevated, fit, foreground, muted, surface, workspaceColors } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -46,7 +46,7 @@ export class IndependentScrollView extends ScrollView {
   override scrollBy(lines: number): number { this.cancelAnimation(); super.scrollBy(lines); return 0; }
 }
 
-/** Small pill, styled like the rest of Shell's chrome, offering a click back to the latest message. */
+/** Small pill, styled like the rest of Shell's chrome, offering a click back to the latest message: one row of the elevated gray with its label, no box around it. */
 class JumpToLatestButton implements Component {
   constructor(private readonly onClick: () => void, private readonly locale: Locale = "en") {}
   invalidate(): void {}
@@ -57,11 +57,7 @@ class JumpToLatestButton implements Component {
   render(width: number): string[] {
     const label = getCatalog(this.locale).jumpToLatest.label;
     const inner = Math.min(Math.max(0, width - 2), visibleWidth(label));
-    return [
-      accent(`╭${"─".repeat(inner)}╮`),
-      `${accent("│")}${foreground(fit(label, inner))}${accent("│")}`,
-      accent(`╰${"─".repeat(inner)}╯`),
-    ];
+    return [elevated(foreground(fit(label, inner)))];
   }
 }
 
@@ -85,11 +81,12 @@ export function attachJumpToLatest(tui: TUI, scroll: IndependentScrollView, loca
 /** Apply a session-local background, restoring the terminal on leaving alternate screen. */
 export function workspaceTerminal(terminal: Terminal): Terminal {
   let active = false;
-  const colors = "\x1b[48;2;12;19;24m\x1b[38;2;220;230;235m";
   return new Proxy(terminal, { get(target, key) {
     if (key === "write") return (data: string) => {
       if (data.includes("\x1b[?1049h")) active = true;
       if (data.includes("\x1b[?1049l")) { active = false; target.write("\x1b[0m" + data); return; }
+      // Asked on every write, like every painter in theme.ts, so the base colors follow the terminal's current color support.
+      const colors = workspaceColors();
       target.write(active ? colors + data.replace(/\x1b\[0m/g, "\x1b[0m" + colors) : data);
     };
     const value = Reflect.get(target, key, target);
@@ -97,19 +94,28 @@ export function workspaceTerminal(terminal: Terminal): Terminal {
   } });
 }
 
+/**
+ * The sidebar's column: the sidebar itself with two columns of padding on each side and a blank row above, all on the surface background from the top to the
+ * bottom of the screen (even where its content ends), with no line drawn at its edge. The two columns of gap between it and the chat keep the general background,
+ * which is where the contrast comes from. Mouse events reach the sidebar in its own coordinates: two columns and one row in, and four columns narrower.
+ */
+export function sidebarRail(sidebar: Component, terminal: Terminal): Component {
+  return { invalidate() { sidebar.invalidate(); }, handleMouse(event) {
+    return sidebar.handleMouse?.({ ...event, x: event.x - 2, y: event.y - 1, width: Math.max(1, event.width - 4) });
+  }, render(width) {
+    const content = sidebar.render(Math.max(1, width - 4));
+    return Array.from({ length: Math.max(content.length + 2, terminal.rows - 1) }, (_, i) => surface("  " + fit(content[i - 1] ?? "", Math.max(0, width - 4)) + "  "));
+  } };
+}
+
 export function workspaceLayout(transcriptScroll: Component, composer: Component, sidebar: Component, footer: Component, terminal: Terminal, cwd: string): Component {
   const header: Component = { invalidate() {}, render(width) {
     const title = accent("FORGE614") + " / SHELL";
     const location = basename(cwd);
     const line = width >= 40 ? fit(" " + title, Math.max(1, width - location.length - 3)) + muted(location) + "  " : " " + title;
-    return [" ".repeat(width), fit(line, width), border("─".repeat(width))];
+    return [" ".repeat(width), fit(line, width), " ".repeat(width)];
   } };
-  const rail: Component = { invalidate() { sidebar.invalidate(); }, handleMouse(event) {
-    return sidebar.handleMouse?.({ ...event, x: event.x - 3, y: event.y - 1, width: Math.max(1, event.width - 5) });
-  }, render(width) {
-    const content = sidebar.render(Math.max(1, width - 5));
-    return Array.from({ length: Math.max(content.length + 2, terminal.rows - 1) }, (_, i) => border("│") + "  " + fit(content[i - 1] ?? "", Math.max(0, width - 5)) + "  ");
-  } };
+  const rail = sidebarRail(sidebar, terminal);
   const left = new VStack([
     header,
     { component: transcriptScroll, basis: 0, grow: 1, minSize: 1 },

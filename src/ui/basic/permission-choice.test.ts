@@ -25,7 +25,7 @@ for (const locale of ["es", "en"] as const) {
     void askPermission(input, locale);
     const lines = screen(input);
     const { question, yes, no, footer, stop } = words[locale];
-    expect(lines.slice(lines.indexOf(question) + 1, lines.indexOf(footer))).toEqual([`› ${yes}`, no]);
+    expect(lines.slice(lines.indexOf(question) + 1, lines.indexOf(footer))).toEqual([`▎ ${yes}`, no]);
     expect(lines.filter(line => line.includes(stop))).toEqual([footer]);
     const all = lines.join("\n");
     expect(all).not.toContain("/yes");
@@ -42,9 +42,9 @@ test("permission question: the arrow moves the mark from «Sí» to «No» and b
   void askPermission(input, "es");
   const rows = () => { const lines = screen(input); return lines.slice(lines.indexOf(words.es.question) + 1, lines.indexOf(words.es.footer)); };
   input.handleInput(DOWN);
-  expect(rows()).toEqual(["Sí", "› No"]);
+  expect(rows()).toEqual(["Sí", "▎ No"]);
   input.handleInput(UP);
-  expect(rows()).toEqual(["› Sí", "No"]);
+  expect(rows()).toEqual(["▎ Sí", "No"]);
   input.cancelChoice();
 });
 

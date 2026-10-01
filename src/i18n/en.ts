@@ -449,7 +449,6 @@ The selected engine's project settings and permissions apply. This is not a sand
     headingSession: "SESSION",
     headingContext: "CONTEXT",
     headingPlanUsage: "PLAN USAGE",
-    headingResources: "RESOURCES",
     fieldAccount: "Account",
     fieldConnected: "Connected",
     fieldProvider: "Provider",
@@ -475,9 +474,6 @@ The selected engine's project settings and permissions apply. This is not a sand
     payPerUseAmount: ({ amount }) => `≈ ${amount}`,
     payPerUseUnderOneCent: "under $0.01",
     planDoesNotBill: "your plan doesn't bill it",
-    fieldShellRam: "Shell RAM",
-    fieldEngineRam: "Engine RAM",
-    notReportedByEngine: "Not reported by engine",
   },
   statusBar: {
     checkingAccount: "Checking account…",
