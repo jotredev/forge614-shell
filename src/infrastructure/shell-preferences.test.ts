@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadEnginePreference, loadLastEngine, loadLocale, saveEngineCollaborationMode, saveEngineMode, saveEnginePreference, saveLastEngine, saveLocale } from "./shell-preferences.ts";
+import { loadEnginePreference, loadLastEngine, loadLocale, loadSidebarHidden, loadSidebarWidth, saveEngineCollaborationMode, saveEngineMode, saveEnginePreference, saveLastEngine, saveLocale, saveSidebarHidden, saveSidebarWidth } from "./shell-preferences.ts";
 
 function tempHome(): string {
   return mkdtempSync(join(tmpdir(), "forge614-shell-prefs-"));
@@ -244,5 +244,53 @@ test("the collaboration mode is saved next to the model and the mode, and none o
     expect(loadEnginePreference("codex", { home })).toEqual({ model: "gpt-5.6-terra", effort: "high", mode: "on-request:workspace-write", collaborationMode: "plan" });
     saveEngineCollaborationMode("codex", "default", { home });
     expect(loadEnginePreference("codex", { home })?.collaborationMode).toBe("default");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+/** The sidebar's width and whether it is hidden are root-level fields next to the language and the assistant used last; nothing is saved yet, so both read as their defaults (36 columns, shown). */
+test("with nothing saved the sidebar is 36 columns wide and shown", () => {
+  const home = tempHome();
+  try {
+    expect(loadSidebarWidth({ home })).toBe(36);
+    expect(loadSidebarHidden({ home })).toBe(false);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+/** Saving the width and the hidden flag writes `sidebarWidth` and `sidebarHidden` at the top of the file and never touches the language, the last assistant or an assistant's model. */
+test("the sidebar width and hidden flag round-trip as root fields and keep every other saved choice", () => {
+  const home = tempHome();
+  try {
+    saveLocale("es", { home });
+    saveLastEngine("codex", { home });
+    saveEnginePreference("claude", { model: "sonnet" }, { home });
+    saveSidebarWidth(52, { home });
+    saveSidebarHidden(true, { home });
+    expect(loadSidebarWidth({ home })).toBe(52);
+    expect(loadSidebarHidden({ home })).toBe(true);
+    const file = JSON.parse(readFileSync(join(home, ".forge614", "shell", "preferences.json"), "utf8"));
+    expect(file).toEqual({ format: 1, locale: "es", lastEngine: "codex", claude: { model: "sonnet" }, sidebarWidth: 52, sidebarHidden: true });
+    saveSidebarHidden(false, { home });
+    expect(loadSidebarWidth({ home })).toBe(52);
+    expect(loadSidebarHidden({ home })).toBe(false);
+    expect(loadLocale({ home })).toBe("es");
+    expect(loadLastEngine({ home })).toBe("codex");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+/** A hand-edited or damaged width is ignored instead of breaking the screen: anything that is not a number from 28 to 70 reads as 36, and a hidden flag that is not exactly `true` reads as shown (`true` itself is a valid flag, so it stays hidden). */
+test("an invalid saved sidebar width reads as 36 and an invalid hidden flag as shown", () => {
+  const home = tempHome();
+  try {
+    for (const bad of [27, 71, 0, -40, 1000, "40", null, true, [40], { width: 40 }, "wide"]) {
+      writePreferencesFile(home, JSON.stringify({ sidebarWidth: bad, sidebarHidden: bad }));
+      expect({ bad, width: loadSidebarWidth({ home }), hidden: loadSidebarHidden({ home }) }).toEqual({ bad, width: 36, hidden: bad === true });
+    }
+    writePreferencesFile(home, JSON.stringify({ sidebarWidth: 28 }));
+    expect(loadSidebarWidth({ home })).toBe(28);
+    writePreferencesFile(home, JSON.stringify({ sidebarWidth: 70 }));
+    expect(loadSidebarWidth({ home })).toBe(70);
+    writePreferencesFile(home, "not json");
+    expect(loadSidebarWidth({ home })).toBe(36);
+    expect(loadSidebarHidden({ home })).toBe(false);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });

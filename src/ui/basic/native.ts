@@ -21,6 +21,7 @@ import { ChatText, danger } from "./theme.ts";
 import { nodeWarningRow, takeNodeWarnings } from "./node-warnings.ts";
 import { ChatLogo } from "./logo.ts";
 import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
+import { createSidebarLayout } from "./sidebar-layout.ts";
 import { codexMenuCommands, findCodexCommand } from "../../engines/codex/commands.ts";
 import { codexCommandHandlers, skillChoices } from "./codex-commands.ts";
 import type { CodexLocalTools } from "./codex-commands.ts";
@@ -62,9 +63,11 @@ export async function runNativeUI(
   // Codex has no `/login`: Shell's own `/f614:login` connects the account, and it is the command every «not connected» text names.
   const shellState = new ShellState(engineLabel, "/f614:login");
   const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd, process.env.HOME, locale);
-  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version, locale);
-  tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface));
-  attachJumpToLatest(tui, transcriptScroll, locale);
+  // The sidebar's width and whether it is hidden come back from the preferences and are saved when the person lets go of the grip or clicks a button; the footer takes the sidebar's data while it is not drawn.
+  const sidebarLayout = createSidebarLayout(surface, locale);
+  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version, locale, () => sidebarLayout.isVisible());
+  tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface, sidebarLayout));
+  attachJumpToLatest(tui, transcriptScroll, locale, sidebarLayout);
   tui.setFocus(input);
   // With Codex the menu is Codex's own list (names, descriptions and order as its terminal shows them on macOS);
   // what is Shell's own sits apart under FORGE614, every one of them with the `/f614:` prefix (a command without it is Codex's).
@@ -87,9 +90,9 @@ export async function runNativeUI(
   const write = (text: string) => { const component = new ChatText(clean(text)); transcript.addChild(component); tui.requestRender(); return component; };
   /** Red, so an error reads as an error at a glance instead of blending into a normal reply. */
   const writeError = (text: string) => { const component = new ChatText(clean(text), danger); transcript.addChild(component); tui.requestRender(); return component; };
-  /** `at` is the time of a message replayed from history (`null`: unknown, no time shown); a live message leaves it out and takes the time of now. */
   /** A Node process warning, as a normal Shell notice: one muted row with the catalog's prefix (see `takeNodeWarnings`). */
   const writeNodeWarning = (message: string) => { transcript.addChild(nodeWarningRow(clean(t.nodeWarning({ message })))); tui.requestRender(); };
+  /** `at` is the time of a message replayed from history (`null`: unknown, no time shown); a live message leaves it out and takes the time of now. */
   const writeChat = (role: "user" | "assistant" | "system", text: string, at?: number | null) => write(chatMessage(role, clean(text), locale, at));
   const writeActivity = (title: string, detail: string, expanded = false) => {
     const card = new ActivityCard(title, "", clean(detail), expanded);

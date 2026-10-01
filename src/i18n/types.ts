@@ -414,6 +414,11 @@ export interface Catalog {
   jumpToLatest: {
     label: string;
   };
+  sidebarControls: {
+    hide: string;
+    show: string;
+    releaseToHide: string;
+  };
   metrics: {
     reasoningDefaultLabel: string;
     effortLow: string;
@@ -489,6 +494,7 @@ export interface Catalog {
     detachedHead: string;
     changes: (params: { count: number }) => string;
     clean: string;
+    context: (params: { percent: number }) => string;
   };
   backgroundActivity: {
     heading: string;

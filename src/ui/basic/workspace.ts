@@ -1,6 +1,7 @@
-import { HStack, VStack, ScrollView, visibleWidth } from "@earendil-works/pi-tui";
-import type { Component, OverlayHandle, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
-import { accent, elevated, fit, foreground, surface, workspaceColors } from "./theme.ts";
+import { HStack, VStack, ScrollView, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { Component, OverlayHandle, OverlayOptions, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
+import { accent, elevated, fit, foreground, surface, warning, workspaceColors } from "./theme.ts";
+import { DEFAULT_POINTER, GRIP_WIDTH, RESIZE_POINTER, SidebarLayout } from "./sidebar-layout.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -62,35 +63,49 @@ class JumpToLatestButton implements Component {
   }
   render(width: number): string[] {
     const label = getCatalog(this.locale).jumpToLatest.label;
-    const inner = Math.min(Math.max(0, width - 2), visibleWidth(label));
+    const inner = Math.min(Math.max(0, width), visibleWidth(label));
     return [elevated(foreground(fit(label, inner)))];
   }
 }
 
 /**
  * Shows the jump-to-latest pill above the composer whenever the transcript has been scrolled away
- * from the newest message, and hides it again once the person is back at the end.
+ * from the newest message, and hides it again once the person is back at the end. The pill is exactly
+ * as wide as its label and is centered over the chat column, not the whole terminal: its column is read
+ * from `layout` each time the screen is drawn, so it follows the sidebar's width (and the sidebar being
+ * hidden). Without a `layout` the chat is taken to be the whole terminal.
  */
-export function attachJumpToLatest(tui: TUI, scroll: IndependentScrollView, locale: Locale = "en"): OverlayHandle {
-  return tui.showOverlay(new JumpToLatestButton(() => scroll.scrollToEnd(), locale), {
+export function attachJumpToLatest(tui: TUI, scroll: IndependentScrollView, locale: Locale = "en", layout?: SidebarLayout): OverlayHandle {
+  const label = visibleWidth(getCatalog(locale).jumpToLatest.label);
+  const options: OverlayOptions = {
     // Near the top, not the bottom: a fixed bottom position sits over whatever text happens to be
     // scrolled to the last visible row, which is usually mid-paragraph. Just under the header is
     // reliably clear of chat content, and matches where a "new messages" banner belongs anyway —
     // it points back down to what you're missing, so it reads naturally near the top of your view.
-    anchor: "top-center",
+    anchor: "top-left",
     margin: { top: 3 },
+    width: label,
+    // A getter, because pi-tui keeps this object and reads it again on every frame.
+    get col() { return Math.max(0, Math.floor(((layout ? layout.chatWidth() : tui.terminal?.columns ?? 0) - label) / 2)); },
     nonCapturing: true,
     visible: () => !scroll.isFollowingEnd,
-  });
+  };
+  return tui.showOverlay(new JumpToLatestButton(() => scroll.scrollToEnd(), locale), options);
 }
 
-/** Apply a session-local background, restoring the terminal on leaving alternate screen. */
+/**
+ * Apply a session-local background, restoring the terminal on leaving alternate screen. It also notes whether the resize pointer was asked for (OSC 22, by the sidebar's grip)
+ * and not yet given back, so that leaving the alternate screen gives the pointer back first: closing the screen with the pointer over the grip never leaves the terminal stuck on it.
+ */
 export function workspaceTerminal(terminal: Terminal): Terminal {
   let active = false;
+  let pointerRaised = false;
   return new Proxy(terminal, { get(target, key) {
     if (key === "write") return (data: string) => {
+      if (data.includes(RESIZE_POINTER)) pointerRaised = true;
+      if (data.includes(DEFAULT_POINTER)) pointerRaised = false;
       if (data.includes("\x1b[?1049h")) active = true;
-      if (data.includes("\x1b[?1049l")) { active = false; target.write("\x1b[0m" + data); return; }
+      if (data.includes("\x1b[?1049l")) { active = false; target.write((pointerRaised ? DEFAULT_POINTER : "") + "\x1b[0m" + data); pointerRaised = false; return; }
       // Asked on every write, like every painter in theme.ts, so the base colors follow the terminal's current color support.
       const colors = workspaceColors();
       target.write(active ? colors + data.replace(/\x1b\[0m/g, "\x1b[0m" + colors) : data);
@@ -102,29 +117,60 @@ export function workspaceTerminal(terminal: Terminal): Terminal {
 
 /**
  * The sidebar's column: the sidebar itself with two columns of padding on each side and a blank row above, all on the surface background from the top to the
- * last row of the terminal (even where its content ends), with no line drawn at its edge. The two columns of gap between it and the chat keep the general background,
- * which is where the contrast comes from. Mouse events reach the sidebar in its own coordinates: two columns and one row in, and four columns narrower.
+ * last row of the terminal (even where its content ends), with no line drawn at its edge. The two columns between it and the chat keep the general background,
+ * which is where the contrast comes from (the grip lives there). Mouse events reach the sidebar in its own coordinates: two columns and one row in, and four columns narrower.
+ * With a `layout`, the blank row above holds the «hide ›» button (right-aligned, two columns of margin), the column answers the mouse for it, and while the grip is dragged below 24
+ * columns the content is replaced by the «release to hide it» hint in the warning color (wrapped, not cut, when the language needs more than the column's width).
  */
-export function sidebarRail(sidebar: Component, terminal: Terminal): Component {
+export function sidebarRail(sidebar: Component, terminal: Terminal, layout?: SidebarLayout): Component {
   return { invalidate() { sidebar.invalidate(); }, handleMouse(event) {
+    const own = layout?.railMouse(event);
+    if (own) return own;
     return sidebar.handleMouse?.({ ...event, x: event.x - 2, y: event.y - 1, width: Math.max(1, event.width - 4) });
   }, render(width) {
-    const content = sidebar.render(Math.max(1, width - 4));
-    return Array.from({ length: Math.max(content.length + 2, terminal.rows) }, (_, i) => surface("  " + fit(content[i - 1] ?? "", Math.max(0, width - 4)) + "  "));
+    const inner = Math.max(1, width - 4);
+    const content = layout?.isFolding() ? ["", ...wrapTextWithAnsi(layout.releaseHint(), inner).map(warning)] : sidebar.render(inner);
+    return Array.from({ length: Math.max(content.length + 2, terminal.rows) }, (_, i) =>
+      surface(i === 0 && layout ? layout.hideButtonRow(width) : "  " + fit(content[i - 1] ?? "", Math.max(0, width - 4)) + "  "));
   } };
 }
 
 /**
- * Builds the shared Claude Code and Codex workspace in two columns: the chat column (header, transcript, composer, one breathing row and the two-row status footer, all
- * only as wide as the chat) and, from 100 columns of terminal, the sidebar, which runs down to the last row of the terminal. The header starts in the same column as the
- * composer's block (two columns in) and says only «FORGE614 / SHELL»: the folder lives in the footer.
+ * The workspace's one row: the chat (which takes what is left), the grip, and the sidebar with the width `layout` says. The sidebar's size is read from `layout` each pass (a getter
+ * on its entry), and each pass tells `layout` how many columns the terminal has. Moving the mouse over something that answers nothing clears any hover, which is how the grip and the buttons
+ * go back to rest when the pointer leaves them.
  */
-export function workspaceLayout(transcriptScroll: Component, composer: Component, sidebar: Component, footer: Component, terminal: Terminal): Component {
-  const header: Component = { invalidate() {}, render(width) {
+class WorkspaceRow extends HStack {
+  constructor(chat: Component, grip: Component, sidebar: Component, private readonly layout: SidebarLayout) {
+    super([
+      { component: chat, basis: 0, grow: 1, minSize: 1, visible: viewport => { layout.observe(viewport.width); return true; } },
+      { component: grip, basis: GRIP_WIDTH, minSize: GRIP_WIDTH, maxSize: GRIP_WIDTH, visible: () => layout.isVisible() },
+      { component: sidebar, basis: 0, visible: () => layout.isVisible() },
+    ], { gap: 0 });
+    const entry = this.entries.find(candidate => candidate.component === sidebar)!;
+    for (const size of ["basis", "minSize", "maxSize"] as const) Object.defineProperty(entry, size, { enumerable: true, configurable: true, get: () => layout.sidebarWidth() });
+  }
+  override handleMouse(event: TuiMouseEvent) {
+    if (event.type !== "move" || !this.layout.leave()) return undefined;
+    return { handled: true as const, render: true, target: { component: this, originX: event.screenX - event.x, originY: event.screenY - event.y, width: event.width, height: event.height } };
+  }
+}
+
+/**
+ * Builds the shared Claude Code and Codex workspace in three columns: the chat column (header, transcript, composer, one breathing row and the two-row status footer, all
+ * only as wide as the chat), the two-column grip that drags the sidebar's edge and, from 100 columns of terminal unless the person hid it, the sidebar, which runs down to the last row
+ * of the terminal. The widths come from `layout` (36 columns by default, shown): the person drags the grip, or hides and shows the sidebar with the buttons, and the footer and the
+ * «jump to latest» pill read the same `layout`. The header starts in the same column as the composer's block (two columns in) and says only «FORGE614 / SHELL», with the «‹ show sidebar»
+ * button at its right while the sidebar is hidden: the folder lives in the footer.
+ */
+export function workspaceLayout(transcriptScroll: Component, composer: Component, sidebar: Component, footer: Component, terminal: Terminal, layout: SidebarLayout = new SidebarLayout({ terminal })): Component {
+  const header: Component = { invalidate() {}, handleMouse: event => layout.headerMouse(event), render(width) {
     const margin = width >= 14 ? 2 : 0;
-    return [" ".repeat(width), fit(" ".repeat(margin) + accent("FORGE614") + " / SHELL", width), " ".repeat(width)];
+    const title = " ".repeat(margin) + accent("FORGE614") + " / SHELL";
+    const button = layout.showButton();
+    return [" ".repeat(width), fit(button ? title + " ".repeat(Math.max(1, width - 2 - visibleWidth(title) - visibleWidth(button))) + button : title, width), " ".repeat(width)];
   } };
-  const rail = sidebarRail(sidebar, terminal);
+  const rail = sidebarRail(sidebar, terminal, layout);
   /** A non-empty rendered row is required: pi-tui measures an empty Text component as zero rows. */
   const footerSpacer: Component = { invalidate() {}, render(width) { return [" ".repeat(width)]; } };
   const chat = new VStack([
@@ -134,8 +180,5 @@ export function workspaceLayout(transcriptScroll: Component, composer: Component
     { component: footerSpacer, basis: 1, minSize: 1, maxSize: 1 },
     { component: footer, basis: 2, minSize: 2, maxSize: 2 },
   ], { gap: 0 });
-  return new HStack([
-    { component: chat, basis: 0, grow: 1, minSize: 1 },
-    { component: new IndependentScrollView(rail, { follow: "none", scrollbar: "hidden", overscroll: "contain" }), basis: 36, minSize: 32, maxSize: 42, visible: viewport => viewport.width >= 100 },
-  ], { gap: 2 });
+  return new WorkspaceRow(chat, layout.grip(), new IndependentScrollView(rail, { follow: "none", scrollbar: "hidden", overscroll: "contain" }), layout);
 }
