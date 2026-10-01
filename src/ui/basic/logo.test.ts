@@ -89,3 +89,19 @@ test("the chat sign centers in its visible rows and stays absent after the first
   expect(transcript.render(43)).toEqual(["Engram notice"]);
   expect(stripVTControlCharacters(renderLogo(43, 40).join("\n"))).toContain("█▀▀▄");
 });
+
+/**
+ * A chat too narrow (under 18 columns) or a terminal too short (under 12 rows) for the sign must not reserve any rows for it: before this, the centering padding
+ * was added even though there was no sign, so with 20 visible rows ten empty rows pushed the notices to the middle of the chat. Both cases return nothing, and a
+ * notice written before the sign ends up on the first row of the chat.
+ */
+test("the chat sign returns no rows at all, not even padding, when it does not fit", () => {
+  expect(new ChatLogo(() => 20, () => 40).render(15)).toEqual([]);
+  expect(new ChatLogo(() => 20, () => 10).render(100)).toEqual([]);
+  const notice = { invalidate() {}, render: () => ["Engram notice"] };
+  for (const [width, terminalRows] of [[15, 40], [100, 10]] as const) {
+    const transcript = new Container();
+    transcript.addChild(new ChatLogo(() => 20, () => terminalRows)); transcript.addChild(notice);
+    expect(transcript.render(width)).toEqual(["Engram notice"]);
+  }
+});

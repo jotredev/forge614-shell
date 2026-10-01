@@ -12,7 +12,9 @@ import { emptyTelemetry, telemetryLines } from "../../engines/claude/telemetry.t
 class TestTerminal implements Terminal {
   columns = 120; rows = 50; kittyProtocolActive = false;
   input: (data: string) => void = () => {}; output = "";
-  start(input: (data: string) => void) { this.input = input; }
+  /** What the screen asked to be told when the terminal changes size: calling it makes the next frame draw every row again, not just the rows that changed. */
+  resize: () => void = () => {};
+  start(input: (data: string) => void, resize: () => void = () => {}) { this.input = input; this.resize = resize; }
   stop() {} async drainInput() {} write(data: string) { this.output += data; }
   moveBy() {} hideCursor() {} showCursor() {} clearLine() {} clearFromCursor() {} clearScreen() {} setTitle() {} setProgress() {}
 }
@@ -358,6 +360,26 @@ test.skipIf(process.platform === "win32")("a new Claude chat removes the FORGE61
     h.terminal.output = ""; h.enter("first message"); await tick();
     expect(h.plain()).not.toContain("████████");
     h.terminal.output = ""; h.enter("/new"); await tick();
+    expect(h.plain()).not.toContain("████████");
+  } finally { await h.finish(); }
+});
+
+/**
+ * A native Claude Code command that is sent as a turn (`/init` here, one of the assistant's own commands) is the first turn of the chat, exactly like a normal message,
+ * so it removes the opening sign and the sign does not come back. Before this only a normal message removed it and the sign stayed on top of the command and its answer.
+ */
+test.skipIf(process.platform === "win32")("a native Claude command sent as a turn removes the FORGE614 sign and it does not come back", async () => {
+  const h = await claudeUi([{ name: "init", description: "Initialize", argumentHint: "" }]);
+  try {
+    expect(h.plain()).toContain("████████");
+    h.enter("/init"); await tick();
+    expect(h.calls().some(line => line.startsWith("prompt:") && line.includes("/init"))).toBe(true);
+    // A resize makes the next frame draw every row, so the sign would show up in the output if it were still in the chat.
+    h.terminal.columns = 121; h.terminal.output = ""; h.terminal.resize(); await tick();
+    expect(h.plain()).toContain("/init");
+    expect(h.plain()).not.toContain("████████");
+    h.enter("/f614:stop"); await tick(); await tick();
+    h.terminal.columns = 120; h.terminal.output = ""; h.terminal.resize(); await tick();
     expect(h.plain()).not.toContain("████████");
   } finally { await h.finish(); }
 });

@@ -79,6 +79,8 @@ export class ChatLogo implements Component {
   render(width: number): string[] {
     if (!this.visible) return [];
     const rows = renderLogo(width, this.terminalRows());
+    // No sign (too narrow or too short): no rows at all, so the padding does not push the notices below it to the middle of the chat.
+    if (!rows.length) return [];
     const top = Math.max(0, Math.floor((this.visibleRows(width) - rows.length) / 2));
     return [...Array(top).fill(""), ...rows.map(line => " ".repeat(Math.max(0, Math.floor((width - visibleWidth(line)) / 2))) + line)];
   }

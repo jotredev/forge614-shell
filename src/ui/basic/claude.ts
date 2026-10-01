@@ -381,6 +381,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     // command forwarding below so `/effort` cannot become a chat turn.
     if (name && !["/model", "/effort"].includes(name) && session.commands.some(command => `/${command.name}` === name || command.aliases?.some(alias => `/${alias}` === name))) {
       if (session.busy) throw new Error(tc.finishOrStopFirst);
+      // A native command sent as a turn is the chat's first turn, like a message: it removes the opening sign (Shell's own `/f614:` commands, and a command refused above, do not).
+      chatLogo.dismiss();
       writeChat("user", value); telemetry = { ...emptyTelemetry(), quotas: telemetry.quotas };
       beginTurn();
       activeTurn = session.send(value, onEvent, approve).catch(error => { writeError(t.turnStopped({ message: describeError(error, locale) })); }).finally(() => { activeTurn = undefined; endTurn(); refresh(); });
