@@ -63,6 +63,7 @@ test("--help prints Shell commands with the /f614: prefix in both languages", ()
         env: { PATH: process.env.PATH, HOME: home, FORGE614_HOME: join(home, "forge614"), FORGE614_SHELL_LOCALE: locale },
       });
       expect(result.status, locale).toBe(0);
+      expect(result.stdout, `${locale} non-terminal sign`).toStartWith("█▀▀▀ █▀▀█ █▀▀▄ █▀▀▀ █▀▀▀  █▀▀▀ ▀█  █  █\n");
       for (const name of ["login", "status", "refresh", "stop", "quit", "commands", "help"]) expect(result.stdout, `${locale} /f614:${name}`).toContain(`/f614:${name}`);
       for (const old of ["/refresh", "/yes", "/no", "/commands", "/help", "/quit!", "/exit!", "/forge614-status"]) expect(result.stdout, `${locale} ${old}`).not.toMatch(new RegExp(`(?<![\\w:/.-])${old}(?![\\w:-])`));
     }

@@ -124,6 +124,22 @@ function codexUi(locale: "en" | "es" = "en", configure: (rpc: FixtureRpc) => voi
 }
 const savedPreferences = () => JSON.parse(readFileSync(join(forgeHome, "shell", "preferences.json"), "utf8"));
 
+/** The opening sign is transcript content, so a real Codex chat shows it before any turn and its first person message removes it for this Shell opening, including after `/new`. */
+test("a new Codex chat removes the FORGE614 sign after its first person message and never restores it on new", async () => {
+  const { terminal, rpc, ui, enter, plain } = codexUi();
+  try {
+    await tick();
+    expect(plain()).toContain("█▀▀▄");
+    terminal.output = "";
+    enter("first message"); await tick();
+    expect(plain()).not.toContain("█▀▀▄");
+    rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+    await tick(); terminal.output = "";
+    enter("/new"); await tick();
+    expect(plain()).not.toContain("█▀▀▄");
+  } finally { enter("/f614:quit"); await ui; }
+});
+
 /** Idea 1 with Codex's own Shift+Tab (Plan ↔ Default): mid-turn it never says «Finish or /stop»; the mode changes and one line says it applies from the next turn. */
 test("Shift+Tab during a Codex turn switches to Plan and says it applies from the next turn", async () => {
   const { terminal, rpc, ui, enter, plain, session } = codexUi();

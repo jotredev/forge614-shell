@@ -97,6 +97,10 @@ In an interactive terminal, Shell displays the `Detecting installed AI enginesâ€
 
 The welcome frame renders `FORGE614` in bold and shows the Shell version as `v<version>` on the right when the terminal is wide enough. This identifies the application; it does not claim a Claude Code or Codex version.
 
+Before the first person message in a Claude Code or Codex chat, Shell also draws a large three-row `FORGE614` sign after three blank rows. It uses the OpenCode-shaped half blocks: `FORGE` is muted, `614` is bold foreground, and the marked hollow cells use a 25%-mixed shadow background. Notices written before that first message appear below the sign. The sign disappears as soon as the person sends the first message and does not return after `/new` or `/clear`. At 43 columns it is one line of both halves; from 26 to 42 it stacks `FORGE`, one blank row, then `614`; from 18 to 25 it uses `F614`; below 18 columns or 12 terminal rows it is absent. The startup frame is unchanged.
+
+`forge614-shell --help` and `-h` print the same sign and one blank row before the existing help. On a terminal it uses color and the available width (without the height rule); when piped, it always uses the uncolored side-by-side rows so scripts receive stable plain text.
+
 ## Look: borderless blocks, neutral grays, and colors that adapt
 
 Like a dark room where every table is a little lighter than the floor, the screen draws no boxes of lines: each zone (sidebar, writing box, cards, code blocks, the chosen option) is a block of background a little lighter than the general background, and separation comes from contrast and space. Secondary text is a muted gray and states are told apart by the color and icon of their text. The screen is always dark: while it is in the alternate screen, Shell puts the general background and the base text color behind everything it writes (`workspaceTerminal`), including the startup screens, and resets them on leaving.

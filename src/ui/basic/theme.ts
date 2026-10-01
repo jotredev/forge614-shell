@@ -73,7 +73,7 @@ export const paint = (rgb: Rgb) => (text: string) => `\x1b[${sgr(38, rgb)}m${tex
  * A painter that puts `rgb` behind its text. A reset inside the text (`\x1b[0m`, `\x1b[m` or `\x1b[49m`, which pi-tui's own pieces and the diff rows emit) would
  * end the block half way across the row, so the background is put back right after each one.
  */
-const fill = (rgb: Rgb) => (text: string) => {
+export const background = (rgb: Rgb) => (text: string) => {
   const code = `\x1b[${sgr(48, rgb)}m`;
   return `${code}${text.replace(/\x1b\[(?:0|49)?m/g, reset => reset + code)}\x1b[49m`;
 };
@@ -92,11 +92,11 @@ export const purple = paint(palette.purple);
 export const planning = paint(palette.planning);
 export const magenta = paint(palette.magenta);
 /** The zones that stand out from the general background: sidebar, writing box, tool cards, code blocks. */
-export const surface = fill(palette.surface);
+export const surface = background(palette.surface);
 /** What is chosen inside a menu, a list or the «jump to latest» pill: one step lighter than `surface`. */
-export const elevated = fill(palette.elevated);
-export const addedBackground = fill(palette.addedBackground);
-export const removedBackground = fill(palette.removedBackground);
+export const elevated = background(palette.elevated);
+export const addedBackground = background(palette.addedBackground);
+export const removedBackground = background(palette.removedBackground);
 /** The general background and normal text color of the whole screen, as the one escape sequence the terminal gets when Shell enters its alternate screen. */
 export const workspaceColors = () => `\x1b[${sgr(48, palette.background)}m\x1b[${sgr(38, palette.foreground)}m`;
 export const fit = (text: string, width: number) => {

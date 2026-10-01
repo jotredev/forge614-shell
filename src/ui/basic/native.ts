@@ -18,6 +18,7 @@ import { ShellStatusBar } from "./status-bar.ts";
 import { ActivityCard, chatMessage } from "./transcript.ts";
 import { effortDescription, effortLabel } from "./metrics.ts";
 import { ChatText, danger } from "./theme.ts";
+import { ChatLogo } from "./logo.ts";
 import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
 import { codexMenuCommands, findCodexCommand } from "../../engines/codex/commands.ts";
 import { codexCommandHandlers, skillChoices } from "./codex-commands.ts";
@@ -50,6 +51,8 @@ export async function runNativeUI(
   const surface = workspaceTerminal(terminal);
   const tui = new TuiAltScreen(surface, true, undefined, { mouse: true });
   const transcript = new Container();
+  const chatLogo = new ChatLogo(() => terminal.rows);
+  transcript.addChild(chatLogo);
   const transcriptScroll = new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" });
   const composer = createComposer(tui, locale);
   const { input } = composer;
@@ -236,6 +239,7 @@ export async function runNativeUI(
     : undefined;
   /** Sends a message of the person (typed, or sent for them by `/init` and `/plan text`) and, when the turn ends with a plan, offers to implement it. */
   const sendMessage = (value: string) => {
+    chatLogo.dismiss();
     streaming.clear(); writeChat("user", value);
     beginTurn();
     void session.send(value).catch(error => { if (!closed) writeError(t.turnStopped({ message: describeError(error, locale) })); })

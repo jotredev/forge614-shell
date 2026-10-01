@@ -28,6 +28,7 @@ import { ActivityCard, chatMessage } from "./transcript.ts";
 import { lineDiff } from "./diff.ts";
 import { engramToolLabel, parseClaudeMcpToolName } from "../../engines/mcp-labels.ts";
 import { ChatText, PanelText, danger } from "./theme.ts";
+import { ChatLogo } from "./logo.ts";
 import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
 import { workingStatus } from "./duration.ts";
 import { ToolTracker } from "./tool-tracker.ts";
@@ -119,6 +120,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const surface = workspaceTerminal(terminal ?? new ProcessTerminal());
   const tui = new TuiAltScreen(surface, true, undefined, { mouse: true });
   const transcript = new Container();
+  const chatLogo = new ChatLogo(() => (terminal ?? surface).rows);
+  transcript.addChild(chatLogo);
   const transcriptScroll = new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" });
   const composer = createComposer(tui, locale);
   const { input } = composer;
@@ -519,6 +522,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     } else if (disconnected) writeError(t.reconnectBeforeMessage);
     else if (session.busy) writeError(t.turnAlreadyRunning);
     else {
+      chatLogo.dismiss();
       writeChat("user", value);
       telemetry = { ...emptyTelemetry(), quotas: telemetry.quotas };
       beginTurn();
