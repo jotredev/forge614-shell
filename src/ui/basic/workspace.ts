@@ -1,4 +1,4 @@
-import { HStack, VStack, ScrollView, Text, visibleWidth } from "@earendil-works/pi-tui";
+import { HStack, VStack, ScrollView, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component, OverlayHandle, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { basename } from "node:path";
 import { accent, elevated, fit, foreground, muted, surface, workspaceColors } from "./theme.ts";
@@ -115,6 +115,7 @@ export function sidebarRail(sidebar: Component, terminal: Terminal): Component {
   } };
 }
 
+/** Builds the shared Claude Code and Codex workspace, including one full-width breathing row before the two-row status footer. */
 export function workspaceLayout(transcriptScroll: Component, composer: Component, sidebar: Component, footer: Component, terminal: Terminal, cwd: string): Component {
   const header: Component = { invalidate() {}, render(width) {
     const title = accent("FORGE614") + " / SHELL";
@@ -127,14 +128,16 @@ export function workspaceLayout(transcriptScroll: Component, composer: Component
     header,
     { component: transcriptScroll, basis: 0, grow: 1, minSize: 1 },
     composer,
-    new Text("", 0, 0),
   ], { gap: 0 });
   const body = new HStack([
     { component: left, basis: 0, grow: 1, minSize: 1 },
     { component: new IndependentScrollView(rail, { follow: "none", scrollbar: "hidden", overscroll: "contain" }), basis: 36, minSize: 32, maxSize: 42, visible: viewport => viewport.width >= 100 },
   ], { gap: 2 });
+  /** A non-empty rendered row is required: pi-tui measures an empty Text component as zero rows. */
+  const footerSpacer: Component = { invalidate() {}, render(width) { return [" ".repeat(width)]; } };
   return new VStack([
     { component: body, basis: 0, grow: 1, minSize: 1 },
+    { component: footerSpacer, basis: 1, minSize: 1, maxSize: 1 },
     { component: footer, basis: 2, minSize: 2, maxSize: 2 },
   ]);
 }
