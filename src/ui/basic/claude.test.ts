@@ -385,6 +385,49 @@ test.skipIf(process.platform === "win32")("a native Claude command sent as a tur
 });
 
 /**
+ * Node prints every `process.emitWarning` raw on stderr, which lands on top of the screen Shell draws: the Claude SDK raises `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`
+ * («canUseTool will not be invoked») when a query opens in «Bypass Permissions» with `canUseTool` set, and it cut across the writing box on the first message. Shell passes
+ * `canUseTool` on purpose (so the mode can leave «Bypass Permissions» live), so that warning is expected and says nothing; any other warning shows once in the chat as a muted
+ * line with the catalog's prefix and without «(node:<pid>)»; nothing reaches stderr while the screen is open. Both languages, with the exact words of each.
+ */
+test.skipIf(process.platform === "win32")("while the Claude screen is open Node warnings do not reach stderr: the expected one is silent, another shows once in the chat", async () => {
+  for (const [locale, shown] of [["en", "Node warning: Something odd happened"], ["es", "Aviso de Node: Something odd happened"]] as const) {
+    const h = await claudeUi([], locale); const stderr: string[] = []; const realWrite = process.stderr.write;
+    try {
+      process.stderr.write = ((chunk: string | Uint8Array) => { stderr.push(String(chunk)); return true; }) as typeof process.stderr.write;
+      h.terminal.output = "";
+      process.emitWarning("canUseTool will not be invoked: permissionMode 'bypassPermissions' auto-approves every tool call", { code: "CLAUDE_SDK_CAN_USE_TOOL_SHADOWED" });
+      await tick(); await tick();
+      expect(h.plain()).not.toContain("canUseTool");
+      expect(h.plain()).not.toContain("Node warning"); expect(h.plain()).not.toContain("Aviso de Node");
+      expect(stderr).toEqual([]);
+      process.emitWarning("Something odd happened", { code: "SOME_OTHER_WARNING" });
+      await tick(); await tick();
+      expect(h.plain().split(shown)).toHaveLength(2);
+      expect(h.plain()).not.toContain("(node:");
+      expect(stderr).toEqual([]);
+    } finally { process.stderr.write = realWrite; await h.finish(); }
+  }
+});
+
+/**
+ * Shell only borrows the process's `warning` listeners while its screen is open: Node's own printer (the listener named `onWarning`) is taken out while it is open
+ * and, on leaving, the listeners are exactly the ones there were before opening (same number, same functions, same order), with nothing of Shell's left hanging.
+ */
+test.skipIf(process.platform === "win32")("the Claude screen takes Node's warning printer while it is open and gives back the very same warning listeners on leaving", async () => {
+  const before = process.listeners("warning");
+  expect(before.some(listener => listener.name === "onWarning")).toBe(true);
+  const h = await claudeUi();
+  try {
+    expect(process.listeners("warning").some(listener => listener.name === "onWarning")).toBe(false);
+    expect(process.listenerCount("warning")).toBe(before.length);
+  } finally { await h.finish(); }
+  const after = process.listeners("warning");
+  expect(after).toHaveLength(before.length);
+  for (const [index, listener] of before.entries()) expect(after[index]).toBe(listener);
+});
+
+/**
  * Every Shell command with Claude Code answers to `/f614:<name>` and does what its unprefixed name did before 1.12.0:
  * `/f614:status` is Shell's own session telemetry (it used to be `/status` and `/forge614-status`), `/f614:refresh` asks
  * Claude Code for the plan usage again, `/f614:help` and `/f614:commands` open Shell's command menu, and `/f614:yes` and

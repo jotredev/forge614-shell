@@ -18,6 +18,7 @@ import { ShellStatusBar } from "./status-bar.ts";
 import { ActivityCard, chatMessage } from "./transcript.ts";
 import { effortDescription, effortLabel } from "./metrics.ts";
 import { ChatText, danger } from "./theme.ts";
+import { nodeWarningRow, takeNodeWarnings } from "./node-warnings.ts";
 import { ChatLogo } from "./logo.ts";
 import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
 import { codexMenuCommands, findCodexCommand } from "../../engines/codex/commands.ts";
@@ -87,6 +88,8 @@ export async function runNativeUI(
   /** Red, so an error reads as an error at a glance instead of blending into a normal reply. */
   const writeError = (text: string) => { const component = new ChatText(clean(text), danger); transcript.addChild(component); tui.requestRender(); return component; };
   /** `at` is the time of a message replayed from history (`null`: unknown, no time shown); a live message leaves it out and takes the time of now. */
+  /** A Node process warning, as a normal Shell notice: one muted row with the catalog's prefix (see `takeNodeWarnings`). */
+  const writeNodeWarning = (message: string) => { transcript.addChild(nodeWarningRow(clean(t.nodeWarning({ message })))); tui.requestRender(); };
   const writeChat = (role: "user" | "assistant" | "system", text: string, at?: number | null) => write(chatMessage(role, clean(text), locale, at));
   const writeActivity = (title: string, detail: string, expanded = false) => {
     const card = new ActivityCard(title, "", clean(detail), expanded);
@@ -411,6 +414,7 @@ export async function runNativeUI(
     choose: (title, items, current, options) => input.choose(title, items, current, options),
     setSkillChoices: skills => input.setSkillChoices(skills),
     submit: text => sendMessage(text),
+    dismissLogo: () => chatLogo.dismiss(),
     setComposerText: text => input.setValue(text),
     rememberWorkMode: modeId => saveEngineMode("codex", modeId, { env: process.env }),
     rememberCollaborationMode: modeId => saveEngineCollaborationMode("codex", modeId, { env: process.env }),
@@ -475,6 +479,8 @@ export async function runNativeUI(
   };
   const clock = setInterval(() => { void updateProject(); }, 15_000);
   void updateProject();
+  // While this screen is open no Node warning is written raw on it: the SDK's expected one is ignored, any other shows in the chat (see `takeNodeWarnings`).
+  const giveBackNodeWarnings = takeNodeWarnings(writeNodeWarning);
   try {
     refresh(); tui.start();
     void session.initialize().then(async () => {
@@ -504,5 +510,5 @@ export async function runNativeUI(
       ready = true; refresh(); loadSkillChoices();
     }).catch(error => writeError(tc.connectionFailed({ message: describeError(error, locale) })));
     await exited;
-  } finally { clearInterval(clock); process.removeListener("SIGTERM", shutdown); session.close(); tui.stop({ preserveScreen: true }); }
+  } finally { clearInterval(clock); process.removeListener("SIGTERM", shutdown); session.close(); tui.stop({ preserveScreen: true }); giveBackNodeWarnings(); }
 }

@@ -28,6 +28,7 @@ import { ActivityCard, chatMessage } from "./transcript.ts";
 import { lineDiff } from "./diff.ts";
 import { engramToolLabel, parseClaudeMcpToolName } from "../../engines/mcp-labels.ts";
 import { ChatText, PanelText, danger } from "./theme.ts";
+import { nodeWarningRow, takeNodeWarnings } from "./node-warnings.ts";
 import { ChatLogo } from "./logo.ts";
 import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
 import { workingStatus } from "./duration.ts";
@@ -199,6 +200,11 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     transcript.addChild(component);
     tui.requestRender();
     return component;
+  };
+  /** A Node process warning, as a normal Shell notice: one muted row with the catalog's prefix (see `takeNodeWarnings`). */
+  const writeNodeWarning = (message: string): void => {
+    transcript.addChild(nodeWarningRow(clean(t.nodeWarning({ message }))));
+    tui.requestRender();
   };
   const writeChat = (role: "user" | "assistant" | "system", text: string): ChatText => write(chatMessage(role, clean(text), locale));
   const writeActivity = (title: string, detail: string, expanded = false): ActivityCard => {
@@ -565,6 +571,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const clock = setInterval(() => { void updateProject(); }, 15_000);
   void updateProject();
   process.once("SIGTERM", terminate);
+  // While this screen is open no Node warning is written raw on it: the SDK's expected one is ignored, any other shows in the chat (see `takeNodeWarnings`).
+  const giveBackNodeWarnings = takeNodeWarnings(writeNodeWarning);
   try {
     commandBusy = true;
     loginAbort = new AbortController();
@@ -580,5 +588,6 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     clearInterval(clock);
     process.removeListener("SIGTERM", terminate);
     tui.stop({ preserveScreen: true });
+    giveBackNodeWarnings();
   }
 }
