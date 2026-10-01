@@ -56,7 +56,7 @@ function fullSidebar(): ShellSidebar {
 test("both workspace panes keep scrollbars hidden even after scrolling", () => {
   const content = { render: () => Array(100).fill("line") as string[], invalidate() {} };
   const transcriptScroll = new IndependentScrollView(content, { follow: "end", primary: true, scrollbar: "hidden" });
-  const root = workspaceLayout(transcriptScroll, content, content, content, { rows: 40 } as Terminal, "/project");
+  const root = workspaceLayout(transcriptScroll, content, content, content, { rows: 40 } as Terminal);
   const frame = renderLayoutFrame(root, 140, 40, () => {});
   const panes: IndependentScrollView[] = [];
   const visit = (box: typeof frame.root): void => {
@@ -95,7 +95,7 @@ test("workspace centers the opening sign from the current chat height after open
   transcript.addChild(logo);
   scroll = new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" });
   const empty = { invalidate() {}, render: () => [] as string[] };
-  const root = workspaceLayout(scroll, empty, empty, empty, terminal, "/project");
+  const root = workspaceLayout(scroll, empty, empty, empty, terminal);
   const first = renderLayoutFrame(root, 100, terminal.rows, () => {});
   const firstVisible = renderLayoutFrame(root, 100, terminal.rows, () => {}).lines.map(stripVTControlCharacters);
   const top = (rows: string[]) => rows.findIndex(row => row.includes("█▀▀▀"));
@@ -310,7 +310,7 @@ test("chat header and session heading occupy the same row", () => {
   const terminal = { rows: 36 } as Terminal;
   const empty = { invalidate() {}, render: () => [] as string[] };
   const sidebar = new ShellSidebar(() => ({ account: "connected", provider: "Claude Code" }));
-  const root = workspaceLayout(empty, empty, sidebar, empty, terminal, "/project");
+  const root = workspaceLayout(empty, empty, sidebar, empty, terminal);
   const lines = plain(renderLayoutFrame(root, 133, 36, () => {}).lines);
   const header = lines.findIndex(line => line.includes("FORGE614"));
   const session = lines.findIndex(line => line.includes("SESSION"));
@@ -327,7 +327,7 @@ test("the assembled screen draws no box-drawing lines anywhere", () => {
   const terminal = { rows: 36 } as Terminal;
   const empty = { invalidate() {}, render: () => [] as string[] };
   const footer = new ShellStatusBar(() => ({ account: "connected", provider: "Claude Code" }), "/Users/forge/project", () => ({ path: "/p", git: true, branch: "main", changedFiles: 1 }), "/Users/forge");
-  const root = workspaceLayout(empty, createComposer().component, fullSidebar(), footer, terminal, "/project");
+  const root = workspaceLayout(empty, createComposer().component, fullSidebar(), footer, terminal);
   const frame = renderLayoutFrame(root, 133, 36, () => {});
   const lines = plain(frame.lines);
   expect(lines).toHaveLength(36);
@@ -336,35 +336,143 @@ test("the assembled screen draws no box-drawing lines anywhere", () => {
   expect(lines[2]!.slice(0, 95).trim()).toBe(""); // the header keeps its third row, now blank
 });
 
-/** The footer needs one full-width breathing row above it while its text remains in its existing left and right columns and its own lower blank row stays. */
-test("workspace leaves one blank row above the status bar without moving its text", () => {
+/**
+ * The footer now lives only under the chat column: one blank breathing row of the chat's width above it, then its two rows, with its text still starting two columns
+ * in and its own lower blank row kept. It was rewritten from the version that expected the breathing row and the footer across the whole screen (heights [33, 1, 2] under the
+ * sidebar too), because the owner asked for the sidebar to reach the bottom of the screen.
+ */
+test("workspace leaves one blank row above the status bar, under the chat column only, without moving its text", () => {
   const terminal = { rows: 36 } as Terminal;
   const empty = { invalidate() {}, render: () => [] as string[] };
   const footer = new ShellStatusBar(() => ({ account: "connected", provider: "Claude Code" }), "/Users/forge/project", () => ({ path: "/p", git: true, branch: "main", changedFiles: 1 }), "/Users/forge");
-  const frame = renderLayoutFrame(workspaceLayout(empty, createComposer().component, fullSidebar(), footer, terminal, "/project"), 133, 36, () => {});
+  const frame = renderLayoutFrame(workspaceLayout(empty, createComposer().component, fullSidebar(), footer, terminal), 133, 36, () => {});
   const rows = frame.lines;
   const lines = plain(rows);
-  expect(frame.root.children.map(child => child.rect.height)).toEqual([33, 1, 2]);
+  const [chat, sidebar] = frame.root.children;
+  expect(chat!.children.map(child => child.rect.height).slice(-2)).toEqual([1, 2]);
+  expect([chat!.rect.height, sidebar!.rect.height]).toEqual([36, 36]);
+  expect(chat!.rect.width).toBe(95);
   const footerRow = lines.findIndex(line => line.includes("F614 ·"));
   expect(lines[footerRow]!.indexOf("F614")).toBe(2);
-  expect(lines[footerRow - 1]!.trim()).toBe("");
-  expect(visibleWidth(rows[footerRow - 1]!)).toBe(133);
+  expect(lines[footerRow - 1]!.slice(0, 95).trim()).toBe("");
   expect(backgrounds(rows[footerRow - 2]!).slice(2, 93).every(background => background === SURFACE)).toBe(true);
-  expect(backgrounds(rows[footerRow - 2]!).slice(97, 133).every(background => background === SURFACE)).toBe(true);
   expect(lines.at(-1)!.trim()).toBe("");
+});
+
+/** What the screen looks like at `width`×40 with a connected sidebar and a footer that knows the version: header, empty chat, writing box, sidebar and footer, as workspaceLayout puts them together. */
+function assembledScreen(width: number) {
+  const terminal = { rows: 40 } as Terminal;
+  const empty = { invalidate() {}, render: () => [] as string[] };
+  const footer = new ShellStatusBar(() => ({ account: "connected", provider: "Claude Code" }), "/Users/forge/project", () => ({ path: "/p", git: true, branch: "main", changedFiles: 1 }), "/Users/forge", "1.13.0");
+  const frame = renderLayoutFrame(workspaceLayout(empty, createComposer(quietTui, "en", stillClock).component, fullSidebar(), footer, terminal), width, 40, () => {});
+  const sidebarVisible = width >= 100;
+  return { rows: frame.lines, lines: plain(frame.lines), sidebarStart: sidebarVisible ? width - 36 : width, chatWidth: sidebarVisible ? width - 38 : width };
+}
+
+/**
+ * B1: the sidebar's surface background goes down to the last row of the terminal (156×40: columns 120–155 of rows 0–39), while the breathing row and the footer
+ * exist only under the chat column: no footer text and no surface gray in the chat columns of those rows, and the two columns of gap stay the general background.
+ * It exists because the owner saw the footer drawn across the whole screen, cutting the sidebar short.
+ */
+test("the sidebar reaches the last row of the terminal and the footer sits only under the chat", () => {
+  const { rows, lines, sidebarStart, chatWidth } = assembledScreen(156);
+  expect(sidebarStart).toBe(120);
+  for (const [index, row] of rows.entries()) expect({ index, rail: backgrounds(row).slice(120, 156).every(background => background === SURFACE) }).toEqual({ index, rail: true });
+  const footerRow = lines.findIndex(line => line.includes("F614 ·"));
+  expect(footerRow).toBe(38);
+  for (const index of [footerRow - 1, footerRow, footerRow + 1]) {
+    expect(lines[index]!.slice(chatWidth).trim()).toBe("");
+    expect(backgrounds(rows[index]!).slice(0, chatWidth + 2).some(background => background === SURFACE)).toBe(false);
+  }
+});
+
+/**
+ * B2: the version «v1.13.0» ends in the same column as the last cell of the writing box's gray block (column 115 at 156 columns, 87 at 90), and «F614 · …» still starts
+ * in column 2. With no sidebar (90 columns) the footer takes the whole width as before. It exists because the version used to hang at the right edge of the whole screen,
+ * away from the chat it belongs to.
+ */
+test("the version ends in the column where the writing box's gray block ends, with and without the sidebar", () => {
+  for (const [width, expectedEnd] of [[156, 115], [90, 87]] as const) {
+    const { rows, lines, chatWidth } = assembledScreen(width);
+    const footerRow = lines.findIndex(line => line.includes("F614 ·"));
+    const modeRow = lines.findIndex(line => line.includes("✓ Ready"));
+    const blockEnd = backgrounds(rows[modeRow]!).slice(0, chatWidth).lastIndexOf(SURFACE);
+    expect({ width, version: lines[footerRow]!.trimEnd().length - 1, block: blockEnd }).toEqual({ width, version: expectedEnd, block: expectedEnd });
+    expect(lines[footerRow]!.trimEnd()).toEndWith("v1.13.0");
+    expect(lines[footerRow]!.indexOf("F614")).toBe(2);
+  }
+});
+
+/**
+ * B3: every section title of the sidebar («// SESSION», «// CONTEXT», «// PLAN USAGE», «// BACKGROUND ACTIVITY», and the ones of a disconnected account) has an empty
+ * row right under it, before its content; the space between sections that was already there stays. It exists because the owner asked for air under the titles.
+ */
+test("every sidebar title has an empty row under it", () => {
+  const disconnected = new ShellSidebar(() => ({ account: "disconnected", provider: "Claude Code" }));
+  for (const sidebar of [fullSidebar(), disconnected]) {
+    const rows = plain(sidebar.render(32));
+    const titles = rows.flatMap((row, index) => row.startsWith("// ") ? [index] : []);
+    expect(titles.length).toBeGreaterThanOrEqual(1);
+    for (const index of titles) expect({ title: rows[index], below: rows[index + 1]!.trim() }).toEqual({ title: rows[index], below: "" });
+  }
+  const full = plain(fullSidebar().render(32));
+  expect(full.filter(row => row.startsWith("// "))).toEqual(["// SESSION", "// CONTEXT", "// PLAN USAGE", "// BACKGROUND ACTIVITY"]);
+  expect(full[full.indexOf("// CONTEXT") - 1]).toBe(""); // the space between sections stays
+});
+
+/** B4: the background-activity title is uppercase like the other titles, in both languages. It exists because it was the only title written in sentence case. */
+test("the background-activity title is uppercase in Spanish and English", () => {
+  for (const [locale, title] of [["es", "// ACTIVIDAD EN SEGUNDO PLANO"], ["en", "// BACKGROUND ACTIVITY"]] as const) {
+    const sidebar = new ShellSidebar(() => ({ account: "connected", provider: "Claude Code", backgroundActivitySupported: true }), undefined, undefined, locale);
+    expect(plain(sidebar.render(40))).toContain(title);
+  }
+});
+
+/**
+ * B5: the chat header starts in the same column as the writing box's block and as «F614» of the footer (column 2, it was 1), and it says only «FORGE614 / SHELL»:
+ * the folder name that used to sit at its right is gone. It exists because the header hugged the edge and repeated the folder the footer already shows.
+ */
+test("the header starts in the column of the writing box and no longer shows the folder", () => {
+  for (const width of [156, 90]) {
+    const { rows, lines } = assembledScreen(width);
+    const header = lines.findIndex(line => line.includes("FORGE614 / SHELL"));
+    const modeRow = lines.findIndex(line => line.includes("✓ Ready"));
+    const footerRow = lines.findIndex(line => line.includes("F614 ·"));
+    const blockStart = backgrounds(rows[modeRow]!).indexOf(SURFACE);
+    expect({ width, header: lines[header]!.indexOf("FORGE614"), block: blockStart, footer: lines[footerRow]!.indexOf("F614") }).toEqual({ width, header: 2, block: 2, footer: 2 });
+    expect(lines[header]!.slice(0, width >= 100 ? width - 38 : width).trim()).toBe("FORGE614 / SHELL");
+    expect(lines[header]).not.toContain("project");
+  }
+});
+
+/**
+ * B6: the cells to the right of the writing box's gray block (columns 116–117 at 156 columns, 88–89 at 90) carry the general background, as the left margin and the rest of
+ * the chat do, and not the terminal's own tone: the block's painter ends with «reset background», so cells that follow it without a code of their own show a different
+ * shade, a strip about two columns wide. The left margin keeps drawing nothing (it comes right after the general background); the block itself does not change.
+ */
+test("the two columns to the right of the writing box have the general background, not a strip of another tone", () => {
+  for (const [width, chatWidth] of [[156, 118], [90, 90]] as const) {
+    const { rows, lines } = assembledScreen(width);
+    const blockRows = lines.flatMap((line, index) => backgrounds(rows[index]!).slice(0, chatWidth).lastIndexOf(SURFACE) === chatWidth - 3 ? [index] : []);
+    expect(blockRows).toHaveLength(5);
+    for (const index of blockRows) {
+      const colored = backgrounds(rows[index]!);
+      expect({ width, index, left: colored.slice(0, 2), right: colored.slice(chatWidth - 2, chatWidth), block: colored.slice(2, chatWidth - 2).every(background => background === SURFACE) })
+        .toEqual({ width, index, left: [null, null], right: [BACKGROUND, BACKGROUND], block: true });
+    }
+  }
 });
 
 /**
  * The sidebar column is one block of the surface gray from the top row to the bottom row of the screen's body, and the two columns of gap between the chat
- * and it keep the general background (that is where the contrast comes from). The one full-width breathing row before the footer is intentionally outside the
- * rail. Read from the escape codes of every body row at 133 columns: the rail starts at column 97 (133 − 36), the gap is columns 95–96.
+ * and it keep the general background (that is where the contrast comes from). It reaches the last row of the terminal now (the footer is only under the chat), so every one of the 36 rows is checked: it used to stop at row 33, above the footer's rows. Read from the escape codes of every row at 133 columns: the rail starts at column 97 (133 − 36), the gap is columns 95–96.
  */
 test("the sidebar column is the surface background on every row and the gap before it is the general one", () => {
   const terminal = { rows: 36 } as Terminal;
   const empty = { invalidate() {}, render: () => [] as string[] };
-  const root = workspaceLayout(empty, empty, fullSidebar(), empty, terminal, "/project");
+  const root = workspaceLayout(empty, empty, fullSidebar(), empty, terminal);
   const rows = renderLayoutFrame(root, 133, 36, () => {}).lines;
-  for (const [index, row] of rows.slice(0, 33).entries()) {
+  for (const [index, row] of rows.entries()) {
     const colored = backgrounds(row);
     expect({ index, rail: colored.slice(97, 133).every(background => background === SURFACE) }).toEqual({ index, rail: true });
     expect({ index, gap: colored.slice(95, 97) }).toEqual({ index, gap: [null, null] });

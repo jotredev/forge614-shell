@@ -68,8 +68,8 @@ export class ShellSidebar implements Component {
     const line = (text = "") => cut(text, width);
     // Explanatory text wraps instead of being cut with "…": a reason the person cannot read is worse than a second row.
     const note = (text: string) => wrapTextWithAnsi(muted(text), Math.max(1, width));
-    // A section title is one row in the accent color, bold: the space above it separates the sections, no rule is drawn under it.
-    const heading = (title: string) => [line(bold(mint(`// ${title}`)))];
+    // A section title is one row in the accent color, bold, followed by an empty row before its content: the space above it separates the sections, no rule is drawn under it.
+    const heading = (title: string) => [line(bold(mint(`// ${title}`))), ""];
     if (snapshot.account !== "connected") {
       const label = snapshot.account === "checking" ? t.checking : snapshot.account === "unknown" ? t.unverified : t.disconnected;
       return [...heading(t.headingSession), line(`${t.fieldAccount}  ${amber(label)}`), "", ...(snapshot.account === "checking" ? [line(muted(t.checkingNativeAccount))] : [line(mint(t.loginToConnect({ command: snapshot.loginCommand ?? "/login" })))])];

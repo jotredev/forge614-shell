@@ -484,7 +484,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     clean: "Limpio",
   },
   backgroundActivity: {
-    heading: "Actividad en segundo plano",
+    heading: "ACTIVIDAD EN SEGUNDO PLANO",
     running: "corriendo",
     done: "hecho",
     failed: "fallido",

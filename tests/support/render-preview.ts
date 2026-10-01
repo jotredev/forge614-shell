@@ -23,7 +23,7 @@ transcript.addChild(new ActivityCard("Read · session.ts", "Inspected the local 
 transcript.addChild(new ChatText(chatMessage("assistant", "**Local logout is scoped to Shell.** The startup account check now runs before your first message.\n\n```ts\nawait verifyNativeAccount();\nrenderWorkspace();\n```\n\nThe existing account is reused through the native engine.")));
 const snapshot = () => ({ account: "connected" as const, provider: "Claude Code", model: "claude-opus-5", reasoning: "medium", context: { used: 18000, window: 128000 }, usage: [{ label: "Weekly", usedPercent: 74 }] });
 const { input } = createComposer(tui);
-tui.setLayoutRoot(workspaceLayout(transcript, input, new ShellSidebar(snapshot), new ShellStatusBar(snapshot), surface, "/project/forge614-shell"));
+tui.setLayoutRoot(workspaceLayout(transcript, input, new ShellSidebar(snapshot), new ShellStatusBar(snapshot), surface));
 tui.setFocus(input); tui.start();
 await new Promise(resolve => setTimeout(resolve, 40));
 const frame = output; tui.stop();

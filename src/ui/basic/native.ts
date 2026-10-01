@@ -62,7 +62,7 @@ export async function runNativeUI(
   const shellState = new ShellState(engineLabel, "/f614:login");
   const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd, process.env.HOME, locale);
   const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version, locale);
-  tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface, cwd));
+  tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface));
   attachJumpToLatest(tui, transcriptScroll, locale);
   tui.setFocus(input);
   // With Codex the menu is Codex's own list (names, descriptions and order as its terminal shows them on macOS);
