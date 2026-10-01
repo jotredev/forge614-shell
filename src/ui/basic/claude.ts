@@ -119,11 +119,12 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   });
   const surface = workspaceTerminal(terminal ?? new ProcessTerminal());
   const tui = new TuiAltScreen(surface, true, undefined, { mouse: true });
-  const transcript = new Container();
-  const chatLogo = new ChatLogo(() => (terminal ?? surface).rows);
-  transcript.addChild(chatLogo);
-  const transcriptScroll = new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" });
   const composer = createComposer(tui, locale);
+  const transcript = new Container();
+  let transcriptScroll!: IndependentScrollView;
+  const chatLogo = new ChatLogo(() => transcriptScroll.viewportRows, () => (terminal ?? surface).rows);
+  transcript.addChild(chatLogo);
+  transcriptScroll = new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" });
   const { input } = composer;
   const shellState = new ShellState("Claude Code");
   shellState.checking();

@@ -50,11 +50,12 @@ export async function runNativeUI(
   const tc = getCatalog(locale).codexChat;
   const surface = workspaceTerminal(terminal);
   const tui = new TuiAltScreen(surface, true, undefined, { mouse: true });
-  const transcript = new Container();
-  const chatLogo = new ChatLogo(() => terminal.rows);
-  transcript.addChild(chatLogo);
-  const transcriptScroll = new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" });
   const composer = createComposer(tui, locale);
+  const transcript = new Container();
+  let transcriptScroll!: IndependentScrollView;
+  const chatLogo = new ChatLogo(() => transcriptScroll.viewportRows, () => terminal.rows);
+  transcript.addChild(chatLogo);
+  transcriptScroll = new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" });
   const { input } = composer;
   const engineLabel = "Codex";
   // Codex has no `/login`: Shell's own `/f614:login` connects the account, and it is the command every «not connected» text names.

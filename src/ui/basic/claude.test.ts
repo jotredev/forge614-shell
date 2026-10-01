@@ -350,6 +350,18 @@ else {
   return { terminal, enter, plain, ui, calls, finish };
 }
 
+/** Claude's opening transcript owns the sign too: it vanishes after the first person message and never returns after `/new`. */
+test.skipIf(process.platform === "win32")("a new Claude chat removes the FORGE614 sign after its first person message and never restores it on new", async () => {
+  const h = await claudeUi();
+  try {
+    expect(h.plain()).toContain("████████");
+    h.terminal.output = ""; h.enter("first message"); await tick();
+    expect(h.plain()).not.toContain("████████");
+    h.terminal.output = ""; h.enter("/new"); await tick();
+    expect(h.plain()).not.toContain("████████");
+  } finally { await h.finish(); }
+});
+
 /**
  * Every Shell command with Claude Code answers to `/f614:<name>` and does what its unprefixed name did before 1.12.0:
  * `/f614:status` is Shell's own session telemetry (it used to be `/status` and `/forge614-status`), `/f614:refresh` asks

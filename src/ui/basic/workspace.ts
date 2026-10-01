@@ -11,10 +11,17 @@ export class IndependentScrollView extends ScrollView {
   private target?: number;
   private maximum = 0;
   private frame?: ReturnType<typeof setTimeout>;
+  /** The rows the layout engine has assigned to this scrollable pane on its latest pass. */
+  viewportRows = 0;
   override updateLayout(contentHeight: number, viewportHeight: number, render: () => void): void {
+    const changedViewportRows = this.viewportRows !== viewportHeight;
     super.updateLayout(contentHeight, viewportHeight, render);
+    this.viewportRows = viewportHeight;
     this.maximum = Math.max(0, contentHeight - viewportHeight);
     if (this.target !== undefined) this.target = Math.min(this.target, this.maximum);
+    // pi-tui renders scroll content before it assigns this viewport height; request exactly one
+    // following frame so height-aware content such as ChatLogo can draw from the current value.
+    if (changedViewportRows) render();
   }
   override handleMouse(event: TuiMouseEvent) {
     if (event.type !== "wheel") return undefined;
