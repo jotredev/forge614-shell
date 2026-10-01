@@ -372,8 +372,11 @@ test.skipIf(process.platform === "win32")("a native Claude command sent as a tur
   const h = await claudeUi([{ name: "init", description: "Initialize", argumentHint: "" }]);
   try {
     expect(h.plain()).toContain("████████");
-    h.enter("/init"); await tick();
-    expect(h.calls().some(line => line.startsWith("prompt:") && line.includes("/init"))).toBe(true);
+    h.enter("/init");
+    // The turn reaches the fake `claude` process through its stdin, and the process writes what it received to a file: wait for that line, not for a fixed moment, which a loaded machine overruns.
+    const sentInit = () => h.calls().some(line => line.startsWith("prompt:") && line.includes("/init"));
+    for (let i = 0; i < 60 && !sentInit(); i++) await tick();
+    expect(sentInit()).toBe(true);
     // A resize makes the next frame draw every row, so the sign would show up in the output if it were still in the chat.
     h.terminal.columns = 121; h.terminal.output = ""; h.terminal.resize(); await tick();
     expect(h.plain()).toContain("/init");
@@ -815,4 +818,38 @@ test.skipIf(process.platform === "win32")("Claude UI: /f614:status says who deli
     expect(second.plain()).toContain("Memory: the assistant delivers it at startup");
     expect(second.plain()).not.toContain("Shell pastes it");
   } finally { await second.finish(); }
+});
+
+/**
+ * The sidebar on the Claude Code screen, with real SGR mouse sequences and a fake `claude`: the width saved in Shell's preferences (50) is what the screen opens with (the grip is at
+ * columns 68–69 of 120, so the resize pointer is asked for there), clicking «hide ›» in the sidebar's first row hides it and saves `sidebarHidden`, and the header then offers «‹ show sidebar».
+ */
+test.skipIf(process.platform === "win32")("Claude UI opens with the saved sidebar width and hides it with the hide button, saving the choice", async () => {
+  const root = await mkdtemp(join(tmpdir(), "forge614-sidebar-ui-"));
+  const executable = join(root, "claude");
+  const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
+  const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+  const previousForgeHome = process.env.FORGE614_HOME;
+  process.env.FORGE614_HOME = join(root, "forge614-home");
+  const preferences = () => JSON.parse(readFileSync(join(root, "forge614-home", "shell", "preferences.json"), "utf8"));
+  try {
+    mkdirSync(join(root, "forge614-home", "shell"), { recursive: true });
+    writeFileSync(join(root, "forge614-home", "shell", "preferences.json"), JSON.stringify({ sidebarWidth: 50 }));
+    await writeFile(executable, `#!${process.execPath}
+if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
+else { require('readline').createInterface({input:process.stdin}).on('line',line=>{ const msg=JSON.parse(line); if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}})); }); }`, { mode: 0o755 });
+    ui = startClaudeUI([], executable, terminal); await tick();
+    for (let i = 0; i < 60 && !terminal.output.includes("Connected"); i++) await tick();
+    const ew = "\x1b]22;ew-resize\x07";
+    terminal.input("\x1b[<35;70;26M"); await tick(); // column 69 of the 50-wide layout's grip (68–69), middle row 25
+    expect(terminal.output).toContain(ew);
+    terminal.input("\x1b[<35;10;10M"); await tick();
+    terminal.output = "";
+    terminal.input("\x1b[<0;115;1M"); terminal.input("\x1b[<0;115;1m"); await tick(); // the «hide ›» button: columns 112–117 of the first row
+    expect(preferences()).toMatchObject({ sidebarWidth: 50, sidebarHidden: true });
+    expect(stripVTControlCharacters(terminal.output)).toContain(getCatalog("en").sidebarControls.show);
+  } finally {
+    enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true });
+    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+  }
 });

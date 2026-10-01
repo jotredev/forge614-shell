@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Terminal } from "@earendil-works/pi-tui";
@@ -39,6 +39,8 @@ class TestTerminal implements Terminal {
   moveBy() {} hideCursor() {} showCursor() {} clearLine() {} clearFromCursor() {} clearScreen() {} setTitle() {} setProgress() {}
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 25));
+/** Waits, a tick at a time, until `condition` holds (at most 60 ticks), instead of a fixed moment that a loaded machine overruns; the test's own expectation still decides. */
+async function until(condition: () => boolean): Promise<void> { for (let i = 0; i < 60 && !condition(); i++) await tick(); }
 
 test("model picker applies arrow selection, cancels unchanged and never sends a chat turn", async () => {
   const terminal = new TestTerminal(); const rpc = new FixtureRpc();
@@ -251,12 +253,13 @@ test("Shift+Tab during a Codex turn switches to Plan and says it applies from th
 
 /** Idea 1: with a permission question still open, Shift+Tab is not swallowed by it. */
 test("Shift+Tab works while a Codex permission question is pending", async () => {
-  const { terminal, rpc, ui, enter, session } = codexUi();
+  const { terminal, rpc, ui, enter, plain, session } = codexUi();
   try {
     await tick(); enter("run something"); await tick();
     const answer = rpc.onRequest("item/commandExecution/requestApproval", { threadId: "t", turnId: "u", itemId: "i", command: "touch x" });
-    await tick();
-    terminal.input("\x1b[Z"); await tick();
+    // `/f614:no` only answers a question that is already open: wait for it on screen, or the answer never arrives and the test waits out its whole 5 seconds.
+    await until(() => plain().includes(getCatalog("en").permission.question));
+    terminal.input("\x1b[Z"); await until(() => session().collaborationMode() === "plan");
     expect(session().collaborationMode()).toBe("plan");
     enter("/f614:no"); expect(await answer).toEqual({ decision: "decline" });
     rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
@@ -2289,3 +2292,30 @@ for (const locale of ["en", "es"] as const) {
     } finally { h.terminal.input("\x03"); await tick(); h.enter("/f614:quit"); await h.ui; }
   });
 }
+
+/**
+ * The sidebar's grip through the whole Codex screen, with real SGR mouse sequences: hovering it asks the terminal for the resize pointer (OSC 22), pressing and dragging it changes
+ * the sidebar's width, releasing saves `sidebarWidth` (46 here: 140 − 2 − 93 + 1) in Shell's preferences with the sidebar still shown, and closing the screen with the pointer over the grip gives
+ * the pointer back before leaving the alternate screen. It exists because the unit tests drive the layout directly; this one proves the screen wires the layout, the preferences and the terminal.
+ */
+test("dragging the sidebar's grip saves the width on release and closing gives the resize pointer back", async () => {
+  const h = codexUi("en", undefined, undefined, 140);
+  const ew = "\x1b]22;ew-resize\x07"; const back = "\x1b]22;default\x07";
+  const count = (text: string) => h.terminal.output.split(text).length - 1;
+  try {
+    await tick();
+    h.terminal.input("\x1b[<35;104;21M"); await tick(); // moving over the grip: columns 102–103 of a 140-column terminal, middle row 20 (SGR is 1-based)
+    expect(count(ew)).toBe(1);
+    h.terminal.input("\x1b[<0;104;21M"); h.terminal.input("\x1b[<32;94;21M"); await tick(); // press, then drag to column 93
+    expect(existsSync(join(forgeHome, "shell", "preferences.json"))).toBe(false); // nothing is saved while the button is down
+    h.terminal.input("\x1b[<0;94;21m"); await tick(); // release
+    expect(savedPreferences()).toMatchObject({ sidebarWidth: 46, sidebarHidden: false });
+    expect([count(ew), count(back)]).toEqual([1, 1]);
+    h.terminal.input("\x1b[<35;94;21M"); await tick(); // the grip is now at columns 92–93
+    expect(count(ew)).toBe(2);
+  } finally { h.enter("/f614:quit"); await h.ui; }
+  const out = h.terminal.output;
+  expect(count(back)).toBe(2);
+  expect(out.lastIndexOf(ew)).toBeLessThan(out.lastIndexOf(back));
+  expect(out.lastIndexOf(back)).toBeLessThan(out.lastIndexOf("\x1b[?1049l"));
+});

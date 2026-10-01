@@ -408,6 +408,11 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
   jumpToLatest: {
     label: " ↓ Mensajes nuevos · ir al final ",
   },
+  sidebarControls: {
+    hide: "ocultar ›",
+    show: "‹ mostrar barra",
+    releaseToHide: "suelta para ocultarla",
+  },
   metrics: {
     reasoningDefaultLabel: "Por defecto (auto)",
     effortLow: "Más rápido, menos deliberación",
@@ -483,6 +488,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     detachedHead: "HEAD desprendido",
     changes: ({ count }) => `${count} cambios`,
     clean: "Limpio",
+    context: ({ percent }) => `contexto ${percent} %`,
   },
   backgroundActivity: {
     heading: "ACTIVIDAD EN SEGUNDO PLANO",

@@ -5,7 +5,7 @@ import type { ProjectInfo } from "../../infrastructure/project-info.ts";
 import { homeRelativePath } from "../../infrastructure/runtime-resources.ts";
 import { spinnerFrame } from "./composer.ts";
 
-import { accent as cyan, muted, warning } from "./theme.ts";
+import { accent as cyan, foreground, muted, warning } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 const separator = muted(" · ");
@@ -18,10 +18,15 @@ function backgroundActivityLabel(snapshot: ShellSnapshot, locale: Locale): strin
 
 /**
  * A deliberately compact workspace footer: unknown data is never represented, and nothing the
- * sidebar already shows is repeated. Agent, model, reasoning level and context percentage live in
- * the sidebar only; here stay background work, folder, branch and Git state. A non-connected
+ * sidebar already shows is repeated. With the sidebar on screen, the model, reasoning level and
+ * context percentage live there only; here stay background work, folder, branch and Git state.
+ * When the sidebar is not drawn (the person hid it, or the terminal is under 100 columns) those three
+ * move here, right after «F614» and before the folder: the model in normal text, the reasoning in the
+ * warning color (the value the sidebar shows) and «context N %» in normal text, each only when known
+ * and only with a connected account, like the sidebar's own session section. A non-connected
  * account is kept as a warning (with its `/login` hint) so it still reaches a terminal too narrow
- * for the sidebar.
+ * for the sidebar. `sidebarVisible` says whether the sidebar is drawn right now; it is asked on each
+ * draw, and by default the sidebar is taken to be on screen.
  */
 export class ShellStatusBar implements Component {
   constructor(
@@ -31,6 +36,7 @@ export class ShellStatusBar implements Component {
     private readonly home = process.env.HOME,
     private readonly version?: string,
     private readonly locale: Locale = "en",
+    private readonly sidebarVisible: () => boolean = () => true,
   ) {}
 
   invalidate(): void {}
@@ -41,12 +47,17 @@ export class ShellStatusBar implements Component {
     const details = snapshot.account === "connected"
       ? [backgroundActivityLabel(snapshot, this.locale)].filter((part): part is string => Boolean(part))
       : snapshot.account === "checking" ? [t.checkingAccount] : [snapshot.account === "unknown" ? t.accountUnverified : t.disconnected, snapshot.loginCommand ?? "/login"];
+    const session = !this.sidebarVisible() && snapshot.account === "connected" ? [
+      ...(snapshot.model ? [foreground(snapshot.model)] : []),
+      ...(snapshot.reasoning ? [warning(snapshot.reasoning)] : []),
+      ...(snapshot.context && snapshot.context.window > 0 ? [foreground(t.context({ percent: Math.round((snapshot.context.used / snapshot.context.window) * 100) }))] : []),
+    ] : [];
     const projectInfo = this.getProject?.();
     const project = this.cwd ? [
       muted(homeRelativePath(this.cwd, this.home)),
       ...(projectInfo?.git ? [cyan(projectInfo.branch ?? t.detachedHead), projectInfo.changedFiles ? warning(t.changes({ count: projectInfo.changedFiles })) : cyan(t.clean)] : []),
     ] : [];
-    const left = [cyan("F614"), ...details, ...project].join(separator);
+    const left = [cyan("F614"), ...session, ...details, ...project].join(separator);
     const release = this.version ? muted(`v${this.version}`) : undefined;
     const innerWidth = Math.max(0, width - 4);
     const availableLeft = Math.max(1, innerWidth - (release ? visibleWidth(release) + 1 : 0));

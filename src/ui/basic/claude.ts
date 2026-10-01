@@ -31,6 +31,7 @@ import { ChatText, PanelText, danger } from "./theme.ts";
 import { nodeWarningRow, takeNodeWarnings } from "./node-warnings.ts";
 import { ChatLogo } from "./logo.ts";
 import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
+import { createSidebarLayout } from "./sidebar-layout.ts";
 import { workingStatus } from "./duration.ts";
 import { ToolTracker } from "./tool-tracker.ts";
 import { getCatalog } from "../../i18n/index.ts";
@@ -130,9 +131,11 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const shellState = new ShellState("Claude Code");
   shellState.checking();
   const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd, process.env.HOME, locale);
-  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version, locale);
-  tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface));
-  attachJumpToLatest(tui, transcriptScroll, locale);
+  // The sidebar's width and whether it is hidden come back from the preferences and are saved when the person lets go of the grip or clicks a button; the footer takes the sidebar's data while it is not drawn.
+  const sidebarLayout = createSidebarLayout(surface, locale);
+  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version, locale, () => sidebarLayout.isVisible());
+  tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface, sidebarLayout));
+  attachJumpToLatest(tui, transcriptScroll, locale, sidebarLayout);
   tui.setFocus(input);
   let telemetry = emptyTelemetry();
   let activeTurn: Promise<void> | undefined;

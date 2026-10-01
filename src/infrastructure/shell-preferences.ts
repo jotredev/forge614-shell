@@ -28,6 +28,8 @@ interface PreferencesFile {
   format?: unknown;
   locale?: unknown;
   lastEngine?: unknown;
+  sidebarWidth?: unknown;
+  sidebarHidden?: unknown;
   claude?: EnginePreference;
   codex?: EnginePreference;
 }
@@ -161,4 +163,33 @@ export function saveLocale(locale: Locale, options: PreferenceOptions = {}): boo
   const all = readAll(options);
   const next: PreferencesFile = { ...all, format: CURRENT_FORMAT, locale };
   return writeAtomic(path, next);
+}
+
+/** The sidebar's width in columns: what a saved value must fall within, and what it is when none (or an invalid one) is saved. The screen's own layout clamps with the same limits. */
+export const SIDEBAR_WIDTH = { min: 28, max: 70, fallback: 36 } as const;
+
+/**
+ * The sidebar's remembered width. Anything that is not a number from 28 to 70 (a missing field, a string, a damaged or hand-edited value) is ignored and reads as 36, so a bad
+ * file can never leave the screen without its sidebar; a fractional number is rounded to whole columns.
+ */
+export function loadSidebarWidth(options: PreferenceOptions = {}): number {
+  const value = readAll(options).sidebarWidth;
+  if (typeof value !== "number" || !Number.isFinite(value)) return SIDEBAR_WIDTH.fallback;
+  const columns = Math.round(value);
+  return columns >= SIDEBAR_WIDTH.min && columns <= SIDEBAR_WIDTH.max ? columns : SIDEBAR_WIDTH.fallback;
+}
+
+/** Remembers the sidebar's width, keeping every other saved field. Best-effort like the rest: a failed write only means the next session starts with 36 columns. */
+export function saveSidebarWidth(width: number, options: PreferenceOptions = {}): void {
+  writeAtomic(preferencesPath(options), { ...readAll(options), sidebarWidth: width });
+}
+
+/** Whether the person hid the sidebar: only an exact `true` counts, anything else (a missing field, another type) reads as shown. */
+export function loadSidebarHidden(options: PreferenceOptions = {}): boolean {
+  return readAll(options).sidebarHidden === true;
+}
+
+/** Remembers whether the sidebar is hidden, keeping every other saved field. Best-effort like the rest. */
+export function saveSidebarHidden(hidden: boolean, options: PreferenceOptions = {}): void {
+  writeAtomic(preferencesPath(options), { ...readAll(options), sidebarHidden: hidden });
 }

@@ -408,6 +408,11 @@ The selected engine's project settings and permissions apply. This is not a sand
   jumpToLatest: {
     label: " ↓ New messages · jump to latest ",
   },
+  sidebarControls: {
+    hide: "hide ›",
+    show: "‹ show sidebar",
+    releaseToHide: "release to hide it",
+  },
   metrics: {
     reasoningDefaultLabel: "Default (auto)",
     effortLow: "Fastest, least deliberation",
@@ -483,6 +488,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     detachedHead: "Detached HEAD",
     changes: ({ count }) => `${count} changes`,
     clean: "Clean",
+    context: ({ percent }) => `context ${percent}%`,
   },
   backgroundActivity: {
     heading: "BACKGROUND ACTIVITY",
