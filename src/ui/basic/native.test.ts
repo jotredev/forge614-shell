@@ -437,7 +437,7 @@ test("/resume opens a selector with the newest first and Enter resumes the highl
   } finally { enter("/f614:quit"); await ui; }
 });
 
-/** Mejora 8: escribir filtra (sin mayúsculas ni acentos, también por primer mensaje) y Esc cancela sin retomar nada ni cambiar la conversación. */
+/** Mejora 8: escribir filtra (sin mayúsculas ni acentos, también por primer mensaje) y Esc cancela sin retomar nada ni cambiar la conversación. El buffer de TestTerminal suma cada cuadro, así que contar «History restored» ya no mide retomadas: el repintado centrado vuelve a dibujar el historial; la lista de retomadas sí es el efecto real. */
 test("/resume filters by what is typed and Esc cancels without resuming anything", async () => {
   const terminal = new TestTerminal(); const resumed: string[] = [];
   const ui = runNativeUI("codex", "/project", () => sessionWithThreeSameTitle(resumed), terminal);
@@ -447,9 +447,9 @@ test("/resume filters by what is typed and Esc cancels without resuming anything
     for (const char of "BETA-MESS") terminal.input(char);
     await tick(); terminal.input("\r"); await tick();
     expect(resumed).toEqual(["thread-mid"]);
+    const resumedBeforeCancel = [...resumed];
     enter("/resume"); await tick(); terminal.input("\x1b"); await tick();
-    expect(resumed).toEqual(["thread-mid"]);
-    expect(stripVTControlCharacters(terminal.output).split("History restored")).toHaveLength(2);
+    expect(resumed).toEqual(resumedBeforeCancel);
   } finally { enter("/f614:quit"); await ui; }
 });
 

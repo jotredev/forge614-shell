@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
+import { stripVTControlCharacters } from "node:util";
 
 test("the init dispatch forwards the real process env to runInitCommand, so a custom FORGE614_HOME reaches Engines/Engram resolution", async () => {
   const source = await readFile(new URL("./cli.ts", import.meta.url), "utf8");
@@ -26,6 +27,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getCatalog } from "./i18n/index.ts";
+import { helpLines } from "./ui/basic/logo.ts";
 
 /** Idea 7: startup hands the picker the assistant used last time and remembers the one chosen now, both through Shell's preferences file. */
 test("startup marks the last used engine in the picker and remembers the one chosen", async () => {
@@ -68,6 +70,33 @@ test("--help prints Shell commands with the /f614: prefix in both languages", ()
       for (const old of ["/refresh", "/yes", "/no", "/commands", "/help", "/quit!", "/exit!", "/forge614-status"]) expect(result.stdout, `${locale} ${old}`).not.toMatch(new RegExp(`(?<![\\w:/.-])${old}(?![\\w:-])`));
     }
   } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+/** Help rows are assembled independently of the CLI so its terminal and pipe layouts can be tested as a person reads them. */
+test("--help omits the sign and separator at 17 terminal columns", () => {
+  expect(helpLines({ isTTY: true, columns: 17 }, "Help text")).toEqual(["Help text"]);
+});
+
+/** A wide terminal keeps help legible with the normal three-row sign instead of the chat-only double-size sign. */
+test("--help uses the normal side-by-side sign at 120 terminal columns", () => {
+  expect(helpLines({ isTTY: true, columns: 120 }, "Help text").map(stripVTControlCharacters)).toEqual([
+    "█▀▀▀ █▀▀█ █▀▀▄ █▀▀▀ █▀▀▀  █▀▀▀ ▀█  █  █",
+    "█▀▀  █  █ █▄▄▀ █ ▀█ █▀▀   █▀▀█  █  ▀▀▀█",
+    "▀    ▀▀▀▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀  ▀▀▀▀ ▀▀▀    ▀",
+    "",
+    "Help text",
+  ]);
+});
+
+/** Piped help remains the stable uncolored wide sign, then exactly one separator row and the help text. */
+test("--help uses the plain normal sign when output is piped", () => {
+  expect(helpLines({ isTTY: false, columns: 17 }, "Help text")).toEqual([
+    "█▀▀▀ █▀▀█ █▀▀▄ █▀▀▀ █▀▀▀  █▀▀▀ ▀█  █  █",
+    "█▀▀  █  █ █▄▄▀ █ ▀█ █▀▀   █▀▀█  █  ▀▀▀█",
+    "▀    ▀▀▀▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀  ▀▀▀▀ ▀▀▀    ▀",
+    "",
+    "Help text",
+  ]);
 });
 
 /**

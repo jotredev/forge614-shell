@@ -2,12 +2,13 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
 import { createComposer, workModePresentation, spinnerFrame } from "./composer.ts";
 import { ShellStatusBar } from "./status-bar.ts";
-import { resetCapabilitiesCache, setCapabilityOverrides, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, resetCapabilitiesCache, setCapabilityOverrides, visibleWidth } from "@earendil-works/pi-tui";
 import { renderLayoutFrame } from "../../../node_modules/@earendil-works/pi-tui/dist/layout.js";
 import { ChatText, accent, muted, warning } from "./theme.ts";
 import { workspaceLayout, sidebarRail, IndependentScrollView, attachJumpToLatest } from "./workspace.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { ShellState } from "./shell-state.ts";
+import { ChatLogo } from "./logo.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Component, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
 
@@ -69,6 +70,51 @@ test("both workspace panes keep scrollbars hidden even after scrolling", () => {
     expect(pane.scrollbar).toBe("hidden");
     expect(pane.isScrollbarVisible).toBe(false);
   }
+});
+
+/** A resized transcript needs one new frame so ChatLogo reads the height just assigned by pi-tui, but unchanged height must not loop renders. */
+test("IndependentScrollView requests a repaint only when its viewport height changes", () => {
+  const pane = new IndependentScrollView({ render: () => [], invalidate() {} });
+  let repaints = 0;
+  const repaint = () => { repaints++; };
+  pane.updateLayout(20, 8, repaint);
+  expect(repaints).toBe(1);
+  pane.updateLayout(20, 8, repaint);
+  expect(repaints).toBe(1);
+  pane.updateLayout(20, 11, repaint);
+  expect(repaints).toBe(2);
+});
+
+/** The Codex-shaped workspace re-renders its opening sign in the center on its first visible frame and again immediately after a row resize. */
+test("workspace centers the opening sign from the current chat height after opening and resizing", () => {
+  const terminalState = { rows: 30 };
+  const terminal = terminalState as Terminal;
+  const transcript = new Container();
+  let scroll!: IndependentScrollView;
+  const logo = new ChatLogo(() => scroll.viewportRows, () => terminal.rows);
+  transcript.addChild(logo);
+  scroll = new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" });
+  const empty = { invalidate() {}, render: () => [] as string[] };
+  const root = workspaceLayout(scroll, empty, empty, empty, terminal, "/project");
+  const first = renderLayoutFrame(root, 100, terminal.rows, () => {});
+  const firstVisible = renderLayoutFrame(root, 100, terminal.rows, () => {}).lines.map(stripVTControlCharacters);
+  const top = (rows: string[]) => rows.findIndex(row => row.includes("█▀▀▀"));
+  const chatBox = (() => {
+    const boxes = [first.root];
+    while (boxes.length) {
+      const box = boxes.pop()!;
+      if (box.scrollView === scroll) return box;
+      boxes.push(...box.children);
+    }
+    throw new Error("chat scroll view missing from workspace");
+  })();
+  const chatTop = chatBox.rect.y;
+  expect(top(firstVisible) - chatTop).toBe(Math.floor((scroll.viewportRows - 3) / 2));
+  terminalState.rows = 38;
+  const resized = renderLayoutFrame(root, 100, terminalState.rows, () => {}).lines.map(stripVTControlCharacters);
+  const resizedVisible = renderLayoutFrame(root, 100, terminalState.rows, () => {}).lines.map(stripVTControlCharacters);
+  expect(top(resizedVisible) - chatTop).toBe(Math.floor((scroll.viewportRows - 3) / 2));
+  expect(top(resized)).not.toBe(-1);
 });
 
 test("editor owns click gestures without starting screen selection", () => {
