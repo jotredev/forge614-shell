@@ -286,6 +286,7 @@ export interface Catalog {
     reconnectBeforeMessage: string;
     errorPrefixed: (params: { message: string }) => string;
     turnStopped: (params: { message: string }) => string;
+    nodeWarning: (params: { message: string }) => string;
     resumeUseNumber: string;
     noSessionsFound: string;
     quitConfirmActiveWork: string;

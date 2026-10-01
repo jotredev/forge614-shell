@@ -30,7 +30,9 @@ afterEach(() => {
 class TestTerminal implements Terminal {
   columns = 100; rows = 40; kittyProtocolActive = false;
   input: (data: string) => void = () => {}; output = ""; stopped = false;
-  start(input: (data: string) => void) { this.input = input; this.stopped = false; }
+  /** What the screen asked to be told when the terminal changes size: calling it makes the next frame draw every row again, not just the rows that changed. */
+  resize: () => void = () => {};
+  start(input: (data: string) => void, resize: () => void = () => {}) { this.input = input; this.resize = resize; this.stopped = false; }
   stop() { this.stopped = true; }
   async drainInput() {}
   write(data: string) { this.output += data; }
@@ -138,6 +140,98 @@ test("a new Codex chat removes the FORGE614 sign after its first person message 
     enter("/new"); await tick();
     expect(plain()).not.toContain("█▀▀▄");
   } finally { enter("/f614:quit"); await ui; }
+});
+
+/**
+ * `/review` is a turn of the assistant like any message, so it removes the opening sign too; before this it went straight to `session.startReview`
+ * and the sign stayed on top of the review. The control: a full redraw before `/review` still shows the sign, so the redraw after it proves the sign is really gone and does not come back.
+ */
+test("/review removes the FORGE614 sign like any turn and it does not come back", async () => {
+  const h = codexUi("en", rpc => rpc.replies.set("review/start", { turn: { id: "r", status: "inProgress" }, reviewThreadId: "t" }));
+  try {
+    await tick();
+    h.terminal.columns = 101; h.terminal.output = ""; h.terminal.resize(); await tick();
+    expect(h.plain()).toContain("█▀▀▄");
+    h.enter("/review focus on security"); await tick();
+    expect(h.rpc.calls.filter(call => call.method === "review/start")).toHaveLength(1);
+    h.terminal.columns = 100; h.terminal.output = ""; h.terminal.resize(); await tick();
+    expect(h.plain()).not.toContain("█▀▀▄");
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "r", status: "completed" } });
+    await tick(); h.terminal.columns = 101; h.terminal.output = ""; h.terminal.resize(); await tick();
+    expect(h.plain()).not.toContain("█▀▀▄");
+  } finally {
+    // The review turn ends here even when an expectation above failed, so leaving does not wait on «Quit anyway?» and the screen's warning listeners are given back.
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "r", status: "completed" } }); await tick();
+    h.enter("/f614:quit"); await h.ui;
+  }
+});
+
+/**
+ * `/review` with no text opens the picker first: leaving it with Esc sends nothing, so it is no turn and the sign stays (only a review that really starts removes it).
+ */
+test("/review cancelled from its picker keeps the FORGE614 sign", async () => {
+  const h = codexUi();
+  try {
+    await tick();
+    h.enter("/review"); await tick();
+    expect(h.plain()).toContain("1. Review against a base branch");
+    h.terminal.input("\x1b"); await tick();
+    expect(h.rpc.calls.some(call => call.method === "review/start")).toBe(false);
+    h.terminal.columns = 101; h.terminal.output = ""; h.terminal.resize(); await tick();
+    expect(h.plain()).toContain("█▀▀▄");
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/**
+ * Node prints every `process.emitWarning` raw on stderr, which lands on top of the screen Shell draws (it came out of a real photo: the Claude SDK's
+ * «canUseTool will not be invoked» cut across the writing box). While the Codex screen is open Shell takes the warnings: the one the Claude SDK raises on purpose
+ * (code `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`) says nothing at all, any other shows once in the chat as a muted line with the catalog's prefix and without «(node:<pid>)»,
+ * and nothing reaches stderr. Both languages, with the exact words of each.
+ */
+test("while the Codex screen is open Node warnings do not reach stderr: the expected one is silent, another shows once in the chat", async () => {
+  for (const [locale, shown] of [["en", "Node warning: Something odd happened"], ["es", "Aviso de Node: Something odd happened"]] as const) {
+    const h = codexUi(locale); const stderr: string[] = []; const realWrite = process.stderr.write;
+    try {
+      await tick();
+      process.stderr.write = ((chunk: string | Uint8Array) => { stderr.push(String(chunk)); return true; }) as typeof process.stderr.write;
+      h.terminal.output = "";
+      process.emitWarning("canUseTool will not be invoked: permissionMode 'bypassPermissions' auto-approves every tool call", { code: "CLAUDE_SDK_CAN_USE_TOOL_SHADOWED" });
+      await tick(); await tick();
+      expect(h.plain()).not.toContain("canUseTool");
+      expect(h.plain()).not.toContain("Node warning"); expect(h.plain()).not.toContain("Aviso de Node");
+      expect(stderr).toEqual([]);
+      process.emitWarning("Something odd happened", { code: "SOME_OTHER_WARNING" });
+      await tick(); await tick();
+      expect(h.plain().split(shown)).toHaveLength(2);
+      expect(h.plain()).not.toContain("(node:");
+      expect(stderr).toEqual([]);
+      // A long message stays on one row: it is cut with «…» and its end never reaches the chat.
+      h.terminal.output = "";
+      process.emitWarning(`${"long ".repeat(60)}THE-END`, { code: "SOME_OTHER_WARNING" });
+      await tick(); await tick();
+      expect(h.plain()).toContain("…");
+      expect(h.plain()).not.toContain("THE-END");
+      expect(stderr).toEqual([]);
+    } finally { process.stderr.write = realWrite; h.enter("/f614:quit"); await h.ui; }
+  }
+});
+
+/**
+ * Shell only borrows the process's `warning` listeners while its screen is open: Node's own printer (the listener named `onWarning`) is taken out while it is open
+ * and, on leaving, the listeners are exactly the ones there were before opening (same number, same functions, same order), with nothing of Shell's left hanging.
+ */
+test("the Codex screen takes Node's warning printer while it is open and gives back the very same warning listeners on leaving", async () => {
+  const before = process.listeners("warning");
+  expect(before.some(listener => listener.name === "onWarning")).toBe(true);
+  const h = codexUi();
+  try {
+    await tick();
+    expect(process.listeners("warning").some(listener => listener.name === "onWarning")).toBe(false);
+    expect(process.listenerCount("warning")).toBe(before.length);
+  } finally { h.enter("/f614:quit"); await h.ui; }
+  const after = process.listeners("warning");
+  expect(after).toHaveLength(before.length);
+  for (const [index, listener] of before.entries()) expect(after[index]).toBe(listener);
 });
 
 /** Idea 1 with Codex's own Shift+Tab (Plan ↔ Default): mid-turn it never says «Finish or /stop»; the mode changes and one line says it applies from the next turn. */

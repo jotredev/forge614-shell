@@ -288,6 +288,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     reconnectBeforeMessage: "Usa /login para reconectar esta sesión de Shell antes de enviar un mensaje.",
     errorPrefixed: ({ message }) => `Error: ${message}`,
     turnStopped: ({ message }) => `Turno detenido: ${message}`,
+    nodeWarning: ({ message }) => `Aviso de Node: ${message}`,
     resumeUseNumber: "Usa /resume <número>. Esto carga el historial y espera tu siguiente mensaje.",
     noSessionsFound: "No se encontraron sesiones para este proyecto.",
     quitConfirmActiveWork: "Hay trabajo o autenticación en curso. Usa /f614:quit para salir: antes te pregunta si detiene lo que está en curso. No se detuvo nada.",

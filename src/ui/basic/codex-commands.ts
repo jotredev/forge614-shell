@@ -53,6 +53,11 @@ export interface CodexCommandScreen {
   setSkillChoices(skills: ComposerChoice[]): void;
   /** Sends `text` as a normal message of the person, exactly as if it had been typed. */
   submit(text: string): void;
+  /**
+   * Removes the opening FORGE614 sign, as a message of the person does. For a turn that does not go through `submit` (`/review` starts one on its own): it is called when the
+   * turn really starts, never for a command that ends without starting anything.
+   */
+  dismissLogo(): void;
   /** Puts `text` in the message box for the person to go on typing. */
   setComposerText(text: string): void;
   /** Saves the work mode or the collaboration mode so the next opening restores it. */
@@ -214,7 +219,10 @@ export function codexCommandHandlers(screen: CodexCommandScreen): Record<string,
       if (!session.startReview) { notAllowed("review"); return; }
       // `/review text` goes straight in as custom instructions, as in Codex.
       const target: NativeReviewTarget | undefined = argument.trim() ? { type: "custom", instructions: argument.trim() } : await chooseReviewTarget(screen);
-      if (target) await session.startReview(target);
+      if (!target) return;
+      // The review is a turn like any message, so it removes the opening sign (it does not go through `submit`, which is what removes it for a message).
+      screen.dismissLogo();
+      await session.startReview(target);
     },
     fork: argument => needs("fork", session.forkThread?.bind(session), async fork => {
       try { await fork(argument.trim() || undefined); }
