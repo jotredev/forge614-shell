@@ -40,7 +40,7 @@ export class ShellSidebar implements Component {
   /**
    * Consumes the left button's press/drag/release, exactly like the composer, so dragging a
    * selection in the chat can never spill into this column. Clicks still reach the activity rows.
-   * (Keeping a selection still while the screen scrolls depends on pi-tui and is not handled here.)
+   * (A selection staying on its text while the screen scrolls, ending when the button is let go over this column and going away when the chat's width changes are handled by `ChatScreen` in workspace.ts.)
    */
   handleMouse(event: TuiMouseEvent) {
     if (event.button === "left" && (event.type === "press" || event.type === "drag" || event.type === "release")) return { handled: true };
