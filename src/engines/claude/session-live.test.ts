@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { ClaudeSession } from "./session.ts";
+import { ClaudeSession, TurnStoppedByPerson } from "./session.ts";
 import { ShellError, describeError } from "../../shell-error.ts";
 import { fakeAssistant, fakeInit, fakeResult, fakeSdk, manualClock, settle } from "./fake-query.ts";
 import type { FakeQueryConfig } from "./fake-query.ts";
@@ -119,7 +119,9 @@ test("/f614:stop interrupts the query without closing it, and the turn ends with
   expect(fake.calls.interrupt).toBe(1);
   expect(fake.calls.close).toBe(0);
   expect(turn.settled).toBe(true);
-  expect((turn.error as Error).message).toBe("error_during_execution");
+  // The error result Claude Code gives to the person's own stop is the stop itself: it ends the turn as «stopped by the person», not with the technical word of the result.
+  expect(turn.error).toBeInstanceOf(TurnStoppedByPerson);
+  expect((turn.error as Error).message).not.toContain("error_during_execution");
   expect(h.session.busy).toBe(false);
   // The conversation goes on over the same query.
   const next = h.session.send("after the stop");
@@ -127,6 +129,30 @@ test("/f614:stop interrupts the query without closing it, and the turn ends with
   expect(h.sdk.opened).toHaveLength(1);
   fake.answer([fake.sent[1]!.uuid!]);
   await next;
+});
+
+test("another error result of a turn the person stopped keeps its own message, and one that was not stopped is not «stopped by the person»", async () => {
+  // A stop Claude Code does not answer by itself: the test hands over the result it wants.
+  const stopped = liveSession({ hold: true, silentInterrupt: true });
+  const turn = watch(stopped.session.send("long job"));
+  await settle();
+  stopped.session.stop();
+  const fake = stopped.sdk.opened[0]!;
+  fake.emit(fakeResult([fake.sent[0]!.uuid!], { subtype: "error_max_turns", is_error: true, errors: ["Reached the turn limit"] }));
+  await settle();
+  expect(turn.settled).toBe(true);
+  expect(turn.error).not.toBeInstanceOf(TurnStoppedByPerson);
+  expect((turn.error as Error).message).toBe("Reached the turn limit");
+
+  // The same technical result with no stop asked is not a stop of the person's: no error reaches the message at all (the screen draws it as Claude's error).
+  const plain = liveSession({ hold: true, silentInterrupt: true });
+  const other = watch(plain.session.send("another job"));
+  await settle();
+  const second = plain.sdk.opened[0]!;
+  second.emit(fakeResult([second.sent[0]!.uuid!], { subtype: "error_during_execution", is_error: true, errors: [] }));
+  await settle();
+  expect(other.settled).toBe(true);
+  expect(other.error).toBeUndefined();
 });
 
 test("a stop Claude Code never answers: after 5 s the query is closed and opened again with the same conversation, and the person is told", async () => {

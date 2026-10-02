@@ -286,6 +286,8 @@ export interface Catalog {
     reconnectBeforeMessage: string;
     errorPrefixed: (params: { message: string }) => string;
     turnStopped: (params: { message: string }) => string;
+    /** The line the chat shows when the person stopped the turn themself (`/f614:stop`) and the assistant ended it: in plain words, instead of the technical name of the assistant's result. */
+    turnStoppedByYou: string;
     nodeWarning: (params: { message: string }) => string;
     /** The line the chat shows when a click on a link or path could not open it; `target` is the address or the path. */
     linkOpenFailed: (params: { target: string }) => string;

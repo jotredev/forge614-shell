@@ -4,7 +4,7 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { getStartupContext } from "../../infrastructure/forge614-engram.ts";
 import { withStartupNotices } from "../../infrastructure/engram-notices.ts";
 import { ShellError, describeError } from "../../shell-error.ts";
-import { fakeResult, fakeSdk, settle } from "./fake-query.ts";
+import { fakeResult, fakeSdk, queryFromRun, settle } from "./fake-query.ts";
 
 test("the context summary is read when each turn ends, over the same open query, which stays open", async () => {
   const sdk = fakeSdk({ context: { totalTokens: 18000, rawMaxTokens: 128000 } });
@@ -20,14 +20,14 @@ test("the context summary is read when each turn ends, over the same open query,
 test("resume only selects a session; no model work starts before send", async () => {
   let calls = 0;
   let received: unknown;
-  const session = new ClaudeSession({ cwd: "/tmp/project", executable: "/bin/claude", env: {}, authenticate: async () => {}, run: options => {
+  const session = new ClaudeSession({ cwd: "/tmp/project", executable: "/bin/claude", env: {}, authenticate: async () => {}, connect: queryFromRun(options => {
     calls++;
     received = options;
     return (async function* () {
       yield { type: "system", subtype: "init", session_id: "saved", model: "claude-test" } as SDKMessage;
       yield { type: "result", subtype: "success", session_id: "saved", is_error: false } as SDKMessage;
     })();
-  } });
+  }) });
   session.resume("saved");
   expect(calls).toBe(0);
   await session.send("hello", () => {}, async () => false);
@@ -38,10 +38,10 @@ test("resume only selects a session; no model work starts before send", async ()
 
 test("Claude applies its selected native permission mode to the next turn", async () => {
   let received: any;
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: input => {
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(input => {
     received = input;
     return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
-  } });
+  }) });
 
   await session.setWorkMode("plan");
   await session.send("make a plan", () => {}, async () => false);
@@ -114,10 +114,10 @@ test("a mode change while a turn runs is applied to the open query, not kept for
 test("a mode change while the turn is still preparing becomes that turn's mode", async () => {
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
   let received: any;
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: () => gate, run: input => {
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: () => gate, connect: queryFromRun(input => {
     received = input;
     return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
-  } });
+  }) });
   const turn = session.send("hello", () => {}, async () => false);
   await new Promise(resolve => setImmediate(resolve));
   expect(await session.setWorkMode("plan")).toBe("applied");
@@ -128,10 +128,10 @@ test("a mode change while the turn is still preparing becomes that turn's mode",
 /** Switching to «bypass permissions» live is only possible if the query was opened allowing it; that flag only makes the mode reachable, the mode itself is still `permissionMode`. */
 test("every Claude query is opened allowing bypass to be reached live, without starting in it", async () => {
   let received: any;
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: input => {
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(input => {
     received = input;
     return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
-  } });
+  }) });
   await session.send("hello", () => {}, async () => false);
   expect(received.options.permissionMode).toBe("default");
   expect(received.options.allowDangerouslySkipPermissions).toBe(true);
@@ -139,10 +139,10 @@ test("every Claude query is opened allowing bypass to be reached live, without s
 
 test("failed authentication never reaches the model and releases busy state", async () => {
   let called = false;
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => { throw new Error("Please login"); }, run: () => {
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => { throw new Error("Please login"); }, connect: queryFromRun(() => {
     called = true;
     return (async function* () {})();
-  } });
+  }) });
   await expect(session.send("hello", () => {}, async () => true)).rejects.toThrow("login");
   expect(called).toBe(false);
   expect(session.busy).toBe(false);
@@ -167,7 +167,7 @@ test("tool denial and cancellation cannot become permission approvals", async ()
 });
 
 test("an interrupted transport is not reported as a successful turn", async () => {
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: () => (async function* () {})() });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(() => (async function* () {})()) });
   await expect(session.send("hello", () => {}, async () => false)).rejects.toThrow("without a result");
 });
 
@@ -176,10 +176,10 @@ test("send() fetches startup context once and appends it to the system prompt", 
   const session = new ClaudeSession({
     cwd: "/repo", executable: "/bin/claude", env: {}, authenticate: async () => {},
     getStartupContext: async () => { calls++; return { available: true, text: "Favorite color: black and purple." }; },
-    run: input => {
+    connect: queryFromRun(input => {
       expect(input.options.systemPrompt).toMatchObject({ type: "preset", preset: "claude_code", append: expect.stringContaining("Favorite color: black and purple.") });
       return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
-    },
+    }),
   });
   await session.send("hi", () => {}, async () => true);
   await session.send("hi again", () => {}, async () => true);
@@ -191,7 +191,7 @@ test("reset() re-fetches startup context on the next send", async () => {
   const session = new ClaudeSession({
     cwd: "/repo", executable: "/bin/claude", env: {}, authenticate: async () => {},
     getStartupContext: async () => { calls++; return { available: true, text: "x" }; },
-    run: () => (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })(),
+    connect: queryFromRun(() => (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })()),
   });
   await session.send("hi", () => {}, async () => true);
   session.reset();
@@ -204,7 +204,7 @@ test("resume() re-fetches startup context on the next send", async () => {
   const session = new ClaudeSession({
     cwd: "/repo", executable: "/bin/claude", env: {}, authenticate: async () => {},
     getStartupContext: async () => { calls++; return { available: true, text: "x" }; },
-    run: () => (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })(),
+    connect: queryFromRun(() => (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })()),
   });
   await session.send("hi", () => {}, async () => true);
   session.resume("other-session");
@@ -216,10 +216,10 @@ test("an unavailable or failing startup context never blocks or fails the turn",
   const session = new ClaudeSession({
     cwd: "/repo", executable: "/bin/claude", env: {}, authenticate: async () => {},
     getStartupContext: async () => { throw new Error("boom"); },
-    run: input => {
+    connect: queryFromRun(input => {
       expect(input.options.systemPrompt).toEqual({ type: "preset", preset: "claude_code" });
       return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
-    },
+    }),
   });
   await expect(session.send("hi", () => {}, async () => true)).resolves.toBeUndefined();
 });
@@ -227,10 +227,10 @@ test("an unavailable or failing startup context never blocks or fails the turn",
 test("no getStartupContext dependency means no memory call at all", async () => {
   const session = new ClaudeSession({
     cwd: "/repo", executable: "/bin/claude", env: {}, authenticate: async () => {},
-    run: input => {
+    connect: queryFromRun(input => {
       expect(input.options.systemPrompt).toEqual({ type: "preset", preset: "claude_code" });
       return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
-    },
+    }),
   });
   await expect(session.send("hi", () => {}, async () => true)).resolves.toBeUndefined();
 });
@@ -245,10 +245,10 @@ test("a malicious memory item can never close the memory block early, even if it
   const session = new ClaudeSession({
     cwd: "/repo", executable: "/bin/claude", env: {}, authenticate: async () => {},
     getStartupContext: async () => ({ available: true, text: malicious }),
-    run: input => {
+    connect: queryFromRun(input => {
       systemPrompt = input.options.systemPrompt;
       return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
-    },
+    }),
   });
   await session.send("hi", () => {}, async () => true);
   const append = (systemPrompt as { append: string }).append;
@@ -276,10 +276,10 @@ test("a long, unclosed special-token marker from a real (fake-run) startup-conte
   const session = new ClaudeSession({
     cwd: "/repo", executable: "/bin/claude", env: {}, authenticate: async () => {},
     getStartupContext: (directory, options) => getStartupContext(directory, { ...options, run: async () => ({ status: 0, stdout: JSON.stringify(payload), stderr: "" }) }),
-    run: input => {
+    connect: queryFromRun(input => {
       systemPrompt = input.options.systemPrompt;
       return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
-    },
+    }),
   });
   await session.send("hi", () => {}, async () => true);
   const append = (systemPrompt as { append: string }).append;
@@ -302,14 +302,14 @@ test("a second message sent while the first still waits for the start rides the 
 });
 
 test("Claude's own errors are typed ShellErrors, translatable at the presentation boundary — never hardcoded English that leaks past a Spanish selection", async () => {
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: () => (async function* () {
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(() => (async function* () {
     yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
-  })() });
+  })()) });
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
-  const busySession = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => gate, run: () => (async function* () {
+  const busySession = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => gate, connect: queryFromRun(() => (async function* () {
     yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
-  })() });
+  })()) });
   const turn = busySession.send("hi", () => {}, async () => false);
   let caught: unknown;
   try { busySession.resume("other-session"); } catch (error) { caught = error; }
@@ -328,12 +328,12 @@ test("Claude's own errors are typed ShellErrors, translatable at the presentatio
 test("background activity tracks a subagent task from start through its terminal notification", async () => {
   const session = new ClaudeSession({
     cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
-    run: () => (async function* () {
+    connect: queryFromRun(() => (async function* () {
       yield { type: "system", subtype: "task_started", task_id: "t1", description: "Investigar X", task_type: "local_agent", is_backgrounded: true, uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
       yield { type: "system", subtype: "task_updated", task_id: "t1", patch: { status: "running" }, uuid: "123e4567-e89b-12d3-a456-426614174001", session_id: "s" } as SDKMessage;
       yield { type: "system", subtype: "task_notification", task_id: "t1", status: "completed", summary: "Listo", output_file: "/tmp/out", uuid: "123e4567-e89b-12d3-a456-426614174002", session_id: "s" } as SDKMessage;
       yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
-    })(),
+    })()),
   });
   await session.send("hazlo en segundo plano", () => {}, async () => true);
   expect(session.backgroundActivity).toEqual([
@@ -344,10 +344,10 @@ test("background activity tracks a subagent task from start through its terminal
 test("background activity excludes ambient/housekeeping tasks, per the SDK's own guidance", async () => {
   const session = new ClaudeSession({
     cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
-    run: () => (async function* () {
+    connect: queryFromRun(() => (async function* () {
       yield { type: "system", subtype: "task_started", task_id: "t1", description: "housekeeping", ambient: true, uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
       yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
-    })(),
+    })()),
   });
   await session.send("go", () => {}, async () => true);
   expect(session.backgroundActivity).toEqual([]);
@@ -356,11 +356,11 @@ test("background activity excludes ambient/housekeeping tasks, per the SDK's own
 test("a task_id missing from a background_tasks_changed snapshot without an explicit close is marked done", async () => {
   const session = new ClaudeSession({
     cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
-    run: () => (async function* () {
+    connect: queryFromRun(() => (async function* () {
       yield { type: "system", subtype: "task_started", task_id: "t1", description: "bash job", task_type: "local_bash", uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
       yield { type: "system", subtype: "background_tasks_changed", tasks: [], uuid: "123e4567-e89b-12d3-a456-426614174001", session_id: "s" } as SDKMessage;
       yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
-    })(),
+    })()),
   });
   await session.send("go", () => {}, async () => true);
   expect(session.backgroundActivity).toEqual([
@@ -371,11 +371,11 @@ test("a task_id missing from a background_tasks_changed snapshot without an expl
 test("a task still running when the turn ends stays running: it lives in the open process and goes on between turns", async () => {
   const session = new ClaudeSession({
     cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
-    run: () => (async function* () {
+    connect: queryFromRun(() => (async function* () {
       yield { type: "system", subtype: "task_started", task_id: "t1", description: "still going", task_type: "local_agent", is_backgrounded: true, uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
       // No task_updated/task_notification/background_tasks_changed closure ever arrives before result.
       yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
-    })(),
+    })()),
   });
   await session.send("go", () => {}, async () => true);
   expect(session.backgroundActivity.map(activity => [activity.id, activity.state])).toEqual([["t1", "running"]]);
@@ -386,10 +386,10 @@ test("a task still running when the turn ends stays running: it lives in the ope
 test("a foreground task still running when the turn ends is dropped, because nothing would close it", async () => {
   const session = new ClaudeSession({
     cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
-    run: () => (async function* () {
+    connect: queryFromRun(() => (async function* () {
       yield { type: "system", subtype: "task_started", task_id: "fg", description: "foreground", task_type: "local_agent", is_backgrounded: false, uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
       yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
-    })(),
+    })()),
   });
   await session.send("go", () => {}, async () => true);
   expect(session.backgroundActivity).toEqual([]);
@@ -399,7 +399,7 @@ test("a finished task stays in the list until the next message starts a turn, wh
   let turn = 0;
   const session = new ClaudeSession({
     cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
-    run: () => {
+    connect: queryFromRun(() => {
       turn++;
       return (async function* () {
         if (turn === 1) {
@@ -408,7 +408,7 @@ test("a finished task stays in the list until the next message starts a turn, wh
         }
         yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
       })();
-    },
+    }),
   });
   await session.send("one", () => {}, async () => true);
   expect(session.backgroundActivity.map(activity => [activity.id, activity.state])).toEqual([["t1", "done"]]);
@@ -419,11 +419,11 @@ test("a finished task stays in the list until the next message starts a turn, wh
 test("a foreground task is not wrongly marked done by a background_tasks_changed snapshot that never lists it", async () => {
   const session = new ClaudeSession({
     cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
-    run: () => (async function* () {
+    connect: queryFromRun(() => (async function* () {
       yield { type: "system", subtype: "task_started", task_id: "t1", description: "foreground work", task_type: "local_agent", is_backgrounded: false, uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
       yield { type: "system", subtype: "background_tasks_changed", tasks: [], uuid: "123e4567-e89b-12d3-a456-426614174001", session_id: "s" } as SDKMessage;
       yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
-    })(),
+    })()),
   });
   let stateRightAfterReconciliation: string | undefined;
   await session.send("go", event => {
@@ -440,13 +440,13 @@ test("a foreground task is not wrongly marked done by a background_tasks_changed
 test("task_updated with a running/pending/paused status corrects a previously-closed task back to running and clears endedAt", async () => {
   const session = new ClaudeSession({
     cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
-    run: () => (async function* () {
+    connect: queryFromRun(() => (async function* () {
       yield { type: "system", subtype: "task_started", task_id: "t1", description: "flaky", task_type: "local_agent", is_backgrounded: true, uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
       yield { type: "system", subtype: "task_updated", task_id: "t1", patch: { status: "failed", error: "boom" }, uuid: "123e4567-e89b-12d3-a456-426614174001", session_id: "s" } as SDKMessage;
       yield { type: "system", subtype: "task_updated", task_id: "t1", patch: { status: "running" }, uuid: "123e4567-e89b-12d3-a456-426614174002", session_id: "s" } as SDKMessage;
       yield { type: "system", subtype: "task_notification", task_id: "t1", status: "completed", summary: "eventually fine", output_file: "/tmp/out", uuid: "123e4567-e89b-12d3-a456-426614174003", session_id: "s" } as SDKMessage;
       yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
-    })(),
+    })()),
   });
   const snapshotsAfterEachEvent: { state: string; endedAt: number | undefined }[] = [];
   await session.send("go", event => {
@@ -481,10 +481,10 @@ test("the ecosystem block reaches the system prompt inside the one delimited blo
   const session = new ClaudeSession({
     cwd: "/repo", executable: "/bin/claude", env: {}, authenticate: async () => {},
     getStartupContext: (directory, options) => getStartupContext(directory, { ...options, run: async () => ({ status: 0, stdout: JSON.stringify(payload), stderr: "" }) }),
-    run: input => {
+    connect: queryFromRun(input => {
       systemPrompt = input.options.systemPrompt;
       return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
-    },
+    }),
   });
   await session.send("hi", () => {}, async () => true);
   const append = (systemPrompt as { append: string }).append;
@@ -507,10 +507,10 @@ test("an older Engram without the ecosystem block gives the same prompt as befor
   const session = new ClaudeSession({
     cwd: "/repo", executable: "/bin/claude", env: {}, authenticate: async () => {},
     getStartupContext: (directory, options) => getStartupContext(directory, { ...options, run: async () => ({ status: 0, stdout: JSON.stringify(payload), stderr: "" }) }),
-    run: input => {
+    connect: queryFromRun(input => {
       systemPrompt = input.options.systemPrompt;
       return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
-    },
+    }),
   });
   await session.send("hi", () => {}, async () => true);
   expect((systemPrompt as { append: string }).append).not.toContain("ecosystem");
@@ -525,7 +525,7 @@ test("notices are shown once, and a project-file failure is shown as a problem, 
   const session = new ClaudeSession({
     cwd: "/repo", executable: "/bin/claude", env: {}, authenticate: async () => {},
     getStartupContext: withStartupNotices((directory, options) => current(directory, options), (text, isProblem) => shown.push([text, isProblem]), "es"),
-    run: () => (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })(),
+    connect: queryFromRun(() => (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })()),
   });
   await session.send("one", () => {}, async () => true);
   session.reset();
@@ -550,13 +550,13 @@ test("the session keeps what the SDK's init message reports for /status, and the
     type: "system", subtype: "init", session_id: `s-${version}`, claude_code_version: version, apiKeySource: "none", model: "claude-test", permissionMode: "default",
     cwd: "/tmp/project", mcp_servers: servers, slash_commands: [], tools: [], output_style: "default", skills: [], plugins: [],
   }) as unknown as SDKMessage;
-  const session = new ClaudeSession({ cwd: "/tmp/project", executable: "claude", env: {}, authenticate: async () => {}, run: () => {
+  const session = new ClaudeSession({ cwd: "/tmp/project", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(() => {
     turn++;
     return (async function* () {
       yield turn === 1 ? init("2.1.274", [{ name: "forge614-engram", status: "connected", source: "user" }]) : init("2.1.275", []);
       yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
     })();
-  } });
+  }) });
   expect(session.initInfo).toBeUndefined();
   await session.send("hello", () => {}, async () => false);
   expect(session.initInfo).toEqual({ version: "2.1.274", apiKeySource: "none", mcpServers: [{ name: "forge614-engram", status: "connected" }] });
@@ -566,10 +566,10 @@ test("the session keeps what the SDK's init message reports for /status, and the
 
 /** An init message missing fields (an older Claude Code) keeps only what it has: no field is made up, and the server list is left out rather than written as empty. */
 test("an init message without version or servers leaves those fields out", async () => {
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: () => (async function* () {
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(() => (async function* () {
     yield { type: "system", subtype: "init", session_id: "s" } as unknown as SDKMessage;
     yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
-  })() });
+  })()) });
   await session.send("hello", () => {}, async () => false);
   expect(session.initInfo).toEqual({});
 });
@@ -590,10 +590,10 @@ test("initialize keeps the whole account the SDK reports", async () => {
 /** The setting sources Shell asks Claude Code to load are one list, the same for the handshake and for every turn, so what `/status` says is what is really requested. */
 test("the turn asks for the same setting sources the session reports", async () => {
   let received: any;
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: input => {
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(input => {
     received = input;
     return (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
-  } });
+  }) });
   await session.send("hello", () => {}, async () => false);
   expect(received.options.settingSources).toEqual(["user", "project", "local"]);
   expect(session.settingSources).toEqual(["user", "project", "local"]);
@@ -617,7 +617,7 @@ function initRun(servers: { name: string; status: string }[] | undefined, counte
 test("the MCP states are the newest init's, replaced by each message and asked of nobody", async () => {
   const counter = { runs: 0 };
   let servers: { name: string; status: string }[] | undefined = [{ name: "forge614-engram", status: "connected" }, { name: "github", status: "failed" }];
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: input => initRun(servers, counter)() });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(input => initRun(servers, counter)()) });
   expect(session.mcpStatus()).toBeUndefined();
   await session.send("one", () => {}, async () => false);
   expect(session.mcpStatus()).toEqual([{ name: "forge614-engram", state: "connected" }, { name: "github", state: "failed" }]);
@@ -630,9 +630,9 @@ test("the MCP states are the newest init's, replaced by each message and asked o
 
 /** Each status the SDK reports, and one it may report later (no state, never a guess). */
 test("every SDK MCP status is mapped, and an unknown one has no state", async () => {
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun([
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(initRun([
     { name: "a", status: "connected" }, { name: "b", status: "pending" }, { name: "c", status: "needs-auth" }, { name: "d", status: "failed" }, { name: "e", status: "disabled" }, { name: "f", status: "brand-new" },
-  ], { runs: 0 }) });
+  ], { runs: 0 })) });
   await session.send("hello", () => {}, async () => false);
   expect(session.mcpStatus()).toEqual([
     { name: "a", state: "connected" }, { name: "b", state: "starting" }, { name: "c", state: "needs-sign-in" }, { name: "d", state: "failed" }, { name: "e", state: "disabled" }, { name: "f" },
@@ -641,13 +641,13 @@ test("every SDK MCP status is mapped, and an unknown one has no state", async ()
 
 /** An init with no list (an older Claude Code) is no data at all: never an empty list written as «0». (A new conversation keeps the list: see «/new keeps the MCP list».) */
 test("an init without a list gives no MCP states", async () => {
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun([{ name: "a", status: "connected" }], { runs: 0 }) });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(initRun([{ name: "a", status: "connected" }], { runs: 0 })) });
   await session.send("hello", () => {}, async () => false);
   expect(session.mcpStatus()).toHaveLength(1);
-  const older = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun(undefined, { runs: 0 }) });
+  const older = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(initRun(undefined, { runs: 0 })) });
   await older.send("hello", () => {}, async () => false);
   expect(older.mcpStatus()).toBeUndefined();
-  const none = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun([], { runs: 0 }) });
+  const none = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(initRun([], { runs: 0 })) });
   await none.send("hello", () => {}, async () => false);
   expect(none.mcpStatus()).toEqual([]);
 });
@@ -663,15 +663,15 @@ test("memoryInUse keeps whether Engram's startup context reached the session", a
     ["failed", async () => { throw new Error("boom"); }, undefined],
   ];
   for (const [label, getStartupContext, expected] of outcomes) {
-    const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, getStartupContext, run: initRun([], { runs: 0 }) });
+    const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, getStartupContext, connect: queryFromRun(initRun([], { runs: 0 })) });
     expect(session.memoryInUse(), label).toBeUndefined();
     await session.send("hello", () => {}, async () => false);
     expect(session.memoryInUse(), label).toBe(expected);
   }
-  const delivered = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, memoryHookActive: async () => true, getStartupContext: async () => ({ available: true, text: "x" }), run: initRun([], { runs: 0 }) });
+  const delivered = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, memoryHookActive: async () => true, getStartupContext: async () => ({ available: true, text: "x" }), connect: queryFromRun(initRun([], { runs: 0 })) });
   await delivered.send("hello", () => {}, async () => false);
   expect(delivered.memoryInUse()).toBe(true);
-  const bare = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun([], { runs: 0 }) });
+  const bare = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(initRun([], { runs: 0 })) });
   await bare.send("hello", () => {}, async () => false);
   expect(bare.memoryInUse()).toBeUndefined();
 });
@@ -688,7 +688,7 @@ test("/new keeps the MCP list", async () => {
   expect(session.mcpStatus()).toEqual([{ name: "probed", state: "connected" }]);
   session.reset();
   expect(session.mcpStatus()).toEqual([{ name: "probed", state: "connected" }]);
-  const fromInit = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun([{ name: "a", status: "connected" }], { runs: 0 }) });
+  const fromInit = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(initRun([{ name: "a", status: "connected" }], { runs: 0 })) });
   await fromInit.send("hello", () => {}, async () => false);
   fromInit.reset();
   expect(fromInit.mcpStatus()).toEqual([{ name: "a", state: "connected" }]);

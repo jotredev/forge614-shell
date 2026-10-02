@@ -8,6 +8,7 @@ import { resumeChoice, sortRecentFirst } from "./resume-picker.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { loadEnginePreference, saveEngineCollaborationMode, saveEngineMode, saveEnginePreference } from "../../infrastructure/shell-preferences.ts";
+import { attachInputHistory } from "../../infrastructure/input-history.ts";
 import { gitBranches, gitCommits, gitCurrentBranch, gitDiff } from "../../infrastructure/git-local.ts";
 import { copyToClipboard, saveNewFile } from "../../infrastructure/clipboard.ts";
 import { openLink } from "../../infrastructure/browser.ts";
@@ -78,6 +79,8 @@ export async function runNativeUI(
   transcript.addChild(chatLogo);
   transcriptScroll = new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" });
   const { input } = composer;
+  // ↑/↓ bring back what the person sent, kept between runs for this project folder; `rememberInput` is called with each message or command sent (never with the answer to a question).
+  const rememberInput = attachInputHistory(input, cwd, { env: process.env });
   const engineLabel = "Codex";
   // Codex has no `/login`: Shell's own `/f614:login` connects the account, and it is the command every «not connected» text names.
   const shellState = new ShellState(engineLabel, "/f614:login");
@@ -464,6 +467,7 @@ export async function runNativeUI(
   input.onSubmit = value => {
     if (closed || !value.trim()) return;
     input.setValue("");
+    rememberInput(value);
     if (value.startsWith("/")) void command(value).catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) })));
     // A subagent being watched takes no messages: say so before anything is written or sent.
     else if (session.detour?.()?.readOnly) writeError(getCatalog(locale).errors["codex-agent-read-only"]({}));
