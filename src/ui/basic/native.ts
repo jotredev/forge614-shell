@@ -539,8 +539,9 @@ export async function runNativeUI(
         if (collaboration) await restoreWorkMode(collaboration, saved?.collaborationMode);
       }
       ready = true; refresh(); loadSkillChoices();
-      // The MCP servers' states for the bottom bar are read once, now that the chat is ready; after that only the assistant's own notices change them (never after each message).
-      void session.loadMcpStatus?.();
+      // The conversation opens in the background first (Codex only starts its MCP servers then), and the MCP servers' states for the bottom bar are read once right after, with its id; after that only the assistant's own
+      // notices change them (never after each message). When it cannot be opened the list is asked the same, without a conversation.
+      void (async () => { await session.openConversation?.(); await session.loadMcpStatus?.(); })();
     }).catch(error => writeError(tc.connectionFailed({ message: describeError(error, locale) })));
     await exited;
   } finally { clearInterval(clock); process.removeListener("SIGTERM", shutdown); session.close(); tui.stop({ preserveScreen: true }); giveBackNodeWarnings(); }
