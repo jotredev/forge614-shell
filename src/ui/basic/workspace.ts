@@ -1,7 +1,8 @@
-import { HStack, VStack, ScrollView, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { HStack, TuiAltScreen, VStack, ScrollView, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Component, OverlayHandle, OverlayOptions, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { accent, elevated, fit, foreground, surface, warning, workspaceColors } from "./theme.ts";
-import { DEFAULT_POINTER, GRIP_WIDTH, RESIZE_POINTER, SidebarLayout } from "./sidebar-layout.ts";
+import { DEFAULT_POINTER, GRIP_WIDTH, LINK_POINTER, RESIZE_POINTER, SidebarLayout } from "./sidebar-layout.ts";
+import type { ChatLinks } from "./chat-links.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -94,15 +95,28 @@ export function attachJumpToLatest(tui: TUI, scroll: IndependentScrollView, loca
 }
 
 /**
- * Apply a session-local background, restoring the terminal on leaving alternate screen. It also notes whether the resize pointer was asked for (OSC 22, by the sidebar's grip)
- * and not yet given back, so that leaving the alternate screen gives the pointer back first: closing the screen with the pointer over the grip never leaves the terminal stuck on it.
+ * The alternate screen of the chat, the same for Codex and Claude Code: the session-local terminal (`workspaceTerminal`) with the mouse on, and the clicks on links sent to `links`,
+ * which also draws the hover and asks for the hand pointer through that terminal. Returns the terminal to build the layout on and the screen.
  */
-export function workspaceTerminal(terminal: Terminal): Terminal {
+export function chatScreen(terminal: Terminal, links: ChatLinks): { surface: Terminal; tui: TuiAltScreen } {
+  const surface = workspaceTerminal(terminal, links);
+  const tui = new TuiAltScreen(surface, true, undefined, { mouse: true, openUrl: url => links.open(url) });
+  links.bind({ requestRender: () => tui.requestRender(), write: data => surface.write(data) });
+  return { surface, tui };
+}
+
+/**
+ * Apply a session-local background, restoring the terminal on leaving alternate screen. It also notes whether a pointer was asked for (OSC 22, by the sidebar's grip or by a link under
+ * the mouse) and not yet given back, so that leaving the alternate screen gives the pointer back first: closing the screen with the pointer over either never leaves the terminal stuck on it.
+ * With `links`, everything the terminal sends is shown to them first, which is how they know the mouse moved.
+ */
+export function workspaceTerminal(terminal: Terminal, links?: ChatLinks): Terminal {
   let active = false;
   let pointerRaised = false;
   return new Proxy(terminal, { get(target, key) {
+    if (key === "start" && links) return (onInput: (data: string) => void, onResize: () => void) => target.start(data => { links.observe(data); onInput(data); }, onResize);
     if (key === "write") return (data: string) => {
-      if (data.includes(RESIZE_POINTER)) pointerRaised = true;
+      if (data.includes(RESIZE_POINTER) || data.includes(LINK_POINTER)) pointerRaised = true;
       if (data.includes(DEFAULT_POINTER)) pointerRaised = false;
       if (data.includes("\x1b[?1049h")) active = true;
       if (data.includes("\x1b[?1049l")) { active = false; target.write((pointerRaised ? DEFAULT_POINTER : "") + "\x1b[0m" + data); pointerRaised = false; return; }

@@ -287,6 +287,8 @@ export interface Catalog {
     errorPrefixed: (params: { message: string }) => string;
     turnStopped: (params: { message: string }) => string;
     nodeWarning: (params: { message: string }) => string;
+    /** The line the chat shows when a click on a link or path could not open it; `target` is the address or the path. */
+    linkOpenFailed: (params: { target: string }) => string;
     resumeUseNumber: string;
     noSessionsFound: string;
     quitConfirmActiveWork: string;

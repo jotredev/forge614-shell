@@ -1,5 +1,5 @@
 import { stripVTControlCharacters } from "node:util";
-import { Container, HStack, ProcessTerminal, ScrollView, Text, TuiAltScreen, VStack, matchesKey } from "@earendil-works/pi-tui";
+import { Container, HStack, ProcessTerminal, ScrollView, Text, VStack, matchesKey } from "@earendil-works/pi-tui";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { getSessionMessages, listSessions } from "@anthropic-ai/claude-agent-sdk";
 import { claudeResumeEntries, resumeChoice, sortRecentFirst } from "./resume-picker.ts";
@@ -27,10 +27,12 @@ import { effortDescription, effortLabel, isDisplayableUsage } from "./metrics.ts
 import { ActivityCard, chatMessage } from "./transcript.ts";
 import { lineDiff } from "./diff.ts";
 import { engramToolLabel, parseClaudeMcpToolName } from "../../engines/mcp-labels.ts";
-import { ChatText, PanelText, danger } from "./theme.ts";
+import { ChatText, PanelText, danger, warning } from "./theme.ts";
+import { ChatLinks, enableTerminalLinks, realChatLinkTools } from "./chat-links.ts";
+import type { ChatLinkTools } from "./chat-links.ts";
 import { nodeWarningRow, takeNodeWarnings } from "./node-warnings.ts";
 import { ChatLogo } from "./logo.ts";
-import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
+import { IndependentScrollView, attachJumpToLatest, chatScreen, workspaceLayout } from "./workspace.ts";
 import { createSidebarLayout } from "./sidebar-layout.ts";
 import { workingStatus } from "./duration.ts";
 import { ToolTracker } from "./tool-tracker.ts";
@@ -102,7 +104,7 @@ export function claudeMenuCommands(commands: SlashCommand[], t: ReturnType<typeo
   return [...native, ...providerControls];
 }
 
-export async function startClaudeUI(args: string[], selectedExecutable?: string, terminal?: Terminal, version?: string, locale: Locale = "en"): Promise<void> {
+export async function startClaudeUI(args: string[], selectedExecutable?: string, terminal?: Terminal, version?: string, locale: Locale = "en", linkTools: ChatLinkTools = realChatLinkTools): Promise<void> {
   const t = getCatalog(locale).chat;
   const tc = getCatalog(locale).claudeChat;
   if (args.length) throw new Error(tc.cliOptionsUnsupported);
@@ -119,8 +121,10 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     cwd, env, executable, getStartupContext: withStartupNotices(getStartupContext, showNotice, locale),
     memoryHookActive: createMemoryHookProbe("claude-code", { env }),
   });
-  const surface = workspaceTerminal(terminal ?? new ProcessTerminal());
-  const tui = new TuiAltScreen(surface, true, undefined, { mouse: true });
+  // A click on a link or a path opens it; `writeWarning` is declared below and only runs when a click fails, long after it exists.
+  enableTerminalLinks(process.env);
+  const links = new ChatLinks({ cwd, home: process.env.HOME, tools: linkTools, onFailure: target => writeWarning(t.linkOpenFailed({ target })) });
+  const { surface, tui } = chatScreen(terminal ?? new ProcessTerminal(), links);
   const composer = createComposer(tui, locale);
   const transcript = new Container();
   let transcriptScroll!: IndependentScrollView;
@@ -133,6 +137,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd, process.env.HOME, locale);
   // The sidebar's width and whether it is hidden come back from the preferences and are saved when the person lets go of the grip or clicks a button; the footer takes the sidebar's data while it is not drawn.
   const sidebarLayout = createSidebarLayout(surface, locale);
+  links.pointerHeldElsewhere = () => sidebarLayout.holdsPointer();
   const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version, locale, () => sidebarLayout.isVisible());
   tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface, sidebarLayout));
   attachJumpToLatest(tui, transcriptScroll, locale, sidebarLayout);
@@ -187,7 +192,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   syncCommandGroups(); // from the start, so the menu already tells Claude Code's commands from Shell's before the catalog arrives
 
   const write = (text: string): ChatText => {
-    const component = new ChatText(clean(text));
+    const component = new ChatText(clean(text), undefined, links);
     transcript.addChild(component);
     tui.requestRender();
     return component;
@@ -199,7 +204,14 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   };
   /** Red, so an error reads as an error at a glance instead of blending into a normal reply. */
   const writeError = (text: string): ChatText => {
-    const component = new ChatText(clean(text), danger);
+    const component = new ChatText(clean(text), danger, links);
+    transcript.addChild(component);
+    tui.requestRender();
+    return component;
+  };
+  /** Yellow, for a line that says something did not work without being an error of the conversation (a click on a link that could not be opened). */
+  const writeWarning = (text: string): ChatText => {
+    const component = new ChatText(clean(text), warning, links);
     transcript.addChild(component);
     tui.requestRender();
     return component;
@@ -211,7 +223,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   };
   const writeChat = (role: "user" | "assistant" | "system", text: string): ChatText => write(chatMessage(role, clean(text), locale));
   const writeActivity = (title: string, detail: string, expanded = false): ActivityCard => {
-    const card = new ActivityCard(title, "", clean(detail), expanded);
+    const card = new ActivityCard(title, "", clean(detail), expanded, undefined, undefined, undefined, links);
     transcript.addChild(card); tui.requestRender();
     return card;
   };
@@ -337,8 +349,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         const parsed = parseClaudeMcpToolName(block.name);
         const label = (parsed && engramToolLabel(parsed.server, parsed.tool)) ?? (edit?.path ? `${block.name} · ${edit.path.split("/").pop()}` : block.name);
         const card = edit
-          ? new ActivityCard(label, tc.toolRequested, "", true, lineDiff(edit.before, edit.after))
-          : new ActivityCard(label, tc.toolRequested, clean(JSON.stringify(block.input, null, 2)).slice(0, 2000));
+          ? new ActivityCard(label, tc.toolRequested, "", true, lineDiff(edit.before, edit.after), undefined, undefined, links)
+          : new ActivityCard(label, tc.toolRequested, clean(JSON.stringify(block.input, null, 2)).slice(0, 2000), false, undefined, undefined, undefined, links);
         const description = (block.input as { description?: unknown } | undefined)?.description;
         if (toolTracker.request(block.id, card, { isEdit: Boolean(edit), title: label, ...(typeof description === "string" && description.trim() ? { activity: description } : {}) })) transcript.addChild(card);
       }

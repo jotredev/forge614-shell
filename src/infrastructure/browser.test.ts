@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { openLink, openLoginBrowser } from "./browser.ts";
+import { isOpenableWebUrl, openLink, openLoginBrowser, openWebPage } from "./browser.ts";
 
 test("browser launch passes the OAuth URL as one argument without shell interpolation", async () => {
   const url = "https://auth.openai.com/oauth/authorize?state=a&code_challenge=b";
@@ -44,4 +44,24 @@ test("openLink() opens only plain https pages, as a single argument", async () =
     expect(await openLink(invalid, "darwin", run)).toBe(false);
   }
   expect(calls).toEqual([["/usr/bin/open", [url]]]);
+});
+
+/**
+ * A page the person clicked in the chat opens when it is `http:` or `https:`, with a port allowed (a local server such as `http://localhost:3000`) and no user or password in it,
+ * as one separate argument. Every other scheme, a login inside the address and text that is no address are refused and nothing runs. It is a different rule from `openLink`
+ * (which `/apps` keeps unchanged: no port, https only), and it exists because the chat's links come from text a model wrote.
+ */
+test("openWebPage() opens http and https pages, with a port, and refuses everything else", async () => {
+  const calls: unknown[] = [];
+  const run = async (command: string, args: string[]) => { calls.push([command, args]); };
+  for (const url of ["https://github.com/jotredev/forge614-shell", "http://localhost:3000", "http://127.0.0.1:8080/a?b=c&d=e"]) expect(await openWebPage(url, "darwin", run)).toBe(true);
+  expect(calls).toEqual([["/usr/bin/open", ["https://github.com/jotredev/forge614-shell"]], ["/usr/bin/open", ["http://localhost:3000"]], ["/usr/bin/open", ["http://127.0.0.1:8080/a?b=c&d=e"]]]);
+  calls.length = 0;
+  for (const invalid of ["javascript:alert(1)", "file:///etc/passwd", "ftp://example.com/file", "mailto:a@b.co", "https://user@example.com/", "https://user:secret@example.com/", "example.com", "not a url"]) {
+    expect({ invalid, opened: await openWebPage(invalid, "darwin", run) }).toEqual({ invalid, opened: false });
+  }
+  expect(calls).toEqual([]);
+  expect(await openWebPage("https://example.com/", "darwin", async () => { throw new Error("no browser"); })).toBe(false);
+  expect(isOpenableWebUrl("http://localhost:3000")).toBe(true);
+  expect(isOpenableWebUrl("javascript:alert(1)")).toBe(false);
 });

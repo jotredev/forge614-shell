@@ -146,6 +146,24 @@ Claude Code and Codex both use an independent transcript view. Once you scroll a
 
 Errors such as a stopped turn, invalid command, invalid pending-permission response, or connection failure are inserted in red. `ChatText` accepts a base color so Markdown formatting preserves that visual signal instead of blending an error into an ordinary reply.
 
+## Links and file paths with a click
+
+It works the same with Claude Code and with Codex. A left click — press and release on the same link, with no dragging — opens what is drawn in cyan in the chat; pressing on a link and releasing somewhere else, or dragging in between, is a text selection and opens nothing.
+
+**What becomes clickable.**
+- *Web links* in the assistants' text: Markdown `[text](address)` ones and an address written on its own (the one the screen's Markdown recognizes). They are drawn in cyan and underlined. Only `http:` and `https:` addresses are opened, with a port too (for example `http://localhost:3000`) and with no user or password inside; any other scheme (`javascript:`, `file:`, `ftp:`, `mailto:`…), an address with a user or password, and a link an assistant writes imitating Shell's own are drawn but open nothing. They open in the browser through the system's own launcher (`/usr/bin/open` on macOS, `xdg-open` on Linux, `rundll32.exe` on Windows), with the address as one separate argument and never through a shell.
+- *File paths* in the assistants' text (also inside `inline code`) and in tool cards (the title, the first line of the detail and the body of full cards, such as a permission): absolute, with `~/`, with `./` or `../`, or relative to the session's folder (also a bare name with an extension, such as `package.json`). It is a link only if it **exists on disk at the moment it is drawn**; a path that does not exist stays as text. It may end with `:line` or `:line:column`: the link shows it, but the file is opened without the suffix. Paths inside code blocks and the lines of a diff do not become links. They are drawn in cyan, without underline.
+
+**How a path opens.** On macOS, with `/usr/bin/open <path>`: the file opens with the app the Mac has for it and a normal folder opens in Finder. On Linux, with `xdg-open`. On Windows Shell never opens a file: a folder opens in Explorer and a file is shown selected in it. Always with the path as one separate argument and no shell.
+
+**What is shown in Finder instead of opened, and why.** Shell never runs anything because of a click. So, instead of opening, it shows in Finder (`/usr/bin/open -R <path>`; on Linux the folder that holds it is opened) an app or package (`.app`, `.bundle`, `.framework`, `.plugin`, `.kext`, `.pkg`, `.mpkg`, `.workflow`, `.xpc`, `.appex`, `.prefpane`, `.saver`, `.component`, `.action`, `.dext` and `.systemextension` folders), a file with the execute permission and a file with the extension `.command`, `.tool`, `.terminal`, `.sh`, `.zsh`, `.bash`, `.pkg`, `.mpkg`, `.dmg`, `.workflow`, `.scpt` or `.applescript` (case does not matter). A symbolic link is judged by what it points to: one named `notes.txt` that leads to an app is shown, not opened.
+
+**The terminal's hyperlinks.** Web links reach the terminal as OSC 8 hyperlinks. The screen library (pi-tui) leaves them off in macOS Terminal and in Orca, which it does not recognize; Shell turns them on in those two (`TERM_PROGRAM` equal to `Apple_Terminal` or `Orca`) as well as wherever the library already detects them. Under tmux and screen, or if `PI_HYPERLINKS` is set, the library's decision stands; where hyperlinks are off there are no links (Markdown ones come out as «text (address)»). The click is handled by Shell's screen, not by the terminal.
+
+**With the pointer over it.** The whole link — all of its columns, also the second row if it wraps — is drawn brighter, in bold and underlined; when the pointer leaves it goes back to cyan. There are no borders, boxes or colored backgrounds. Also, while the pointer is over a link, Shell asks the terminal for the hand pointer (OSC 22, `pointer`) and gives it back (`default`) when it leaves the link, when something else is pressed and when the screen closes; it does not take it from the sidebar's grip if the grip holds it. The mouse arrow changes only in terminals that understand that request; macOS Terminal and Orca do not, and there the signal is the color.
+
+**If opening fails.** If the system's launcher reports an error or the path no longer exists, the chat shows one amber line with the text «Could not open» followed by the path or the address (`chat.linkOpenFailed` in `src/i18n/en.ts`), and nothing else breaks.
+
 ## Live status, model, and reasoning
 
 Like the signal light on an operations console, the composer tells you whether writing can proceed, the engine is busy, or a human decision is needed.

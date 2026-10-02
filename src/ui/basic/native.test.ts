@@ -11,6 +11,7 @@ import { FixtureRpc } from "../../../tests/support/rpc-fixture.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import { ShellError, describeError } from "../../shell-error.ts";
 import type { CodexLocalTools } from "./codex-commands.ts";
+import type { ChatLinkTools } from "./chat-links.ts";
 import { CODEX_INIT_PROMPT } from "../../engines/codex/prompts.ts";
 
 // Shell persists /model and /effort picks to $FORGE614_HOME/shell/preferences.json (see
@@ -107,7 +108,7 @@ function localDouble(overrides: Partial<CodexLocalTools> = {}) {
 }
 
 /** A Codex fixture with the native modes available, Codex's two collaboration modes, and a turn that stays open until the test completes it. */
-function codexUi(locale: "en" | "es" = "en", configure: (rpc: FixtureRpc) => void = () => {}, local = localDouble(), columns = 100, memoryHook?: () => Promise<boolean>) {
+function codexUi(locale: "en" | "es" = "en", configure: (rpc: FixtureRpc) => void = () => {}, local = localDouble(), columns = 100, memoryHook?: () => Promise<boolean>, linkTools?: ChatLinkTools) {
   const terminal = new TestTerminal(); const rpc = new FixtureRpc();
   terminal.columns = columns;
   rpc.replies.set("initialize", {});
@@ -121,7 +122,7 @@ function codexUi(locale: "en" | "es" = "en", configure: (rpc: FixtureRpc) => voi
   rpc.replies.set("thread/settings/update", {});
   configure(rpc);
   let session!: CodexSession;
-  const ui = runNativeUI("codex", "/project", (emit, approve) => session = new CodexSession(rpc, "/project", emit, approve, undefined, undefined, locale, memoryHook), terminal, undefined, locale, local.tools);
+  const ui = runNativeUI("codex", "/project", (emit, approve) => session = new CodexSession(rpc, "/project", emit, approve, undefined, undefined, locale, memoryHook), terminal, undefined, locale, local.tools, linkTools);
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
   const plain = () => stripVTControlCharacters(terminal.output);
   return { terminal, rpc, ui, enter, plain, session: () => session, local };
@@ -2319,3 +2320,46 @@ test("dragging the sidebar's grip saves the width on release and closing gives t
   expect(out.lastIndexOf(ew)).toBeLessThan(out.lastIndexOf(back));
   expect(out.lastIndexOf(back)).toBeLessThan(out.lastIndexOf("\x1b[?1049l"));
 });
+
+/** The screen as the terminal shows it now, without escape codes: for each row, what the screen last wrote to it (`ESC[row;1H ESC[2K` and the row), so a test can find where a piece of text is. */
+function screenRows(output: string): string[] {
+  const rows: string[] = [];
+  for (const chunk of output.split(/(?=\x1b\[\d+;1H\x1b\[2K)/)) {
+    const marker = /^\x1b\[(\d+);1H\x1b\[2K([\s\S]*)$/.exec(chunk);
+    if (marker) rows[Number(marker[1]) - 1] = stripVTControlCharacters(marker[2]!.replace(/\x1b\[\?25[lh][\s\S]*$/, "").replace(/\x1b\[\d+;\d+H[\s\S]*$/, ""));
+  }
+  return Array.from(rows, row => row ?? "");
+}
+
+/**
+ * Links through the whole Codex screen, with real SGR mouse sequences and an answer that carries a web address and a path that exists: clicking the address gives the opener exactly that
+ * address, clicking the path gives the path opener the file; when the openers fail the chat gets one warning line with the catalog's text and the address or path, in English and in Spanish.
+ * It exists because the unit tests build the screen by hand; this one proves Codex's screen wires the links, the clicks and the warning.
+ */
+for (const locale of ["en", "es"] as const) {
+  test(`links in a Codex answer open with a click and a failure is a warning line (${locale})`, async () => {
+    const file = join(forgeHome, "notes.txt"); writeFileSync(file, "x");
+    const opened = { web: [] as string[], path: [] as string[] };
+    let works = true;
+    const tools: ChatLinkTools = { openWeb: async url => { opened.web.push(url); return works; }, openPath: async path => { opened.path.push(path); return works; } };
+    const h = codexUi(locale, undefined, undefined, 200, undefined, tools);
+    try {
+      await tick(); h.enter("hello"); await tick();
+      h.rpc.onNotification("item/completed", { threadId: "t", turnId: "u", item: { type: "agentMessage", id: "a1", text: `Docs: https://example.com/docs and the notes ${file}:3`, phase: null, memoryCitation: null }, completedAtMs: 1 });
+      h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+      await tick();
+      const where = (text: string) => { const rows = screenRows(h.terminal.output); const y = rows.findIndex(row => row.includes(text)); return { x: rows[y]!.indexOf(text), y }; };
+      const click = async (x: number, y: number) => { h.terminal.input(`\x1b[<0;${x + 1};${y + 1}M`); h.terminal.input(`\x1b[<0;${x + 1};${y + 1}m`); await tick(); };
+      const web = where("https://example.com/docs"); const path = where(file);
+      await click(web.x + 4, web.y); await click(path.x + 4, path.y);
+      expect(opened).toEqual({ web: ["https://example.com/docs"], path: [file] });
+      expect(screenRows(h.terminal.output).join("\n")).not.toContain(getCatalog(locale).chat.linkOpenFailed({ target: "https://example.com/docs" }));
+      works = false;
+      await click(web.x + 4, web.y); await click(path.x + 4, path.y);
+      expect(opened).toEqual({ web: ["https://example.com/docs", "https://example.com/docs"], path: [file, file] });
+      const text = screenRows(h.terminal.output).join("\n");
+      expect(text).toContain(getCatalog(locale).chat.linkOpenFailed({ target: "https://example.com/docs" }));
+      expect(text).toContain(getCatalog(locale).chat.linkOpenFailed({ target: file }));
+    } finally { h.enter("/f614:quit"); await h.ui; }
+  });
+}

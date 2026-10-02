@@ -27,6 +27,28 @@ export async function openLink(rawUrl: string, platform: NodeJS.Platform = proce
   } catch { return false; }
 }
 
+/**
+ * Whether the chat may open `rawUrl` when the person clicks it: a plain `http:` or `https:` address, with or without a port (a local server such as `http://localhost:3000`) and
+ * with no user or password in it. Any other scheme (`javascript:`, `file:`, `ftp:`, `mailto:`…) and anything that is not an address is refused.
+ */
+export function isOpenableWebUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password;
+  } catch { return false; }
+}
+
+/**
+ * Opens a web page the person clicked in the chat, as one separate argument and never through a shell, like `launch()` does for the others. It is a function of its own because the chat's
+ * rule is wider than `openLink`'s (which `/apps` keeps: https only, no port): `http:` and a port are allowed here, see `isOpenableWebUrl`. Any failure answers false.
+ */
+export async function openWebPage(rawUrl: string, platform: NodeJS.Platform = process.platform, run: Execute = execute): Promise<boolean> {
+  try {
+    if (!isOpenableWebUrl(rawUrl)) return false;
+    return await launch(rawUrl, platform, run);
+  } catch { return false; }
+}
+
 export async function openLoginBrowser(
   rawUrl: string, platform: NodeJS.Platform = process.platform, run: Execute = execute,
 ): Promise<boolean> {
