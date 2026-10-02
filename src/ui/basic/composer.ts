@@ -363,7 +363,12 @@ export class ForgeComposer extends Editor {
     }
     const before = this.getText();
     super.handleInput(data);
-    if (this.getText() !== before) { this.selectedChoice = 0; this.dismissed = ""; }
+    if (this.getText() !== before) {
+      this.selectedChoice = 0;
+      // An arrow that changed the text recalled an entry of the history (the menu keeps the arrows while it is open, so only a menu-less box gets here): that whole text must not open the menu on
+      // its own, or the next arrow would move in the menu instead of going on through the history. Any other key shows the menu again.
+      this.dismissed = matchesKey(data, "up") || matchesKey(data, "down") ? this.getText() : "";
+    }
   }
   setValue(value: string): void { this.setText(value); }
   /** Sets the assistant's status; the one that turns Working into Ready also starts the flash on «✓ Ready». */

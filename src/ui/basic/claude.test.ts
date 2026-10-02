@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -1102,8 +1102,10 @@ test.skipIf(process.platform === "win32")("Claude UI: a message typed mid-answer
     h.terminal.output = ""; h.enter("/f614:stop");
     for (let i = 0; i < 60 && !h.plain().includes(getCatalog("en").chat.statusReady); i++) await tick();
     expect(h.calls().filter(line => line === "interrupt")).toHaveLength(1);
-    expect(h.plain()).toContain(getCatalog("en").chat.turnStopped({ message: "error_during_execution" }));
-    expect(h.plain()).not.toContain(getCatalog("en").claudeChat.claudeError({ message: "error_during_execution" }));
+    // The person stopped it: the chat says so in plain words, never with the technical name of Claude Code's result.
+    expect(h.plain()).toContain(getCatalog("en").chat.turnStoppedByYou);
+    expect(h.plain()).not.toContain("error_during_execution");
+    expect(h.plain()).not.toContain(getCatalog("en").chat.turnStopped({ message: "" }));
     // The next message goes to the same process: stopping did not close Claude Code.
     h.enter("after the stop");
     for (let i = 0; i < 60 && prompts().length < 3; i++) await tick();
@@ -1354,5 +1356,168 @@ test.skipIf(process.platform === "win32")("Claude UI: with no task running nothi
     h.terminal.output = ""; h.enter("/f614:quit");
     await h.ui;
     expect(h.plain()).not.toContain(t.claudeChat.backgroundCutQuestion({ count: 1 }));
+  } finally { await h.finish(); }
+});
+
+// --- Round 2: the text of a stop, the inner steps of a helper and the up-arrow history ---
+
+/** When the person stopped the turn, Claude Code answers with an error result whose name is technical; the chat says «You stopped the turn.» instead, in the person's language. */
+test.skipIf(process.platform === "win32")("Claude UI: stopping a turn says «Detuviste el turno.» (es) or «You stopped the turn.» (en), never the technical name of Claude Code's result", async () => {
+  const words = { es: "Detuviste el turno.", en: "You stopped the turn." } as const;
+  for (const locale of ["es", "en"] as const) {
+    const h = await claudeUi([], locale);
+    try {
+      expect(getCatalog(locale).chat.turnStoppedByYou).toBe(words[locale]);
+      h.enter("trabajo largo");
+      for (let i = 0; i < 60 && !h.calls().some(line => line.startsWith("prompt:")); i++) await tick();
+      h.terminal.output = ""; h.enter("/f614:stop");
+      for (let i = 0; i < 60 && !h.plain().includes(words[locale]); i++) await tick();
+      expect(h.plain()).toContain(words[locale]);
+      expect(h.plain()).not.toContain("error_during_execution");
+      expect(h.plain()).not.toContain(getCatalog(locale).chat.turnStopped({ message: "" }).trim());
+    } finally { await h.finish(); }
+  }
+});
+
+test.skipIf(process.platform === "win32")("Claude UI: a turn that ends for another reason (Claude Code dies) still says «Turn stopped: …» with its message, not «You stopped the turn.»", async () => {
+  const h = await claudeUi();
+  try {
+    const t = getCatalog("en");
+    h.enter("trabajo que se cae");
+    for (let i = 0; i < 60 && !h.calls().some(line => line.startsWith("prompt:")); i++) await tick();
+    h.terminal.output = ""; h.emit({ __exit: 1 });
+    for (let i = 0; i < 80 && !h.plain().includes(t.chat.turnStopped({ message: "" }).trim()); i++) await tick();
+    expect(h.plain()).toContain(t.chat.turnStopped({ message: "" }).trim());
+    expect(h.plain()).not.toContain(t.chat.turnStoppedByYou);
+  } finally { await h.finish(); }
+});
+
+/**
+ * In Claude Code itself the main chat does not draw what a subagent does inside: its tool calls and their results (events with a `parent_tool_use_id`), nor its progress notices. The helper's own line
+ * («Agent») is the main assistant's tool call and stays; the same events with no parent are the main assistant's and are drawn.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: the tools of a subagent (events with a parent_tool_use_id) draw nothing in the main chat, the same events of the main assistant do", async () => {
+  const h = await claudeUi();
+  try {
+    const t = getCatalog("en");
+    let n = 0;
+    const uuid = () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`;
+    const toolUse = (id: string, name: string, parent: string | null) => ({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name, input: { description: "probe" } }] }, parent_tool_use_id: parent, session_id: "s", uuid: uuid() });
+    const toolResult = (id: string, parent: string | null, isError = true) => ({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "boom", is_error: isError }] }, parent_tool_use_id: parent, session_id: "s", uuid: uuid() });
+    const progress = (id: string, name: string, parent: string | null) => ({ type: "tool_progress", tool_use_id: id, tool_name: name, parent_tool_use_id: parent, elapsed_time_seconds: 3, session_id: "s", uuid: uuid() });
+    const said = (text: string) => ({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text }] }, parent_tool_use_id: null, session_id: "s", uuid: uuid() });
+    const failed = t.claudeChat.toolFailed({ duration: "" }).replace(/[\s·]+$/, "");
+    // Inside a subagent: its own tool, its result, a progress notice of another one, and (as the marker that the events were handled) a line of the main assistant.
+    h.terminal.output = "";
+    h.emit(toolUse("inner-1", "InnerProbeTool", "agent-1"), toolResult("inner-1", "agent-1"), progress("inner-2", "InnerProgressTool", "agent-1"), said("MARKER-ONE"));
+    for (let i = 0; i < 60 && !h.plain().includes("MARKER-ONE"); i++) await tick();
+    expect(h.plain()).toContain("MARKER-ONE");
+    expect(h.plain()).not.toContain("InnerProbeTool");
+    expect(h.plain()).not.toContain("InnerProgressTool");
+    expect(h.plain()).not.toContain(failed);
+    // The main assistant's own calls, with no parent: drawn, with their result and progress.
+    h.terminal.output = "";
+    h.emit(toolUse("main-1", "MainProbeTool", null), toolResult("main-1", null), progress("main-2", "MainProgressTool", null), said("MARKER-TWO"));
+    for (let i = 0; i < 60 && !h.plain().includes("MARKER-TWO"); i++) await tick();
+    expect(h.plain()).toContain("MainProbeTool");
+    expect(h.plain()).toContain("MainProgressTool");
+    expect(h.plain()).toContain(failed);
+    // A result marked as a subagent's never finishes a card of the main chat, not even one with that very id: the card stays as requested and never reads «Completed».
+    const completed = t.claudeChat.toolCompleted({ duration: "" }).replace(/[\s·]+$/, "");
+    h.terminal.output = "";
+    h.emit(toolUse("shared-1", "SharedProbeTool", null), toolResult("shared-1", "agent-1", false), said("MARKER-THREE"));
+    for (let i = 0; i < 60 && !h.plain().includes("MARKER-THREE"); i++) await tick();
+    expect(h.plain()).toContain("SharedProbeTool");
+    expect(h.plain()).not.toContain(completed);
+  } finally { await h.finish(); }
+});
+
+// The up arrow brings back what the person sent, as the shells do (the editor has it; Shell fills it with each message or command sent).
+const promptsOf = (h: ClaudeHarness) => h.calls().filter(line => line.startsWith("prompt:"));
+const waitForPrompts = async (h: ClaudeHarness, count: number) => { for (let i = 0; i < 60 && promptsOf(h).length < count; i++) await tick(); };
+const UP = "\x1b[A"; const DOWN = "\x1b[B";
+
+test.skipIf(process.platform === "win32")("Claude UI: ↑ with the box empty brings the last message, ↑ again the one before, ↓ goes forward and past the newest returns what was being written", async () => {
+  const h = await claudeUi();
+  try {
+    h.enter("uno"); await waitForPrompts(h, 1);
+    h.enter("dos"); await waitForPrompts(h, 2);
+    // ↑ brings «dos»; Enter sends what the box holds.
+    h.terminal.input(UP); h.terminal.input("\r"); await waitForPrompts(h, 3);
+    // ↑ ↑ ↓ is «dos» again.
+    h.terminal.input(UP); h.terminal.input(UP); h.terminal.input(DOWN); h.terminal.input("\r"); await waitForPrompts(h, 4);
+    // With a draft and the cursor at the start of the line: ↑ ↑ goes back to «uno», ↓ ↓ returns the draft.
+    h.terminal.input("borrador"); h.terminal.input("\x01");
+    h.terminal.input(UP); h.terminal.input(UP); h.terminal.input(DOWN); h.terminal.input(DOWN); h.terminal.input("\r"); await waitForPrompts(h, 5);
+    // The draft was sent now, so it is the newest: ↑ ↑ ↑ reaches «uno».
+    h.terminal.input(UP); h.terminal.input(UP); h.terminal.input(UP); h.terminal.input("\r"); await waitForPrompts(h, 6);
+    expect(promptsOf(h)).toEqual(['prompt:"uno"', 'prompt:"dos"', 'prompt:"dos"', 'prompt:"dos"', 'prompt:"borrador"', 'prompt:"uno"']);
+  } finally { await h.finish(); }
+});
+
+test.skipIf(process.platform === "win32")("Claude UI: what answers a question (/f614:yes, /f614:no) does not enter the history, a command does", async () => {
+  const h = await claudeUi();
+  try {
+    h.enter("uno"); await waitForPrompts(h, 1);
+    h.enter("/f614:yes"); await tick(); await tick();
+    h.enter("/f614:no"); await tick(); await tick();
+    // The newest entry is still «uno»: the answers were not remembered.
+    h.terminal.input(UP); h.terminal.input("\r"); await waitForPrompts(h, 2);
+    expect(promptsOf(h)).toEqual(['prompt:"uno"', 'prompt:"uno"']);
+    // A command is remembered like a message: ↑ brings it back and Enter runs it again.
+    h.terminal.output = ""; h.enter("/f614:status"); await tick(); await tick();
+    for (let i = 0; i < 60 && !h.plain().includes("Memory: "); i++) await tick();
+    expect(h.plain()).toContain("Memory: ");
+    h.terminal.output = ""; h.terminal.input(UP); h.terminal.input("\r");
+    for (let i = 0; i < 60 && !h.plain().includes("Memory: "); i++) await tick();
+    expect(h.plain()).toContain("Memory: ");
+  } finally { await h.finish(); }
+});
+
+/** The history is kept between runs, per project folder: the file is `$FORGE614_HOME/shell/history.jsonl` with permissions 600 and a line {cwd,text,at} per entry. */
+test.skipIf(process.platform === "win32")("Claude UI: the history is saved per folder (history.jsonl, 600) and comes back on opening the chat again in the same folder, not in another", async () => {
+  const here = process.cwd();
+  const elsewhere = await mkdtemp(join(tmpdir(), "forge614-history-elsewhere-"));
+  let saved = "";
+  const first = await claudeUi();
+  try {
+    first.enter("mensaje que se guarda"); await waitForPrompts(first, 1);
+    const file = join(process.env.FORGE614_HOME!, "shell", "history.jsonl");
+    saved = readFileSync(file, "utf8");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  } finally { await first.finish(); }
+  const entries = saved.split("\n").filter(Boolean).map(line => JSON.parse(line));
+  expect(entries).toHaveLength(1);
+  expect(entries[0]).toMatchObject({ cwd: here, text: "mensaje que se guarda" });
+  expect(typeof entries[0].at).toBe("number");
+  // A new run (a fresh $FORGE614_HOME that holds the saved file), same folder: ↑ brings the message back.
+  const install = (forgeHome: string) => { mkdirSync(join(forgeHome, "shell"), { recursive: true }); writeFileSync(join(forgeHome, "shell", "history.jsonl"), saved, { mode: 0o600 }); };
+  const same = await claudeUi([], "en", undefined, 120, [], undefined, install);
+  try {
+    same.terminal.input(UP); same.terminal.input("\r"); await waitForPrompts(same, 1);
+    expect(promptsOf(same)).toEqual(['prompt:"mensaje que se guarda"']);
+  } finally { await same.finish(); }
+  // Another folder: the same file brings nothing there.
+  process.chdir(elsewhere);
+  try {
+    const other = await claudeUi([], "en", undefined, 120, [], undefined, install);
+    try {
+      other.terminal.input(UP); other.terminal.input("\r");
+      for (let i = 0; i < 8; i++) await tick();
+      expect(promptsOf(other)).toEqual([]);
+    } finally { await other.finish(); }
+  } finally { process.chdir(here); await rm(elsewhere, { recursive: true, force: true }); }
+});
+
+test.skipIf(process.platform === "win32")("Claude UI: a history file that cannot be used never breaks the chat or shows an error", async () => {
+  // The history path is a folder: it can be neither read nor written as a file.
+  const h = await claudeUi([], "en", undefined, 120, [], undefined, forgeHome => { mkdirSync(join(forgeHome, "shell", "history.jsonl"), { recursive: true }); });
+  try {
+    h.enter("sigue funcionando"); await waitForPrompts(h, 1);
+    h.terminal.input(UP); h.terminal.input("\r"); await waitForPrompts(h, 2);
+    // In memory the history still works.
+    expect(promptsOf(h)).toEqual(['prompt:"sigue funcionando"', 'prompt:"sigue funcionando"']);
+    expect(h.plain()).not.toContain("EISDIR");
+    expect(h.plain()).not.toContain(getCatalog("en").chat.errorPrefixed({ message: "" }).trim());
   } finally { await h.finish(); }
 });

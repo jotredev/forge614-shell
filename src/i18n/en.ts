@@ -288,6 +288,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     reconnectBeforeMessage: "Use /login to reconnect this Shell session before sending a message.",
     errorPrefixed: ({ message }) => `Error: ${message}`,
     turnStopped: ({ message }) => `Turn stopped: ${message}`,
+    turnStoppedByYou: "You stopped the turn.",
     nodeWarning: ({ message }) => `Node warning: ${message}`,
     linkOpenFailed: ({ target }) => `Could not open ${target}`,
     resumeUseNumber: "Use /resume <number>. This loads history and waits for your next message.",

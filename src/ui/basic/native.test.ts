@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Terminal } from "@earendil-works/pi-tui";
@@ -2482,4 +2482,100 @@ test("Codex UI: the Forge614 panel shows the versions and the memory in use as s
     codexClick(closed, CODEX_F614_X, CODEX_STATUS_ROW); await tick();
     expect(await codexSnapshot(closed)).toContain("memory in use");
   } finally { closed.enter("/f614:quit"); await closed.ui; }
+});
+
+// --- Round 2: the up-arrow history with Codex ---
+
+/** A Codex screen over the fixture, in the folder `cwd` (the history is kept per folder); every `turn/start` is a message sent, read back through `sentTexts`. */
+function codexHistoryUi(cwd = "/project") {
+  const terminal = new TestTerminal(); const rpc = new FixtureRpc();
+  rpc.replies.set("initialize", {});
+  rpc.replies.set("account/read", { account: { type: "chatgpt" }, requiresOpenaiAuth: true });
+  rpc.replies.set("configRequirements/read", { requirements: null });
+  rpc.replies.set("model/list", { data: [], nextCursor: null });
+  rpc.replies.set("thread/start", { thread: { id: "t" }, model: "m", modelProvider: "openai" });
+  rpc.replies.set("turn/start", { turn: { id: "u", status: "inProgress" } });
+  rpc.replies.set("collaborationMode/list", collaborationList);
+  rpc.replies.set("thread/settings/update", {});
+  const ui = runNativeUI("codex", cwd, (emit, approve) => new CodexSession(rpc, cwd, emit, approve), terminal);
+  const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+  const plain = () => stripVTControlCharacters(terminal.output);
+  const sentTexts = () => rpc.calls.filter(call => call.method === "turn/start").map(call => (call.params.input as { type: string; text?: string }[]).filter(item => item.type === "text").at(-1)?.text);
+  const waitForSent = (count: number) => until(() => sentTexts().length >= count);
+  /** Ends the turn that is open, so the next message is accepted. */
+  const endTurn = async () => { rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } }); await tick(); await tick(); };
+  /** Leaves with Ctrl+C, not `/f614:quit`: a command typed is remembered, and these tests look at what the history holds. */
+  const finish = async () => { await endTurn(); terminal.input("\x03"); await ui; };
+  return { terminal, rpc, ui, enter, plain, sentTexts, waitForSent, endTurn, finish };
+}
+const CODEX_UP = "\x1b[A"; const CODEX_DOWN = "\x1b[B";
+const historyFile = () => join(forgeHome, "shell", "history.jsonl");
+
+test("Codex UI: ↑ with the box empty brings the last message, ↑ again the one before, ↓ goes forward and past the newest returns what was being written", async () => {
+  const h = codexHistoryUi();
+  try {
+    await tick();
+    h.enter("uno"); await h.waitForSent(1); await h.endTurn();
+    h.enter("dos"); await h.waitForSent(2); await h.endTurn();
+    h.terminal.input(CODEX_UP); h.terminal.input("\r"); await h.waitForSent(3); await h.endTurn();
+    h.terminal.input(CODEX_UP); h.terminal.input(CODEX_UP); h.terminal.input(CODEX_DOWN); h.terminal.input("\r"); await h.waitForSent(4); await h.endTurn();
+    h.terminal.input("borrador"); h.terminal.input("\x01");
+    h.terminal.input(CODEX_UP); h.terminal.input(CODEX_UP); h.terminal.input(CODEX_DOWN); h.terminal.input(CODEX_DOWN); h.terminal.input("\r"); await h.waitForSent(5); await h.endTurn();
+    h.terminal.input(CODEX_UP); h.terminal.input(CODEX_UP); h.terminal.input(CODEX_UP); h.terminal.input("\r"); await h.waitForSent(6);
+    expect(h.sentTexts()).toEqual(["uno", "dos", "dos", "dos", "borrador", "uno"]);
+  } finally { await h.finish(); }
+});
+
+test("Codex UI: the answer to a permission question (/f614:no) does not enter the history, the message that asked for it does", async () => {
+  const h = codexHistoryUi();
+  try {
+    await tick();
+    h.enter("run something"); await h.waitForSent(1);
+    const answer = h.rpc.onRequest("item/commandExecution/requestApproval", { threadId: "t", turnId: "u", itemId: "i", command: "touch x" });
+    await until(() => h.plain().includes(getCatalog("en").permission.question));
+    h.enter("/f614:no"); expect(await answer).toEqual({ decision: "decline" });
+    await h.endTurn();
+    h.enter("/f614:yes"); await tick();
+    h.terminal.input(CODEX_UP); h.terminal.input("\r"); await h.waitForSent(2);
+    expect(h.sentTexts()).toEqual(["run something", "run something"]);
+  } finally { await h.finish(); }
+});
+
+test("Codex UI: the history is saved per folder (history.jsonl, 600) and comes back on opening the chat again in the same folder, not in another", async () => {
+  const first = codexHistoryUi("/project");
+  try {
+    await tick();
+    first.enter("mensaje que se guarda"); await first.waitForSent(1);
+    expect(statSync(historyFile()).mode & 0o777).toBe(0o600);
+    const entries = readFileSync(historyFile(), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ cwd: "/project", text: "mensaje que se guarda" });
+    expect(typeof entries[0].at).toBe("number");
+  } finally { await first.finish(); }
+  const same = codexHistoryUi("/project");
+  try {
+    await tick();
+    same.terminal.input(CODEX_UP); same.terminal.input("\r"); await same.waitForSent(1);
+    expect(same.sentTexts()).toEqual(["mensaje que se guarda"]);
+  } finally { await same.finish(); }
+  const other = codexHistoryUi("/otra-carpeta");
+  try {
+    await tick();
+    other.terminal.input(CODEX_UP); other.terminal.input("\r");
+    for (let i = 0; i < 8; i++) await tick();
+    expect(other.sentTexts()).toEqual([]);
+  } finally { await other.finish(); }
+});
+
+test("Codex UI: a history file that cannot be used never breaks the chat or shows an error", async () => {
+  // The history path is a folder: it can be neither read nor written as a file.
+  mkdirSync(historyFile(), { recursive: true });
+  const h = codexHistoryUi();
+  try {
+    await tick();
+    h.enter("sigue funcionando"); await h.waitForSent(1); await h.endTurn();
+    h.terminal.input(CODEX_UP); h.terminal.input("\r"); await h.waitForSent(2);
+    expect(h.sentTexts()).toEqual(["sigue funcionando", "sigue funcionando"]);
+    expect(h.plain()).not.toContain("EISDIR");
+  } finally { await h.finish(); }
 });

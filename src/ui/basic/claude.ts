@@ -7,7 +7,7 @@ import type { ResumeEntry } from "./resume-picker.ts";
 import type { EffortLevel, ModelInfo, SDKMessage, SlashCommand } from "@anthropic-ai/claude-agent-sdk";
 import { claudeEnvironment, claudeLoginState, findClaude, officialLogin } from "../../engines/claude/auth.ts";
 import { confirmedLogout } from "../../engines/logout.ts";
-import { ClaudeSession, isOwnedBySubagent } from "../../engines/claude/session.ts";
+import { ClaudeSession, TurnStoppedByPerson, isOwnedBySubagent } from "../../engines/claude/session.ts";
 import { claudeHelpLines, claudeStatusLines } from "../../engines/claude/panels.ts";
 import type { ClaudeStatusInfo } from "../../engines/claude/panels.ts";
 import { emptyTelemetry, telemetryLines, updateTelemetry } from "../../engines/claude/telemetry.ts";
@@ -17,6 +17,7 @@ import { formatClaudePermission } from "../../engines/permission-text.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { loadEnginePreference, saveEngineMode, saveEnginePreference } from "../../infrastructure/shell-preferences.ts";
+import { attachInputHistory } from "../../infrastructure/input-history.ts";
 import { cycleWorkMode, restoreWorkMode } from "../../engines/work-mode.ts";
 import { getStartupContext } from "../../infrastructure/forge614-engram.ts";
 import { withStartupNotices } from "../../infrastructure/engram-notices.ts";
@@ -152,6 +153,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   transcript.addChild(chatLogo);
   transcriptScroll = new IndependentScrollView(transcript, { follow: "end", primary: true, scrollbar: "hidden" });
   const { input } = composer;
+  // ↑/↓ bring back what the person sent, kept between runs for this project folder; `rememberInput` is called with each message or command sent (never with the answer to a question).
+  const rememberInput = attachInputHistory(input, cwd, { env: process.env });
   const shellState = new ShellState("Claude Code");
   shellState.checking();
   const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd, process.env.HOME, locale);
@@ -393,7 +396,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         else writeChat("assistant", text);
         streaming = undefined; streamedText = "";
       }
-      for (const block of event.message.content) if (block.type === "tool_use") {
+      // As in Claude Code itself, what a subagent does inside (its tool calls, with a `parent_tool_use_id`) is not drawn in the main chat; the helper's own «Agent» line is the main assistant's call.
+      if (!event.parent_tool_use_id) for (const block of event.message.content) if (block.type === "tool_use") {
         const edit = editContent(block.name, block.input);
         const parsed = parseClaudeMcpToolName(block.name);
         const label = (parsed && engramToolLabel(parsed.server, parsed.tool)) ?? (edit?.path ? `${block.name} · ${edit.path.split("/").pop()}` : block.name);
@@ -404,7 +408,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         if (toolTracker.request(block.id, card, { isEdit: Boolean(edit), title: label, ...(typeof description === "string" && description.trim() ? { activity: description } : {}) })) transcript.addChild(card);
       }
     }
-    if (event.type === "tool_progress") toolTracker.progress(event.tool_use_id, event.tool_name, event.elapsed_time_seconds);
+    // A progress notice of a subagent's tool would draw a card of its own for a call that is never drawn: it is left out with the rest of the subagent's inner steps.
+    if (event.type === "tool_progress" && !event.parent_tool_use_id) toolTracker.progress(event.tool_use_id, event.tool_name, event.elapsed_time_seconds);
     // A finished task of the top level draws a card with its summary and state; a task a subagent started itself, and housekeeping (ambient) ones, draw none.
     if (event.type === "system" && event.subtype === "task_notification" && !event.ambient && !isOwnedBySubagent(event) && !session.ownedBySubagent(event.task_id)) {
       const ba = getCatalog(locale).backgroundActivity;
@@ -416,7 +421,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       const content = event.message.content;
       const text = typeof content === "string" ? content : content.filter(block => block.type === "text").map(block => block.text).join("\n");
       if (text.trim()) writeActivity(getCatalog(locale).backgroundActivity.noticeTitle, text, true);
-    } else if (event.type === "user" && Array.isArray(event.message.content)) {
+    } else if (event.type === "user" && !event.parent_tool_use_id && Array.isArray(event.message.content)) {
       for (const block of event.message.content) if (block.type === "tool_result") {
         const detail = typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
         toolTracker.finished(block.tool_use_id, Boolean(block.is_error), clean(detail).slice(0, 3000));
@@ -432,7 +437,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const messageFailed = (error: unknown) => {
     if (closed) return;
     if (error instanceof ShellError && error.code === "claude-login-required") { disconnected = true; accountConnected = false; accountChecked = true; accountUnknown = false; }
-    writeError(t.turnStopped({ message: describeError(error, locale) }));
+    // A turn the person stopped (`/f614:stop`) is said in plain words; any other failure keeps «Turn stopped: …» with its own message.
+    writeError(error instanceof TurnStoppedByPerson ? t.turnStoppedByYou : t.turnStopped({ message: describeError(error, locale) }));
   };
   /**
    * Draws a message of the person and hands it to Claude Code. One sent while Claude Code is still answering is drawn at once and queued: Claude Code takes it at its next tool boundary and answers
@@ -647,6 +653,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   input.onSubmit = value => {
     if (closed || !value.trim()) return;
     input.setValue("");
+    rememberInput(value);
     if (["/f614:yes", "/f614:no", "/f614:stop", "/exit", "/quit", "/f614:quit", "/status", "/help", "/f614:status", "/f614:help", "/f614:commands", "/f614:refresh"].includes(value.trim())) {
       void command(value).catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))).finally(refresh); return;
     }

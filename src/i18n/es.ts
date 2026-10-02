@@ -288,6 +288,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     reconnectBeforeMessage: "Usa /login para reconectar esta sesión de Shell antes de enviar un mensaje.",
     errorPrefixed: ({ message }) => `Error: ${message}`,
     turnStopped: ({ message }) => `Turno detenido: ${message}`,
+    turnStoppedByYou: "Detuviste el turno.",
     nodeWarning: ({ message }) => `Aviso de Node: ${message}`,
     linkOpenFailed: ({ target }) => `No se pudo abrir ${target}`,
     resumeUseNumber: "Usa /resume <número>. Esto carga el historial y espera tu siguiente mensaje.",

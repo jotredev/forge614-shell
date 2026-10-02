@@ -3,7 +3,6 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { AccountInfo, EffortLevel, ModelInfo, Options, PermissionMode, SDKMessage, SlashCommand } from "@anthropic-ai/claude-agent-sdk";
 import { checkAuthentication, claudeEnvironment } from "./auth.ts";
 import { CLAUDE_SETTING_SOURCES, readClaudeCatalog, readPlanUsage } from "./catalog.ts";
-import { queryFromRun } from "./fake-query.ts";
 import { LiveQuery } from "./live.ts";
 import { perTurnResult } from "./telemetry.ts";
 import type { ResultTotals } from "./telemetry.ts";
@@ -13,18 +12,24 @@ import { claudeMcpState } from "../mcp-status.ts";
 import type { McpServerState } from "../mcp-status.ts";
 import type { BackgroundActivity, BackgroundActivityKind, NativeWorkMode, WorkModeChange } from "../types.ts";
 
-type RunInput = { prompt: string; options: Options };
+/**
+ * The error a message ends with when the person stopped the turn (`/f614:stop`) and Claude Code answered with its error result. The screen says it in plain words («You stopped the turn.»)
+ * instead of the technical name of the result; any other error of a turn keeps its own message. It is never shown through `describeError`, so it carries no catalog code.
+ */
+export class TurnStoppedByPerson extends Error {
+  constructor() {
+    super("The person stopped the turn.");
+    this.name = "TurnStoppedByPerson";
+  }
+}
+
 type Dependencies = {
   cwd: string;
   executable: string;
   env: NodeJS.ProcessEnv;
   /** The account check done each time the query is opened (never per message); defaults to `claude auth status`. */
   authenticate?: () => Promise<void>;
-  /**
-   * A test seam: the events of ONE message at a time, for the tests that only watch what a message brings. It is turned into a query that answers each message of the person with what `run`
-   * yields (see `queryFromRun`); the conversation itself still goes through the live query. `connect` wins when both are given.
-   */
-  run?: (input: RunInput) => AsyncIterable<SDKMessage>;
+  /** Opens the live query; defaults to the SDK's `query`. Tests give a stand-in (`fakeSdk`, or `queryFromRun` of `fake-query.ts`, which is for tests only and must never be imported by production code). */
   connect?: typeof query;
   /**
    * Injected by the composition root (`ui/basic/claude.ts`) with the real `getStartupContext`.
@@ -307,7 +312,7 @@ export class ClaudeSession {
     if (generation !== this.generation) return;
     if (!accountVerified) await (this.dependencies.authenticate?.() ?? checkAuthentication(executable, safeEnv, cwd));
     if (generation !== this.generation) return;
-    const connect = this.dependencies.connect ?? (this.dependencies.run ? queryFromRun(this.dependencies.run) : query);
+    const connect = this.dependencies.connect ?? query;
     const live: LiveQuery = new LiveQuery(connect, this.buildOptions(safeEnv), {
       event: event => this.handle(live, event),
       ended: error => this.died(live, error),
@@ -539,7 +544,8 @@ export class ClaudeSession {
       // Any result ends the turn that was running; a result with none of the person's uuids belongs to an automatic turn and ends only that.
       this.autoTurn = false;
       if (raw.is_error && (this.authFailed || raw.api_error_status === 401)) failure = new ShellError("claude-login-required");
-      else if (raw.is_error && this.stopRequested) failure = new Error(Array.isArray(raw.errors) && raw.errors.length ? raw.errors.join("\n") : String(raw.subtype));
+      // Claude Code ends a turn the person stopped with `error_during_execution`: that is the stop itself. Any other error result of a stopped turn keeps its own message.
+      else if (raw.is_error && this.stopRequested) failure = raw.subtype === "error_during_execution" ? new TurnStoppedByPerson() : new Error(Array.isArray(raw.errors) && raw.errors.length ? raw.errors.join("\n") : String(raw.subtype));
       this.authFailed = false;
     }
     applyTaskEvent(this.tasks, event);

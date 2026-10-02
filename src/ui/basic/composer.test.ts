@@ -287,3 +287,55 @@ test("after a selector closes an idle box says Ready", async () => {
   expect(screen(composer)).toContain("Ready");
   expect(screen(composer)).not.toContain("Waiting for your answer");
 });
+
+/**
+ * Up-arrow history, as the shells have it: with the box empty (or the cursor at the start of the first line) ↑ brings the last thing sent, ↑ again the one before, ↓ goes back toward the newest and,
+ * past it, returns what was being written. The editor already does this once `addToHistory` is called with what was sent.
+ */
+test("↑ brings the last message sent, ↑ again the one before, ↓ goes forward and past the newest it gives back an empty box", () => {
+  const composer = new ForgeComposer(fakeTui, "en");
+  composer.addToHistory("uno"); composer.addToHistory("dos");
+  composer.render(90);
+  composer.handleInput("\x1b[A"); expect(composer.getText()).toBe("dos");
+  composer.handleInput("\x1b[A"); expect(composer.getText()).toBe("uno");
+  composer.handleInput("\x1b[B"); expect(composer.getText()).toBe("dos");
+  composer.handleInput("\x1b[B"); expect(composer.getText()).toBe("");
+});
+
+test("with something typed and the cursor at the start of the line, ↑ browses and ↓ at the end gives back what was being written", () => {
+  const composer = new ForgeComposer(fakeTui, "en");
+  composer.addToHistory("uno"); composer.addToHistory("dos");
+  type(composer, "borrador"); composer.render(90);
+  // The cursor is at the end of the text: ↑ does not browse (it only moves to the start of the line), as in the shells.
+  composer.handleInput("\x1b[A"); expect(composer.getText()).toBe("borrador");
+  composer.handleInput("\x1b[A"); expect(composer.getText()).toBe("dos");
+  composer.handleInput("\x1b[A"); expect(composer.getText()).toBe("uno");
+  composer.handleInput("\x1b[B"); expect(composer.getText()).toBe("dos");
+  composer.handleInput("\x1b[B"); expect(composer.getText()).toBe("borrador");
+});
+
+/** The menu keeps the arrows while it is open: the history must not steal them from the `/` menu. */
+test("with the / menu open the arrows move the menu and the history stays where it was", () => {
+  const composer = new ForgeComposer(fakeTui, "en");
+  composer.addToHistory("dos");
+  composer.render(90);
+  type(composer, "/");
+  composer.handleInput("\x1b[A"); composer.handleInput("\x1b[B");
+  expect(composer.getText()).toBe("/");
+});
+
+/** A command recalled from the history puts its whole text in the box; the menu must not open on it, or the next ↑ would move in the menu instead of going on through the history. */
+test("a command recalled with ↑ does not open the menu: the next ↑ goes on to the older entry", () => {
+  const composer = new ForgeComposer(fakeTui, "en");
+  composer.addToHistory("hola"); composer.addToHistory("/f614:refresh");
+  composer.render(90);
+  composer.handleInput("\x1b[A"); expect(composer.getText()).toBe("/f614:refresh");
+  // Only the box shows the command: the menu row that would list it is not drawn.
+  expect(screen(composer).split("/f614:refresh")).toHaveLength(2);
+  composer.handleInput("\x1b[A"); expect(composer.getText()).toBe("hola");
+  composer.handleInput("\x1b[B"); expect(composer.getText()).toBe("/f614:refresh");
+  // Writing again brings the menu back: it is only the recall that keeps it closed.
+  composer.handleInput("\x7f");
+  expect(composer.getText()).toBe("/f614:refres");
+  expect(screen(composer)).toContain("/f614:refresh");
+});

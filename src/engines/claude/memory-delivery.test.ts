@@ -6,7 +6,7 @@ import { withStartupNotices } from "../../infrastructure/engram-notices.ts";
 import { createMemoryHookProbe } from "../../infrastructure/memory-hook.ts";
 import { enginesDouble, hookOf, verifyStdout } from "../../../tests/support/memory-hook-fixtures.ts";
 import { getCatalog } from "../../i18n/index.ts";
-import { fakeSdk, settle } from "./fake-query.ts";
+import { fakeSdk, queryFromRun, settle } from "./fake-query.ts";
 
 /** A real-shaped `startup-context` (format 1) payload with a shared memory and one Engram notice, as `getStartupContext` reads it. */
 const memoryPayload = JSON.stringify({
@@ -34,7 +34,7 @@ test("with the startup hook active the system prompt carries no memory block in 
     ...baseDependencies,
     getStartupContext: withStartupNotices(fetchMemory(calls), (text, isProblem) => shown.push([text, isProblem]), "en"),
     memoryHookActive: createMemoryHookProbe("claude-code", { home: "/Users/tester", run: engines.run }),
-    run: input => { prompts.push(input.options.systemPrompt); return okRun(); },
+    connect: queryFromRun(input => { prompts.push(input.options.systemPrompt); return okRun(); }),
   });
   await session.send("first message", () => {}, async () => true);
   session.reset(); await session.send("after /new", () => {}, async () => true);
@@ -63,7 +63,7 @@ test("without an active hook — absent, needs-user-trust, failed verify or a fa
     const calls = { count: 0 }; let append = "";
     const session = new ClaudeSession({
       ...baseDependencies, getStartupContext: fetchMemory(calls), memoryHookActive: probe,
-      run: input => { append = (input.options.systemPrompt as { append?: string }).append ?? ""; return okRun(); },
+      connect: queryFromRun(input => { append = (input.options.systemPrompt as { append?: string }).append ?? ""; return okRun(); }),
     });
     await session.send("hi", () => {}, async () => true);
     expect([name, append.startsWith("<forge614-engram-memory>\n"), append.includes("Pinned rule"), append.endsWith("</forge614-engram-memory>")]).toEqual([name, true, true, true]);
@@ -77,15 +77,15 @@ test("memoryDeliveredByAssistant() is true only with an active hook and is decid
   const engines = enginesDouble(verifyStdout(hookOf({ kind: "runtime-observed" })));
   const active = new ClaudeSession({
     ...baseDependencies, getStartupContext: fetchMemory({ count: 0 }),
-    memoryHookActive: createMemoryHookProbe("claude-code", { home: "/Users/tester", run: engines.run }), run: () => okRun(),
+    memoryHookActive: createMemoryHookProbe("claude-code", { home: "/Users/tester", run: engines.run }), connect: queryFromRun(() => okRun()),
   });
   expect(await active.memoryDeliveredByAssistant()).toBe(true);
   await active.send("hi", () => {}, async () => true);
   expect(await active.memoryDeliveredByAssistant()).toBe(true);
   expect(engines.commands).toHaveLength(1);
-  const plain = new ClaudeSession({ ...baseDependencies, run: () => okRun() });
+  const plain = new ClaudeSession({ ...baseDependencies, connect: queryFromRun(() => okRun()) });
   expect(await plain.memoryDeliveredByAssistant()).toBe(false);
-  const failing = new ClaudeSession({ ...baseDependencies, memoryHookActive: async () => { throw new Error("boom"); }, run: () => okRun() });
+  const failing = new ClaudeSession({ ...baseDependencies, memoryHookActive: async () => { throw new Error("boom"); }, connect: queryFromRun(() => okRun()) });
   expect(await failing.memoryDeliveredByAssistant()).toBe(false);
 });
 
