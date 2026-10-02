@@ -7,7 +7,7 @@ import type { ResumeEntry } from "./resume-picker.ts";
 import type { EffortLevel, ModelInfo, SDKMessage, SlashCommand } from "@anthropic-ai/claude-agent-sdk";
 import { claudeEnvironment, claudeLoginState, findClaude, officialLogin } from "../../engines/claude/auth.ts";
 import { confirmedLogout } from "../../engines/logout.ts";
-import { ClaudeSession } from "../../engines/claude/session.ts";
+import { ClaudeSession, isOwnedBySubagent } from "../../engines/claude/session.ts";
 import { claudeHelpLines, claudeStatusLines } from "../../engines/claude/panels.ts";
 import type { ClaudeStatusInfo } from "../../engines/claude/panels.ts";
 import { emptyTelemetry, telemetryLines, updateTelemetry } from "../../engines/claude/telemetry.ts";
@@ -106,11 +106,15 @@ export function claudeMenuCommands(commands: SlashCommand[], t: ReturnType<typeo
   return [...native, ...providerControls];
 }
 
+/** Where `/resume` reads Claude Code's saved conversations and their messages: the SDK's `listSessions` and `getSessionMessages`. */
+export interface ClaudeSessionStore { listSessions: typeof listSessions; getSessionMessages: typeof getSessionMessages }
+
 /**
  * The Claude Code chat screen. `readVersions` reads the Engines and Engram versions the Forge614 panel shows: it is called once, in the background, when the screen opens (the composition root gives the real
- * reader; without one the panel shows no versions for them). `startupContext` is how Engram's startup context is read (the real `getStartupContext` unless a test gives its own).
+ * reader; without one the panel shows no versions for them). `startupContext` is how Engram's startup context is read (the real `getStartupContext` unless a test gives its own). `sessionStore` is where `/resume` reads the saved
+ * conversations and their messages (the SDK's own unless a test gives its own).
  */
-export async function startClaudeUI(args: string[], selectedExecutable?: string, terminal?: Terminal, version?: string, locale: Locale = "en", linkTools: ChatLinkTools = realChatLinkTools, readVersions?: () => Promise<EcosystemVersions>, startupContext: typeof getStartupContext = getStartupContext): Promise<void> {
+export async function startClaudeUI(args: string[], selectedExecutable?: string, terminal?: Terminal, version?: string, locale: Locale = "en", linkTools: ChatLinkTools = realChatLinkTools, readVersions?: () => Promise<EcosystemVersions>, startupContext: typeof getStartupContext = getStartupContext, sessionStore: ClaudeSessionStore = { listSessions, getSessionMessages }): Promise<void> {
   const t = getCatalog(locale).chat;
   const tc = getCatalog(locale).claudeChat;
   if (args.length) throw new Error(tc.cliOptionsUnsupported);
@@ -252,8 +256,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     tui.requestRender();
   };
   const writeChat = (role: "user" | "assistant" | "system", text: string): ChatText => write(chatMessage(role, clean(text), locale));
-  const writeActivity = (title: string, detail: string, expanded = false): ActivityCard => {
-    const card = new ActivityCard(title, "", clean(detail), expanded, undefined, undefined, undefined, links);
+  const writeActivity = (title: string, detail: string, expanded = false, status = ""): ActivityCard => {
+    const card = new ActivityCard(title, status, clean(detail), expanded, undefined, undefined, undefined, links);
     transcript.addChild(card); tui.requestRender();
     return card;
   };
@@ -282,7 +286,10 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     }
     sidebar.invalidate();
     const working = turnStartedAt !== undefined ? workingStatus(t.statusWorking, toolTracker.currentActivity(), (Date.now() - turnStartedAt) / 1000) : t.statusWorking;
-    input.setStatus(commandBusy || session.busy ? working : shellState.snapshot().account === "connected" ? t.statusReady : shellState.snapshot().account === "checking" ? tc.statusCheckingAccount : t.statusConnectWithLogin({ command: "/login" }));
+    // Quiet but with tasks still running inside Claude Code: the box says so instead of a plain «Ready».
+    const runningTasks = session.runningTasks();
+    const ready = runningTasks ? tc.statusReadyBackground({ count: runningTasks }) : t.statusReady;
+    input.setStatus(commandBusy || session.busy ? working : shellState.snapshot().account === "connected" ? ready : shellState.snapshot().account === "checking" ? tc.statusCheckingAccount : t.statusConnectWithLogin({ command: "/login" }));
     input.setWorkModeHint(session.workModes().find(mode => mode.id === session.workMode()));
     statusBar.invalidate();
     tui.requestRender();
@@ -398,7 +405,18 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       }
     }
     if (event.type === "tool_progress") toolTracker.progress(event.tool_use_id, event.tool_name, event.elapsed_time_seconds);
-    if (event.type === "user" && Array.isArray(event.message.content)) {
+    // A finished task of the top level draws a card with its summary and state; a task a subagent started itself, and housekeeping (ambient) ones, draw none.
+    if (event.type === "system" && event.subtype === "task_notification" && !event.ambient && !isOwnedBySubagent(event) && !session.ownedBySubagent(event.task_id)) {
+      const ba = getCatalog(locale).backgroundActivity;
+      const state = event.reason === "worker_restart" ? ba.cardInterrupted : event.status === "completed" ? ba.cardDone : event.status === "failed" ? ba.cardFailed : ba.cardStopped;
+      writeActivity(session.backgroundActivity.find(activity => activity.id === event.task_id)?.label ?? event.task_id, event.summary, true, state);
+    }
+    // What Claude Code says about its background agents on its own (on resuming: «N background agents didn't finish…») is a notice, not something the person wrote.
+    if (event.type === "user" && (event as { origin?: { kind?: string } }).origin?.kind === "task-notification") {
+      const content = event.message.content;
+      const text = typeof content === "string" ? content : content.filter(block => block.type === "text").map(block => block.text).join("\n");
+      if (text.trim()) writeActivity(getCatalog(locale).backgroundActivity.noticeTitle, text, true);
+    } else if (event.type === "user" && Array.isArray(event.message.content)) {
       for (const block of event.message.content) if (block.type === "tool_result") {
         const detail = typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
         toolTracker.finished(block.tool_use_id, Boolean(block.is_error), clean(detail).slice(0, 3000));
@@ -428,23 +446,40 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     turns.add(turn);
     refresh();
   };
+  /**
+   * The question that comes before anything that closes Claude Code while background tasks run in it (leaving, `/new`, `/resume`, `/logout`, a new effort): the tasks live inside the process and do not
+   * survive it. With none running it answers `true` at once; otherwise it asks «There are N background tasks; they will be cut. Continue?» with «No» marked, so Enter alone or Esc keeps everything.
+   */
+  const confirmCuttingTasks = async (question: (params: { count: number }) => string = tc.backgroundCutQuestion): Promise<boolean> => {
+    const count = session.runningTasks();
+    if (!count) return true;
+    const answers = getCatalog(locale).permission;
+    return askShellQuestion(input, { title: question({ count }), no: answers.no, yes: answers.yes });
+  };
   /** Whether the «Quit anyway?» question is on screen, so a second Ctrl+C does not open it again. */
   let quitAsking = false;
+  /** Whether the stop's «cut the tasks?» question is on screen, so a second `/f614:stop` does not open it again. */
+  let stopAsking = false;
   /**
    * Leaves Shell — `/f614:quit`, Ctrl+C and Ctrl+D. Idle it leaves at once; while a turn or a login runs it asks «Quit anyway?» with
    * «No» marked (stopping work cannot be undone) and only «Yes» stops it and leaves. With a permission question open it asks to answer
    * that first, so the question is never cancelled (and the permission denied) by accident.
    */
   const quit = async () => {
-    if (!(session.busy || loginAbort)) { await shutdown(); return; }
+    const working = session.busy || loginAbort !== undefined;
+    if (!working && !session.runningTasks()) { await shutdown(); return; }
     if (approvals.length) { write(t.answerPendingPermissionFirst); return; }
     if (quitAsking) return;
     quitAsking = true;
-    try { if (await askQuit(input, locale)) await shutdown(); } finally { quitAsking = false; }
+    try {
+      // Working: the usual «Quit anyway?». Quiet with background tasks: they live inside Claude Code and leaving cuts them, so it asks too, with «No» marked.
+      const leave = working ? await askQuit(input, locale) : await confirmCuttingTasks();
+      if (leave) await shutdown();
+    } finally { quitAsking = false; }
   };
-  /** Claude Code's own `/exit` (alias `/quit`): it leaves when idle and refuses while a turn or a login is in progress, saying that `/f614:quit` leaves. */
+  /** Claude Code's own `/exit` (alias `/quit`): it leaves when idle and refuses while a turn, a login or a background task is in progress, saying that `/f614:quit` leaves (it asks first). */
   const quitLikeClaude = async () => {
-    if (session.busy || loginAbort) write(tc.workOrAuthActive);
+    if (session.busy || loginAbort || session.runningTasks()) write(tc.workOrAuthActive);
     else await shutdown();
   };
   /** What Shell has for Claude Code's `/status` right now: the newest init message, the handshake's account, the model and permission mode as the box shows them, and where the memory comes from. */
@@ -455,6 +490,12 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     ...(modelDisplay() ? { model: modelDisplay()! } : {}), ...(session.workModes().find(mode => mode.id === session.workMode())?.label ? { permissionMode: session.workModes().find(mode => mode.id === session.workMode())!.label } : {}),
     memoryByAssistant: await session.memoryDeliveredByAssistant(), settingSources: session.settingSources,
   });
+  /** A new reasoning effort has no live control: it closes Claude Code and opens it again, which cuts the background tasks, so with some running it asks first. Whether the effort changed. */
+  const applyEffort = async (effort: EffortLevel | undefined): Promise<boolean> => {
+    if (!(await confirmCuttingTasks())) return false;
+    session.setEffort(effort);
+    return true;
+  };
   const command = async (value: string) => {
     const [name, ...rest] = value.trim().split(/\s+/);
     const argument = rest.join(" ");
@@ -473,7 +514,13 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       approvals[0].finish(name === "/f614:yes"); return;
     }
     // Stops the turn with an `interrupt`, keeping Claude Code open; a stop it never answers closes and reopens it after 5 s.
-    if (name === "/f614:stop") { loginAbort?.abort(); session.stop(); return; }
+    if (name === "/f614:stop") {
+      // `interrupt` also kills the background tasks together with the turn (measured), so with tasks running it asks first, with «No» marked.
+      if (stopAsking) return;
+      stopAsking = true;
+      try { if (!(await confirmCuttingTasks(tc.backgroundStopQuestion))) return; } finally { stopAsking = false; }
+      loginAbort?.abort(); session.stop(); return;
+    }
     if (name === "/exit" || name === "/quit") { await quitLikeClaude(); return; }
     if (name === "/f614:quit") { await quit(); return; }
     // Shell's own session telemetry.
@@ -510,6 +557,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       } finally { loginAbort = undefined; if (!closed && suspended) { tui.start(); tui.setFocus(input); } }
       write(tc.loginFlowFinished);
     } else if (name === "/logout") {
+      if (!(await confirmCuttingTasks())) { write(tc.logoutCancelled); refresh(); return; }
       loginAbort = new AbortController();
       try {
         const done = await confirmedLogout("Claude Code", (question, signal) => askShellQuestion(input, question, signal), loginAbort.signal,
@@ -523,6 +571,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         } else write(tc.logoutCancelled);
       } finally { loginAbort = undefined; }
     } else if (name === "/new") {
+      if (!(await confirmCuttingTasks())) return;
       session.reset(); telemetry = emptyTelemetry(); transcript.clear();
     } else if (name === "/model") {
       if (!session.models.length && accountConnected && !disconnected) await loadCatalog();
@@ -554,28 +603,29 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
             value, display: value === "default" ? tc.defaultRecommended : effortLabel(value, locale),
             label: value === "default" ? tc.defaultResolvesLater : effortDescription(value, locale),
           })), session.effort ?? "default");
-          if (selected) { session.setEffort(selected === "default" ? undefined : selected as EffortLevel); telemetry = { ...telemetry, effort: undefined }; persistPreference(); }
+          if (selected && await applyEffort(selected === "default" ? undefined : selected as EffortLevel)) { telemetry = { ...telemetry, effort: undefined }; persistPreference(); }
         }
       }
-      else if (argument === "default") { session.setEffort(undefined); persistPreference(); }
+      else if (argument === "default") { if (await applyEffort(undefined)) persistPreference(); }
       else if (["low", "medium", "high", "xhigh", "max"].includes(argument)) {
         const model = session.models.find(model => model.value === session.model || model.resolvedModel === telemetry.model);
         if (model?.supportedEffortLevels && !model.supportedEffortLevels.includes(argument as EffortLevel)) throw new Error(tc.effortNotSupported);
-        session.setEffort(argument as EffortLevel); persistPreference();
+        if (await applyEffort(argument as EffortLevel)) persistPreference();
       } else throw new Error(tc.invalidEffort);
     } else if (name === "/resume") {
       let chosen: string | undefined;
       if (!argument) {
         // Newest first; the same order gives the numbers `/resume <number>` has always used.
-        sessions = sortRecentFirst(claudeResumeEntries(await listSessions({ dir: cwd }), cwd)).slice(0, 30);
+        sessions = sortRecentFirst(claudeResumeEntries(await sessionStore.listSessions({ dir: cwd }), cwd)).slice(0, 30);
         if (!sessions.length) write(tc.noClaudeSessionsFound);
         else chosen = await input.choose(t.commandChatHistory, sessions.map(item => resumeChoice(item, locale, process.env.HOME)), undefined, { searchable: true });
       } else {
         if (!/^\d+$/.test(argument) || !sessions[Number(argument) - 1]) throw new Error(tc.useResumeFirst);
         chosen = sessions[Number(argument) - 1]!.id;
       }
-      if (chosen) {
-        const messages = await getSessionMessages(chosen, { dir: cwd });
+      // The conversation is chosen first: nothing is cut for one the person did not pick. Then, with tasks running, the question (it cuts them).
+      if (chosen && await confirmCuttingTasks()) {
+        const messages = await sessionStore.getSessionMessages(chosen, { dir: cwd });
         session.resume(chosen); telemetry = emptyTelemetry(); transcript.clear();
         for (const entry of messages) {
           const message = entry.message as { content?: unknown };

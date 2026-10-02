@@ -55,7 +55,8 @@ export type NativeVisualState = {
   usage?: { label: string; usedPercent: number; reset?: string }[];
 };
 export type BackgroundActivityKind = "agent" | "process";
-export type BackgroundActivityState = "running" | "done" | "failed";
+/** `interrupted`: the task was running when the process that held it was closed or died (it lives inside that process), so it never reported an end. */
+export type BackgroundActivityState = "running" | "done" | "failed" | "interrupted";
 export interface BackgroundActivity {
   id: string;
   kind: BackgroundActivityKind;

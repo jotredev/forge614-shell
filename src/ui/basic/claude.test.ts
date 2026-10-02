@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -320,10 +320,11 @@ test.skipIf(process.platform === "win32")("Claude UI: the /logout question has i
  * (the turn still stays open), and with `events`, each prompt is also answered with those messages (an `init`, say). `account` is what the handshake
  * reports. `beforeStart` runs with the `$FORGE614_HOME` of the test before the screen opens (to install a stand-in for Engines, whose startup-hook check runs at
  * opening). No real account or network is involved. `versions` stands in for the reading of the two binaries' `--version` (without it the screen reads none) and `shellVersion` is
- * the version the bar shows. `waitFor` is the text the helper waits for before it returns (the account's email by default: it shows once Claude Code has opened and the catalog was read). `mcpServers` is what the fake answers to the open query's `mcp_status` request (the SDK's `McpServerStatus` list; none: it answers with no list), and each such request is a
+ * the version the bar shows. `options.waitFor` is the text the helper waits for before it returns (the account's email by default: it shows once Claude Code has opened and the catalog was read); with `options.answer` each prompt is also ended with a `result` that carries its uuid, so the turn closes by itself (and `events` are what the turn brings before it); `options.sessions` replaces the store `/resume` reads. The fake also reads events a test hands it through `emit` (written to a file it polls) and, for `{ __exit: n }`, ends with that code, like a process that dies. `mcpServers` is what the fake answers to the open query's `mcp_status` request (the SDK's `McpServerStatus` list; none: it answers with no list), and each such request is a
  * line `mcp_status` in the marker file. `finish` leaves the screen and cleans up.
  */
-async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120, events: object[] = [], account: object = { email: "test@example.com" }, beforeStart?: (forgeHome: string) => void, versions?: () => Promise<EcosystemVersions>, shellVersion?: string, mcpServers?: object[], startupContext?: Parameters<typeof startClaudeUI>[7], waitFor: string = "test@example.com") {
+async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120, events: object[] = [], account: object = { email: "test@example.com" }, beforeStart?: (forgeHome: string) => void, versions?: () => Promise<EcosystemVersions>, shellVersion?: string, mcpServers?: object[], startupContext?: Parameters<typeof startClaudeUI>[7], options: { waitFor?: string; answer?: boolean; sessions?: Parameters<typeof startClaudeUI>[8] } = {}) {
+  const waitFor = options.waitFor ?? "test@example.com";
   const root = await mkdtemp(join(tmpdir(), "forge614-prefix-ui-"));
   const executable = join(root, "claude"); const marker = join(root, "calls");
   const terminal = new TestTerminal(); terminal.columns = columns;
@@ -336,6 +337,8 @@ async function claudeUi(commands: { name: string; description: string; argumentH
 const fs=require('fs'); const open=[];
 if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
 else {
+  const inbox=${JSON.stringify(marker + ".inbox")};
+  setInterval(()=>{ try { if(!fs.existsSync(inbox)) return; const text=fs.readFileSync(inbox,'utf8'); fs.unlinkSync(inbox); for(const l of text.split('\\n').filter(Boolean)) { const e=JSON.parse(l); if(e.__exit!==undefined) process.exit(e.__exit); console.log(l); } } catch {} },15);
   process.on('SIGTERM',()=>{ fs.appendFileSync(${JSON.stringify(marker)},'closed\\n'); process.exit(0); });
   const rl=require('readline').createInterface({input:process.stdin}); rl.on('close',()=>fs.appendFileSync(${JSON.stringify(marker)},'closed\\n'));
   rl.on('line',line=>{
@@ -343,26 +346,28 @@ else {
     if(msg.type==='control_request' && msg.request.subtype==='interrupt') { fs.appendFileSync(${JSON.stringify(marker)},'interrupt\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{still_queued:[]}}})); const uuids=open.splice(0); if(uuids.length) console.log(JSON.stringify({type:'result',subtype:'error_during_execution',is_error:true,duration_ms:1,duration_api_ms:1,num_turns:1,errors:[],session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],user_message_uuids:uuids,uuid:'result-'+Date.now()})); }
     else if(msg.type==='control_request' && msg.request.subtype==='mcp_status') { fs.appendFileSync(${JSON.stringify(marker)},'mcp_status\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{mcpServers:${JSON.stringify(mcpServers)}}}})); }
     else if(msg.type==='control_request') { fs.appendFileSync(${JSON.stringify(marker)},'control\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:${JSON.stringify(account)},commands:${JSON.stringify(commands)},agents:[],output_style:'default',available_output_styles:[]}}})); }
-    if(msg.type==='user') { open.push(msg.uuid); fs.appendFileSync(${JSON.stringify(marker)},'pid:'+process.pid+'\\n'+'prompt:'+JSON.stringify(msg.message.content)+'\\n'); for (const info of ${JSON.stringify(rateLimit ?? [])}) console.log(JSON.stringify({type:'rate_limit_event',rate_limit_info:info,uuid:'00000000-0000-4000-8000-000000000001',session_id:'s'})); for (const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event)); }
+    if(msg.type==='user') { open.push(msg.uuid); fs.appendFileSync(${JSON.stringify(marker)},'pid:'+process.pid+'\\n'+'prompt:'+JSON.stringify(msg.message.content)+'\\n'); for (const info of ${JSON.stringify(rateLimit ?? [])}) console.log(JSON.stringify({type:'rate_limit_event',rate_limit_info:info,uuid:'00000000-0000-4000-8000-000000000001',session_id:'s'})); for (const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event)); if (${JSON.stringify(Boolean(options.answer))}) open.splice(open.indexOf(msg.uuid),1); if (${JSON.stringify(Boolean(options.answer))}) console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,duration_ms:1,duration_api_ms:1,num_turns:1,result:'ok',session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],user_message_uuids:[msg.uuid],uuid:'result-'+Date.now()})); }
   });
 }`, { mode: 0o755 });
-  const ui = startClaudeUI([], executable, terminal, shellVersion, locale, undefined, versions, startupContext);
+  const ui = startClaudeUI([], executable, terminal, shellVersion, locale, undefined, versions, startupContext, options.sessions);
   await tick();
   for (let i = 0; i < 120 && !terminal.output.includes(waitFor); i++) await tick();
   const calls = () => existsSync(marker) ? readFileSync(marker, "utf8").split("\n").filter(Boolean) : [];
   /**
    * Leaves through `/f614:quit`, or, with `byCtrlC`, through Esc and Ctrl+C (for a test that leaves text in the box), and puts the environment back.
-   * When a turn is still open the screen asks «Quit anyway?»: this cleanup answers «Yes», so a test that leaves work running can still end.
+   * When a turn is still open the screen asks «Quit anyway?», and with background tasks running it asks to cut them: this cleanup answers «Yes» to either, so a test that leaves work running can still end.
    */
   const finish = async (byCtrlC = false) => {
     terminal.output = "";
     if (byCtrlC) { terminal.input("\x1b"); terminal.input("\x03"); } else enter("/f614:quit");
     await tick();
-    if (plain().includes("▎ No")) { terminal.input("\x1b[B"); terminal.input("\r"); }
+    if (plain().includes("▎ No") || plain().includes("▎ 1. No")) { terminal.input("\x1b[B"); terminal.input("\r"); }
     await ui; await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
   };
-  return { terminal, enter, plain, ui, calls, finish };
+  /** Hands events to the fake `claude`, which writes them out of turn (no message of the person asked for them). */
+  const emit = (...events: object[]) => { writeFileSync(`${marker}.inbox.tmp`, events.map(event => JSON.stringify(event)).join("\n") + "\n"); renameSync(`${marker}.inbox.tmp`, `${marker}.inbox`); };
+  return { terminal, enter, plain, ui, calls, finish, emit };
 }
 
 /** Claude's opening transcript owns the sign too: it vanishes after the first person message and never returns after `/new`. */
@@ -1130,7 +1135,7 @@ test.skipIf(process.platform === "win32")("Claude UI: the first message is drawn
   let asked = false; let answered = false; let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const slow = async () => { asked = true; await gate; answered = true; return { available: false as const, reason: "slow" }; };
-  const h = await claudeUi([], "en", undefined, 120, [], undefined, undefined, undefined, undefined, undefined, slow, getCatalog("en").chat.statusReady);
+  const h = await claudeUi([], "en", undefined, 120, [], undefined, undefined, undefined, undefined, undefined, slow, { waitFor: getCatalog("en").chat.statusReady });
   try {
     for (let i = 0; i < 60 && !asked; i++) await tick();
     expect(asked).toBe(true);
@@ -1140,4 +1145,214 @@ test.skipIf(process.platform === "win32")("Claude UI: the first message is drawn
     expect(answered).toBe(false);
     expect(screenRows(h.terminal.output).some(row => row.includes("hola desde la prueba"))).toBe(true);
   } finally { release(); await h.finish(); }
+});
+
+// --- Background tasks between messages (Claude Code stays open) ---
+
+const taskInit = { type: "system", subtype: "init", session_id: "s-bg", claude_code_version: "2.1.274", model: "claude-test", mcp_servers: [], uuid: "00000000-0000-4000-8000-0000000000a1" };
+/** What a message that launches a background subagent brings (Claude Code SDK 0.3.274): the task starts in the background and the set of tasks alive says so. */
+const launchEvents = [
+  taskInit,
+  { type: "system", subtype: "task_started", task_id: "t1", description: "Investigar X", task_type: "local_agent", is_backgrounded: true, uuid: "00000000-0000-4000-8000-0000000000a2", session_id: "s-bg" },
+  { type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "t1", description: "Investigar X", task_type: "local_agent", is_backgrounded: true }], uuid: "00000000-0000-4000-8000-0000000000a3", session_id: "s-bg" },
+];
+const ready1 = (locale: "en" | "es" = "en") => getCatalog(locale).claudeChat.statusReadyBackground({ count: 1 });
+/** A screen with one background task alive after the turn that launched it ended (the fake ends each turn with its own result). */
+async function withBackgroundTask(locale: "en" | "es" = "en", sessions?: Parameters<typeof startClaudeUI>[8]) {
+  const h = await claudeUi([], locale, undefined, 140, launchEvents, undefined, undefined, undefined, undefined, undefined, undefined, { answer: true, sessions });
+  h.enter("lanza un subagente");
+  for (let i = 0; i < 80 && !h.plain().includes(ready1(locale)); i++) await tick();
+  return h;
+}
+const pidsOf = (h: ClaudeHarness) => h.calls().filter(line => line.startsWith("pid:"));
+
+test.skipIf(process.platform === "win32")("Claude UI: a background task stays after the turn's result — the box says «Ready · 1 in the background», the panel and the bottom bar's count keep it", async () => {
+  for (const locale of ["en", "es"] as const) {
+    const h = await withBackgroundTask(locale);
+    try {
+      const t = getCatalog(locale);
+      expect(h.plain()).toContain(t.claudeChat.statusReadyBackground({ count: 1 }));
+      expect(h.plain()).toContain(t.backgroundActivity.statusBarCount({ count: 1 }));
+      // The sidebar cuts a long title with «…» to keep the state and the time: the start is enough.
+      expect(h.plain()).toContain("Investigar");
+      expect(h.plain()).toContain(t.backgroundActivity.running);
+    } finally { await h.finish(); }
+  }
+});
+
+test.skipIf(process.platform === "win32")("Claude UI: a finished background task draws a card with its summary and state, and the automatic turn that follows is drawn and keeps the box on «Working» until its result", async () => {
+  const h = await withBackgroundTask();
+  try {
+    const t = getCatalog("en");
+    h.terminal.output = "";
+    h.emit(
+      { type: "system", subtype: "task_updated", task_id: "t1", patch: { status: "completed" }, uuid: "00000000-0000-4000-8000-0000000000b1", session_id: "s-bg" },
+      { type: "system", subtype: "task_notification", task_id: "t1", status: "completed", summary: "Resultado de X: todo bien", output_file: "/tmp/out", uuid: "00000000-0000-4000-8000-0000000000b2", session_id: "s-bg" },
+      taskInit, { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Terminé lo de X" }] }, parent_tool_use_id: null, session_id: "s-bg", uuid: "00000000-0000-4000-8000-0000000000b3" },
+    );
+    for (let i = 0; i < 60 && !h.plain().includes("Terminé lo de X"); i++) await tick();
+    // The card: the task's title, its state and the summary it came with.
+    expect(h.plain()).toContain(`Investigar X · ${t.backgroundActivity.cardDone}`);
+    expect(h.plain()).toContain("Resultado de X: todo bien");
+    // The assistant's words of the turn Claude Code started by itself are drawn, and the box is working until that turn's result.
+    expect(h.plain()).toContain(t.chat.statusWorking);
+    expect(h.plain()).not.toContain(ready1());
+    h.terminal.output = "";
+    h.emit({ type: "result", subtype: "success", is_error: false, duration_ms: 1, duration_api_ms: 1, num_turns: 1, result: "ok", session_id: "s-bg", total_cost_usd: 0, usage: {}, modelUsage: {}, permission_denials: [], user_message_uuids: [], uuid: "00000000-0000-4000-8000-0000000000b4" });
+    for (let i = 0; i < 60 && !h.plain().includes(t.chat.statusReady); i++) await tick();
+    expect(h.plain()).toContain(t.chat.statusReady);
+    expect(h.plain()).not.toContain(ready1());
+    expect(h.calls().filter(line => line.startsWith("prompt:"))).toHaveLength(1);
+  } finally { await h.finish(); }
+});
+
+test.skipIf(process.platform === "win32")("Claude UI: a task launched by a subagent draws no card, one of the top level does, in the words of each state", async () => {
+  const h = await withBackgroundTask();
+  try {
+    const t = getCatalog("en").backgroundActivity;
+    h.emit(
+      { type: "system", subtype: "task_started", task_id: "inner", description: "Tarea interna", task_type: "local_bash", is_backgrounded: true, owned_by_subagent: true, uuid: "00000000-0000-4000-8000-0000000000c1", session_id: "s-bg" },
+      { type: "system", subtype: "task_notification", task_id: "inner", status: "completed", summary: "Resumen interno", output_file: "/tmp/o", uuid: "00000000-0000-4000-8000-0000000000c2", session_id: "s-bg" },
+      { type: "system", subtype: "task_notification", task_id: "t1", status: "failed", summary: "Se cayó la tarea", output_file: "/tmp/o", uuid: "00000000-0000-4000-8000-0000000000c3", session_id: "s-bg" },
+      { type: "system", subtype: "task_notification", task_id: "unseen-inner", status: "completed", owned_by_subagent: true, summary: "Resumen interno 2", output_file: "/tmp/o", uuid: "00000000-0000-4000-8000-0000000000c7", session_id: "s-bg" },
+    );
+    for (let i = 0; i < 60 && !h.plain().includes("Se cayó la tarea"); i++) await tick();
+    expect(h.plain()).toContain(`Investigar X · ${t.cardFailed}`);
+    expect(h.plain()).not.toContain("Resumen interno");
+    // A notice of a task never seen, which carries the subagent's mark itself, draws none either.
+    expect(h.plain()).not.toContain("unseen-inner");
+    expect(h.plain()).not.toContain(`Tarea interna · ${t.cardDone}`);
+    h.terminal.output = "";
+    h.emit({ type: "system", subtype: "task_notification", task_id: "t1", status: "stopped", summary: "Detenida a mano", output_file: "/tmp/o", uuid: "00000000-0000-4000-8000-0000000000c4", session_id: "s-bg" });
+    for (let i = 0; i < 60 && !h.plain().includes("Detenida a mano"); i++) await tick();
+    expect(h.plain()).toContain(`Investigar X · ${t.cardStopped}`);
+    h.terminal.output = "";
+    h.emit({ type: "system", subtype: "task_notification", task_id: "orphan", status: "stopped", reason: "worker_restart", summary: "2 agentes no terminaron", output_file: "/tmp/o", uuid: "00000000-0000-4000-8000-0000000000c5", session_id: "s-bg" },
+      { type: "system", subtype: "task_notification", task_id: "housekeeping", status: "completed", ambient: true, summary: "limpieza interna", output_file: "/tmp/o", uuid: "00000000-0000-4000-8000-0000000000c6", session_id: "s-bg" });
+    for (let i = 0; i < 60 && !h.plain().includes("2 agentes no terminaron"); i++) await tick();
+    expect(h.plain()).toContain(`orphan · ${t.cardInterrupted}`);
+    expect(h.plain()).not.toContain("limpieza interna");
+  } finally { await h.finish(); }
+});
+
+test.skipIf(process.platform === "win32")("Claude UI: when Claude Code dies the tasks that were running read «interrupted» and the box no longer says there are tasks", async () => {
+  const h = await withBackgroundTask();
+  try {
+    const t = getCatalog("en");
+    h.terminal.output = "";
+    h.emit({ __exit: 1 });
+    for (let i = 0; i < 80 && !h.plain().includes(t.backgroundActivity.interrupted); i++) await tick();
+    expect(h.plain()).toContain(t.backgroundActivity.interrupted);
+    expect(h.plain()).toContain("Investigar");
+    for (let i = 0; i < 40 && h.plain().includes(ready1()); i++) await tick();
+    expect(await snapshot(h)).not.toContain(ready1());
+    expect(await snapshot(h)).toContain(t.chat.statusReady);
+    expect(await snapshot(h)).not.toContain(t.backgroundActivity.statusBarCount({ count: 1 }));
+  } finally { await h.finish(); }
+});
+
+test.skipIf(process.platform === "win32")("Claude UI: the notice Claude Code gives on resuming («N background agents didn't finish…») is a notice card, not a message of the person", async () => {
+  const h = await claudeUi();
+  try {
+    const t = getCatalog("en");
+    h.terminal.output = "";
+    const text = "2 background agents didn't finish before the previous session ended";
+    h.emit({ type: "user", message: { role: "user", content: text }, parent_tool_use_id: null, isSynthetic: true, origin: { kind: "task-notification" }, session_id: "s-bg", uuid: "00000000-0000-4000-8000-0000000000d1" });
+    for (let i = 0; i < 60 && !h.plain().includes(text); i++) await tick();
+    expect(h.plain()).toContain(t.backgroundActivity.noticeTitle);
+    expect(h.plain()).toContain(text);
+    expect(h.plain()).not.toContain(t.chatRoles.you);
+  } finally { await h.finish(); }
+});
+
+/** What each way of cutting work asks (and says) when background tasks are alive: the question names the count, «No» is the marked row, and answering «No» cuts nothing. */
+const cutActions: { name: string; run: (h: ClaudeHarness) => void; question: (t: ReturnType<typeof getCatalog>) => string }[] = [
+  { name: "/f614:quit", run: h => h.enter("/f614:quit"), question: t => t.claudeChat.backgroundCutQuestion({ count: 1 }) },
+  { name: "Ctrl+C", run: h => h.terminal.input("\x03"), question: t => t.claudeChat.backgroundCutQuestion({ count: 1 }) },
+  { name: "Ctrl+D", run: h => h.terminal.input("\x04"), question: t => t.claudeChat.backgroundCutQuestion({ count: 1 }) },
+  { name: "/new", run: h => h.enter("/new"), question: t => t.claudeChat.backgroundCutQuestion({ count: 1 }) },
+  { name: "/logout", run: h => h.enter("/logout"), question: t => t.claudeChat.backgroundCutQuestion({ count: 1 }) },
+  { name: "/effort high", run: h => h.enter("/effort high"), question: t => t.claudeChat.backgroundCutQuestion({ count: 1 }) },
+  { name: "/f614:stop", run: h => h.enter("/f614:stop"), question: t => t.claudeChat.backgroundStopQuestion({ count: 1 }) },
+];
+
+test.skipIf(process.platform === "win32")("Claude UI: leaving, /new, /logout, a new effort and /f614:stop ask first when tasks run in the background, with «No» marked, and «No» (Enter or Esc) cuts nothing", async () => {
+  for (const action of cutActions) {
+    const h = await withBackgroundTask();
+    try {
+      const t = getCatalog("en");
+      h.terminal.output = ""; action.run(h);
+      for (let i = 0; i < 40 && !h.plain().includes(action.question(t)); i++) await tick();
+      expect(h.plain(), action.name).toContain(action.question(t));
+      expect(h.plain(), action.name).toContain(`▎ 1. ${t.permission.no}`);
+      // Enter alone is «No»; then Esc is «No» too.
+      for (const key of ["\r", "\x1b"]) {
+        if (key === "\x1b") { h.terminal.output = ""; action.run(h); for (let i = 0; i < 40 && !h.plain().includes(action.question(t)); i++) await tick(); }
+        h.terminal.input(key); await tick(); await tick();
+        expect(h.calls(), action.name).not.toContain("closed");
+        expect(h.calls(), action.name).not.toContain("interrupt");
+        expect(pidsOf(h), action.name).toHaveLength(1);
+      }
+      expect(await snapshot(h), action.name).toContain(ready1());
+    } finally { await h.finish(); }
+  }
+});
+
+test.skipIf(process.platform === "win32")("Claude UI: answering «Yes» cuts the tasks: /new closes Claude Code and opens another with no resume; /f614:stop interrupts", async () => {
+  const t = getCatalog("en");
+  const yes = (h: ClaudeHarness) => { h.terminal.input("\x1b[B"); h.terminal.input("\r"); };
+  const stopped = await withBackgroundTask();
+  try {
+    stopped.enter("/f614:stop");
+    for (let i = 0; i < 40 && !stopped.plain().includes(t.claudeChat.backgroundStopQuestion({ count: 1 })); i++) await tick();
+    yes(stopped);
+    for (let i = 0; i < 60 && !stopped.calls().includes("interrupt"); i++) await tick();
+    expect(stopped.calls().filter(line => line === "interrupt")).toHaveLength(1);
+    expect(stopped.calls()).not.toContain("closed");
+  } finally { await stopped.finish(); }
+  const fresh = await withBackgroundTask();
+  try {
+    fresh.enter("/new");
+    for (let i = 0; i < 40 && !fresh.plain().includes(t.claudeChat.backgroundCutQuestion({ count: 1 })); i++) await tick();
+    yes(fresh);
+    for (let i = 0; i < 80 && !fresh.calls().includes("closed"); i++) await tick();
+    expect(fresh.calls()).toContain("closed");
+    // The first process is gone and the new conversation's one opens in the background.
+    for (let i = 0; i < 80 && !fresh.calls().filter(line => line === "mcp_status").length; i++) await tick();
+    expect(fresh.calls().filter(line => line === "closed")).toHaveLength(1);
+  } finally { await fresh.finish(); }
+});
+
+test.skipIf(process.platform === "win32")("Claude UI: /resume asks before cutting tasks, after a conversation was chosen; «No» keeps everything", async () => {
+  const t = getCatalog("en");
+  const sessions = { listSessions: async () => [{ sessionId: "saved-1", summary: "Una conversación guardada", lastModified: 1_700_000_000_000, cwd: process.cwd(), firstPrompt: "hola" }], getSessionMessages: async () => [] } as unknown as Parameters<typeof startClaudeUI>[8];
+  const h = await withBackgroundTask("en", sessions);
+  try {
+    h.enter("/resume");
+    for (let i = 0; i < 40 && !h.plain().includes("Una conversación guardada"); i++) await tick();
+    // The picker comes first: nothing is cut for a conversation not chosen yet.
+    expect(h.plain()).not.toContain(t.claudeChat.backgroundCutQuestion({ count: 1 }));
+    h.terminal.input("\r");
+    for (let i = 0; i < 40 && !h.plain().includes(t.claudeChat.backgroundCutQuestion({ count: 1 })); i++) await tick();
+    expect(h.plain()).toContain(`▎ 1. ${t.permission.no}`);
+    h.terminal.input("\r"); await tick(); await tick();
+    expect(h.calls()).not.toContain("closed");
+    expect(pidsOf(h)).toHaveLength(1);
+    expect(await snapshot(h)).toContain(ready1());
+  } finally { await h.finish(); }
+});
+
+test.skipIf(process.platform === "win32")("Claude UI: with no task running nothing is asked: leaving, /new and /f614:stop go ahead as before", async () => {
+  const h = await claudeUi();
+  try {
+    const t = getCatalog("en");
+    h.terminal.output = ""; h.enter("/new"); await tick(); await tick();
+    expect(h.plain()).not.toContain(t.claudeChat.backgroundCutQuestion({ count: 1 }));
+    h.terminal.output = ""; h.enter("/f614:stop"); await tick(); await tick();
+    expect(h.plain()).not.toContain(t.claudeChat.backgroundStopQuestion({ count: 1 }));
+    expect(h.plain()).not.toContain(t.permission.no);
+    h.terminal.output = ""; h.enter("/f614:quit");
+    await h.ui;
+    expect(h.plain()).not.toContain(t.claudeChat.backgroundCutQuestion({ count: 1 }));
+  } finally { await h.finish(); }
 });

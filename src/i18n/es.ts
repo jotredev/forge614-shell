@@ -359,6 +359,9 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     toolRunning: ({ duration }) => `Ejecutando · ${duration}`,
     toolCompleted: ({ duration }) => `Completado · ${duration}`,
     toolFailed: ({ duration }) => `Fallido · ${duration}`,
+    statusReadyBackground: ({ count }) => `Listo · ${count} en segundo plano`,
+    backgroundCutQuestion: ({ count }) => count === 1 ? "Hay 1 tarea en segundo plano; se cortará. ¿Seguir?" : `Hay ${count} tareas en segundo plano; se cortarán. ¿Seguir?`,
+    backgroundStopQuestion: ({ count }) => count === 1 ? "Detener también corta 1 tarea en segundo plano. ¿Seguir?" : `Detener también corta ${count} tareas en segundo plano. ¿Seguir?`,
   },
   memorySource: {
     byAssistant: "Memoria: la entrega el asistente al arrancar",
@@ -525,6 +528,12 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     idle: "Nada corriendo en segundo plano por ahora.",
     notReportedByEngine: "Este motor no informa actividad en segundo plano.",
     statusBarCount: ({ count }) => `${count} en segundo plano`,
+    interrupted: "interrumpida",
+    cardDone: "terminada",
+    cardFailed: "falló",
+    cardStopped: "detenida",
+    cardInterrupted: "interrumpida",
+    noticeTitle: "Aviso de Claude Code",
   },
   update: {
     updated: ({ label, detail }) => `${label}: actualizado${detail ? ` (${detail})` : ""}`,

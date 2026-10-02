@@ -111,17 +111,24 @@ function backgroundKind(taskType: string | undefined): BackgroundActivityKind {
 }
 
 /**
- * `isBackgrounded` is local bookkeeping only — never exposed on the public `BackgroundActivity`
- * shape (see `toPublicActivity`). It lets `background_tasks_changed` reconciliation (which the SDK
+ * `isBackgrounded` and `ownedBySubagent` are local bookkeeping only — never exposed on the public `BackgroundActivity`
+ * shape (see `toPublicActivity`). `isBackgrounded` lets `background_tasks_changed` reconciliation (which the SDK
  * documents as covering background tasks only) avoid closing out a task affirmatively known to be
- * foreground (`is_backgrounded === false`), which was never going to appear in that snapshot.
+ * foreground (`is_backgrounded === false`), which was never going to appear in that snapshot. `ownedBySubagent`
+ * marks a task a subagent started itself (the screen draws a card only for the top-level ones).
  */
-type TrackedTask = BackgroundActivity & { isBackgrounded?: boolean };
+type TrackedTask = BackgroundActivity & { isBackgrounded?: boolean; ownedBySubagent?: boolean };
 
 function toPublicActivity(task: TrackedTask): BackgroundActivity {
-  const { isBackgrounded: _isBackgrounded, ...activity } = task;
+  const { isBackgrounded: _isBackgrounded, ownedBySubagent: _ownedBySubagent, ...activity } = task;
   return activity;
 }
+
+/**
+ * Whether a task event says the task was started by a subagent itself (`owned_by_subagent`, measured with SDK 0.3.274 on the tasks a subagent launches; not in the SDK's declared types yet). Any
+ * task event may carry it, so it is read from all of them: the screen draws a notification card only for the other, top-level tasks.
+ */
+export function isOwnedBySubagent(event: SDKMessage): boolean { return (event as { owned_by_subagent?: boolean }).owned_by_subagent === true; }
 
 function applyTaskEvent(tasks: Map<string, TrackedTask>, event: SDKMessage): void {
   if (event.type !== "system") return;
@@ -132,12 +139,15 @@ function applyTaskEvent(tasks: Map<string, TrackedTask>, event: SDKMessage): voi
       label: event.description || event.subagent_type || event.task_id,
       state: "running", startedAt: Date.now(),
       isBackgrounded: event.is_backgrounded,
+      // Not in the SDK's declared types yet; measured with SDK 0.3.274 on the tasks a subagent starts itself.
+      ownedBySubagent: isOwnedBySubagent(event),
     });
     return;
   }
   if (event.subtype === "task_updated") {
     const task = tasks.get(event.task_id);
     if (!task) return;
+    if (isOwnedBySubagent(event)) task.ownedBySubagent = true;
     if (event.patch.is_backgrounded !== undefined) task.isBackgrounded = event.patch.is_backgrounded;
     const status = event.patch.status;
     if (status === "completed") { task.state = "done"; task.endedAt = Date.now(); }
@@ -148,6 +158,7 @@ function applyTaskEvent(tasks: Map<string, TrackedTask>, event: SDKMessage): voi
   if (event.subtype === "task_notification") {
     const task = tasks.get(event.task_id);
     if (!task) return;
+    if (isOwnedBySubagent(event)) task.ownedBySubagent = true;
     task.state = event.status === "completed" ? "done" : "failed";
     task.endedAt = Date.now();
     task.detail = event.summary;
@@ -200,6 +211,7 @@ interface PendingTurn { resolve(): void; reject(error: unknown): void }
  * Claude Code open for the whole conversation. ONE live query (`LiveQuery`, one `claude` process) serves the catalog, the MCP states and every message; it is opened in the background as soon as
  * the account is connected and again, with `resume`, when something that cannot change live changes (a new conversation, another session, a new effort), when the process dies or when a stop is
  * not answered. A message is pushed to the query's input and ends when its own `result` arrives (found by the uuid every message carries); a `result` without it belongs to an automatic turn.
+ * The background tasks (subagents, long processes) run inside that process, so they go on between turns and only a closed or dead process ends them (as «interrupted»).
  */
 export class ClaudeSession {
   /** Whether Claude Code is working: a message of the person has not finished, or an automatic turn (Claude Code woke itself up, with no message) is running. */
@@ -428,7 +440,14 @@ export class ClaudeSession {
     this.stopRequested = false;
     this.authFailed = false;
     this.totals = undefined;
+    this.markInterrupted();
     this.becameIdle();
+  }
+
+  /** The process that held the running tasks is closed or dead: they cannot report an end any more, so they are marked interrupted — not done, not deleted. */
+  private markInterrupted(): void {
+    for (const task of this.tasks.values()) if (task.state === "running") { task.state = "interrupted"; task.endedAt = Date.now(); }
+    this.publishTasks();
   }
 
   /** Closes the query and, if it was open or opening, opens another in the background with the options as they are now (and `resume` when there is a conversation). */
@@ -454,11 +473,13 @@ export class ClaudeSession {
     this.becameIdle();
   }
 
-  /** Wakes whoever waits for Claude Code to be quiet (the stop's watchdog) once nothing runs. */
+  /**
+   * Called when nothing is running: wakes whoever waits for Claude Code to be quiet (the stop's watchdog). The background tasks are NOT touched: they live in the process, which stays open, and go on between
+   * turns. Only a task known to be a foreground one (`is_backgrounded === false`) still «running» is dropped: it cannot outlive its turn, so nothing would ever close it.
+   */
   private becameIdle(): void {
     if (this.busy) return;
-    // The turn is over and the process that ran a task started in it is gone or going: a task still «running» here cannot be observed any more.
-    for (const [id, task] of this.tasks) if (task.state === "running") this.tasks.delete(id);
+    for (const [id, task] of this.tasks) if (task.state === "running" && task.isBackgrounded === false) this.tasks.delete(id);
     this.publishTasks();
     const waiters = this.idleWaiters; this.idleWaiters = [];
     for (const wake of waiters) wake();
@@ -468,7 +489,7 @@ export class ClaudeSession {
     return this.busy ? new Promise(resolve => { this.idleWaiters.push(resolve); }) : Promise.resolve();
   }
 
-  /** Forgets the tasks that are over (done, failed); the ones still running stay. */
+  /** Forgets the tasks that are over (done, failed, interrupted); the ones still running stay. */
   private forgetFinishedTasks(): void {
     for (const [id, task] of this.tasks) if (task.state !== "running") this.tasks.delete(id);
     this.publishTasks();
@@ -478,6 +499,9 @@ export class ClaudeSession {
 
   /** How many tasks are running in the background right now. */
   runningTasks(): number { return this.backgroundActivity.filter(activity => activity.state === "running").length; }
+
+  /** Whether a task was started by a subagent itself (the screen draws a notification card only for the others). A task never seen start — one cut before, reported again on resuming — is a top-level one. */
+  ownedBySubagent(taskId: string): boolean { return this.tasks.get(taskId)?.ownedBySubagent === true; }
 
   /** One event of the live query, in arrival order. */
   private async handle(live: LiveQuery, event: SDKMessage): Promise<void> {
