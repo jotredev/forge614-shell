@@ -97,32 +97,57 @@ test("both indicators are cyan and the arrow points down only while their panel 
 });
 
 /**
- * A narrow terminal gives up the version first, then the MCP indicator; «F614 ▴» stays as long as it fits. With the left part 42 columns wide: at 100 columns everything is there; at 60
- * the version is gone and the MCP indicator stays; at 40 the MCP indicator is gone too and the left part is cut with «…» as it always was.
+ * A line that does not fit first cuts the END of the left part (folder, branch and changes, the last things on it) with «…», leaving room for the MCP indicator and the version; only when the
+ * left part would be left with fewer than 20 visible columns is the version given up, and if it still does not fit, the MCP indicator; «F614 ▴» stays as long as it fits. With the left part
+ * 42 columns wide: at 100 columns everything is there whole; at 60 (56 of line) the left part is cut to 36 columns and both indicators stay; at 40 (36 of line) the version would leave the
+ * left part 16 columns, so it goes and the left part is cut to 26 beside the MCP indicator; at 30 (26 of line) not even that leaves 20 columns, so the MCP indicator goes too.
  */
-test("at 100, 60 and 40 columns the version goes first, then the MCP indicator, and «F614 ▴» stays", () => {
+test("at 100, 60, 40 and 30 columns the left part is cut first, then the version goes, then the MCP indicator, and «F614 ▴» stays", () => {
   const at = (width: number) => { const { bar, panels } = setup({ servers: SERVERS, version: "1.13.0" }); const row = plain(bar.render(width)[0]!); return { row, panels }; };
   const wide = at(100).row;
   expect(wide.startsWith("  F614 ▴ · ~/proj-longer-name · main · Clean")).toBe(true);
   expect(wide.trimEnd().endsWith("⇌ 2 MCP ▴   v1.13.0")).toBe(true);
   const medium = at(60).row;
-  expect(medium.startsWith("  F614 ▴ · ~/proj-longer-name · main · Clean")).toBe(true);
-  expect(medium.trimEnd().endsWith("⇌ 2 MCP ▴")).toBe(true);
-  expect(medium).not.toContain("v1.13.0");
+  expect(medium).toBe("  F614 ▴ · ~/proj-longer-name · main … ⇌ 2 MCP ▴   v1.13.0");
   expect(visibleWidth(medium)).toBeLessThanOrEqual(60);
   const narrow = at(40).row;
-  expect(narrow).toBe("  F614 ▴ · ~/proj-longer-name · main …");
+  expect(narrow).toBe("  F614 ▴ · ~/proj-longer-na… ⇌ 2 MCP ▴");
+  expect(narrow).not.toContain("v1.13.0");
   expect(visibleWidth(narrow)).toBeLessThanOrEqual(40);
+  const tiny = at(30).row;
+  expect(tiny).toBe("  F614 ▴ · ~/proj-longer-na…");
+  expect(tiny).not.toContain("MCP");
+  expect(visibleWidth(tiny)).toBeLessThanOrEqual(30);
 });
 
-/** The clickable zones exist only over what was drawn: with the version and then the MCP indicator gone, nothing answers where they were. */
+/**
+ * A folder whose path is 150 characters long used to push the MCP indicator and the version off a wide line, because they were drawn only when the left part fitted whole. Now the folder is cut
+ * with «…» and both stay, at their place at the right edge, and the click zone of the MCP indicator is where it was really drawn.
+ */
+test("a 150-character folder at 120 columns is cut with «…» and keeps «F614 ▴», the MCP indicator and the version", () => {
+  const folder = "/Users/forge/" + "a".repeat(137);
+  const panels = new StatusPanels({ mcp: () => SERVERS, forge614: () => ({}) }, "en");
+  const bar = new ShellStatusBar(() => ({ account: "connected", provider: "Claude Code", mcpServers: SERVERS }), folder, () => ({ path: "/p", git: true, branch: "main", changedFiles: 0 }), "/Users/forge", "1.13.0", "en", () => true, panels);
+  const line = plain(bar.render(120)[0]!);
+  expect(line.startsWith("  F614 ▴ · ~/aaa")).toBe(true);
+  expect(line).toContain("…");
+  expect(line.trimEnd().endsWith("⇌ 2 MCP ▴   v1.13.0")).toBe(true);
+  expect(visibleWidth(line)).toBeLessThanOrEqual(120);
+  expect(line.trimEnd().length).toBe(118);
+  const mcpStart = line.indexOf("⇌");
+  expect(panels.zone("mcp")).toEqual({ start: mcpStart, end: mcpStart + "⇌ 2 MCP ▴".length });
+  expect(panels.zone("forge614")).toEqual({ start: 2, end: 8 });
+});
+
+/** The clickable zones exist only over what was drawn: with the MCP indicator given up, nothing answers where it was; the version has none. */
 test("a clickable zone exists only for what the line drew", () => {
   const drawn = (width: number) => { const { bar, panels } = setup({ servers: SERVERS, version: "1.13.0" }); bar.render(width); return panels; };
   expect(drawn(100).zone("forge614")).toEqual({ start: 2, end: 8 });
   expect(drawn(100).zone("mcp")).toBeDefined();
   expect(drawn(60).zone("mcp")).toBeDefined();
-  expect(drawn(40).zone("mcp")).toBeUndefined();
-  expect(drawn(40).zone("forge614")).toEqual({ start: 2, end: 8 });
+  expect(drawn(40).zone("mcp")).toBeDefined();
+  expect(drawn(30).zone("mcp")).toBeUndefined();
+  expect(drawn(30).zone("forge614")).toEqual({ start: 2, end: 8 });
   // With no MCP data there is no MCP zone at any width.
   const { bar, panels } = setup(); bar.render(100);
   expect(panels.zone("mcp")).toBeUndefined();

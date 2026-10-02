@@ -27,7 +27,35 @@ type Dependencies = {
    * SessionStart hook (`createMemoryHookProbe`). Left undefined, Shell always puts its own block in, as it did before the hook existed.
    */
   memoryHookActive?: () => Promise<boolean>;
+  /** Called each time the opening probe (`watchMcpServers`) learns the MCP servers' states, so the screen can draw the bottom bar again. */
+  onMcpStatus?: () => void;
+  /** The clock the opening probe waits with; tests give one that never waits. Defaults to the real time and `setTimeout`. */
+  clock?: ProbeClock;
 };
+
+/** What the opening MCP probe needs from time: the current moment in milliseconds and a pause. */
+export interface ProbeClock {
+  now(): number;
+  sleep(ms: number): Promise<void>;
+}
+
+/** How often the opening probe asks again while some MCP server is still `pending`. */
+const MCP_PROBE_INTERVAL_MS = 2000;
+/** The longest the opening probe stays open, counted from when it opened; the last question is asked at this moment at most. */
+const MCP_PROBE_LIMIT_MS = 30000;
+
+const realClock: ProbeClock = {
+  now: () => Date.now(),
+  sleep: ms => new Promise(resolve => { setTimeout(resolve, ms).unref?.(); }),
+};
+
+/** The SDK's server list (name and status words) as the states Shell draws; a status the SDK may add later has no state. */
+function toMcpStates(servers: { name: string; status: string }[]): McpServerState[] {
+  return servers.map(server => {
+    const state = claudeMcpState(server.status);
+    return { name: server.name, ...(state ? { state } : {}) };
+  });
+}
 
 const STARTUP_CONTEXT_TAG_OPEN = "<forge614-engram-memory>";
 const STARTUP_CONTEXT_TAG_CLOSE = "</forge614-engram-memory>";
@@ -142,15 +170,61 @@ export class ClaudeSession {
   account?: AccountInfo;
   /** The `init` message of the newest turn, for `/status`; undefined until a turn has run. */
   initInfo?: ClaudeInitInfo;
+  /** The newest MCP list known: the opening probe's, replaced by each message's `init` (which rules). Not cleared by `reset()`: it is Claude Code's configuration, not the conversation's. */
+  private mcpServers?: McpServerState[];
+  /** True from the moment the opening probe was started, or a message made it unnecessary: the probe is opened at most once per session. */
+  private mcpProbeStarted = false;
+  /** Stops the open probe at once (undefined when none is open). */
+  private stopMcpProbe?: () => void;
   /**
-   * The MCP servers the newest turn's `init` reported, with their states, for the bottom bar. Every message brings a new `init`, so this follows the turns and asks nothing of the SDK;
-   * undefined until the first message and after `reset()`, and when an `init` carries no list (an older Claude Code): nothing known is never written as «no servers».
+   * The MCP servers for the bottom bar, with their states: first what the opening probe (`watchMcpServers`) learned, then, once a message is sent, the newest turn's `init` (every message brings one, and
+   * it rules over the probe). Undefined until one of them has answered, and when an `init` carries no list (an older Claude Code): nothing known is never written as «no servers».
    */
-  mcpStatus(): McpServerState[] | undefined {
-    return this.initInfo?.mcpServers?.map(server => {
-      const state = claudeMcpState(server.status);
-      return { name: server.name, ...(state ? { state } : {}) };
-    });
+  mcpStatus(): McpServerState[] | undefined { return this.mcpServers; }
+
+  /**
+   * Learns the MCP servers' states as soon as the chat opens, before any message: opens ONE query in the background whose prompt never delivers a message (so nothing reaches the model and
+   * nothing is spent from the plan), asks `mcpServerStatus()` and, while some server is still `pending`, asks again every 2 s, for 30 s at most from when it opened; then closes the query.
+   * It never asks again afterwards: from then on only each message's `init` counts. Each answer fills `mcpStatus()` and calls `onMcpStatus`. A message sent meanwhile closes the probe at once and its `init`
+   * rules; a probe that fails or does not answer leaves the state as it was and is not retried. Never throws and never delays the caller (the returned promise ends with the probe, for tests).
+   */
+  watchMcpServers(): Promise<void> {
+    if (this.mcpProbeStarted) return Promise.resolve();
+    this.mcpProbeStarted = true;
+    return this.runMcpProbe();
+  }
+
+  private async runMcpProbe(): Promise<void> {
+    const { cwd, executable, env, clock = realClock } = this.dependencies;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let halt!: () => void;
+    const halted = new Promise<undefined>(resolve => { halt = () => resolve(undefined); });
+    let stopped = false;
+    let probe: Query | undefined;
+    const stop = () => { if (stopped) return; stopped = true; this.stopMcpProbe = undefined; halt(); release(); try { probe?.close(); } catch { /* Already gone. */ } };
+    // Same gate as a turn's query (`officialRun`), but the generator hands over nothing: the query stays open without ever sending a message.
+    async function* silence(): AsyncGenerator<SDKUserMessage> { await gate; }
+    this.stopMcpProbe = stop;
+    try {
+      probe = (this.dependencies.connect ?? query)({
+        prompt: silence(),
+        options: { cwd, env: claudeEnvironment(env), pathToClaudeCodeExecutable: executable, settingSources: [...CLAUDE_SETTING_SOURCES], persistSession: false },
+      });
+      if (stopped) { try { probe.close(); } catch { /* Already gone. */ } return; }
+      const deadline = clock.now() + MCP_PROBE_LIMIT_MS;
+      for (;;) {
+        const servers = await Promise.race([probe.mcpServerStatus(), halted]);
+        if (stopped || !servers) return;
+        this.mcpServers = toMcpStates(servers);
+        this.dependencies.onMcpStatus?.();
+        const left = deadline - clock.now();
+        if (left <= 0 || !servers.some(server => server.status === "pending")) return;
+        await Promise.race([clock.sleep(Math.min(MCP_PROBE_INTERVAL_MS, left)), halted]);
+        if (stopped) return;
+      }
+    } catch { /* The probe is only a head start: without its answer the state stays as it was, and nothing is retried. */ }
+    finally { stop(); }
   }
   /** Whether Engram's startup context reached this session (what the Forge614 panel calls «memory in use»): undefined until a message has asked for it, or when asking failed. */
   memoryInUse(): boolean | undefined { return this.startupContextAvailable; }
@@ -200,7 +274,10 @@ export class ClaudeSession {
     this.startupContextStale = true;
   }
 
-  /** Starts a new conversation: forgets the session, the context and the newest turn's `init` (version, MCP servers), which the first message of the new conversation reports again. */
+  /**
+   * Starts a new conversation: forgets the session, the context and the newest turn's `init` (version, MCP servers for `/status`), which the first message of the new conversation reports again.
+   * The MCP list of the bottom bar (`mcpStatus()`) stays: it is Claude Code's configuration, not the conversation's.
+   */
   reset(): void {
     if (this.busy) throw new ShellError("claude-new-chat-busy");
     this.sessionId = undefined;
@@ -276,6 +353,9 @@ export class ClaudeSession {
     if (this.busy) throw new ShellError("claude-turn-already-running");
     if (!prompt.trim()) return;
     this.busy = true;
+    // The opening probe is closed now, without waiting for it, and never opened afterwards: this message's `init` takes over.
+    this.mcpProbeStarted = true;
+    this.stopMcpProbe?.();
     this.abort = new AbortController();
     const tasks = new Map<string, TrackedTask>();
     try {
@@ -309,7 +389,7 @@ export class ClaudeSession {
       const run = this.dependencies.run ?? ((input: RunInput) => this.officialRun(input));
       let resultSeen = false;
       for await (const event of run({ prompt, options })) {
-        if (event.type === "system" && event.subtype === "init") { this.sessionId = event.session_id; this.initInfo = readInit(event); }
+        if (event.type === "system" && event.subtype === "init") { this.sessionId = event.session_id; this.initInfo = readInit(event); if (this.initInfo.mcpServers) this.mcpServers = toMcpStates(this.initInfo.mcpServers); }
         if (event.type === "system" && event.subtype === "commands_changed") this.commands = event.commands;
         if (event.type === "result") resultSeen = true;
         applyTaskEvent(tasks, event);

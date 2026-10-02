@@ -13,6 +13,8 @@ import type { Locale } from "../../i18n/index.ts";
 const separator = muted(" · ");
 /** The columns between the MCP indicator and the version, when both are drawn. */
 const RIGHT_GAP = "   ";
+/** The fewest visible columns the left part is cut down to to make room for the MCP indicator and the version; below this the version is given up first, then the MCP indicator. */
+const MIN_LEFT_WIDTH = 20;
 
 function backgroundActivityLabel(snapshot: ShellSnapshot, locale: Locale): string | undefined {
   const running = snapshot.backgroundActivity?.filter(activity => activity.state === "running").length ?? 0;
@@ -35,7 +37,8 @@ function backgroundActivityLabel(snapshot: ShellSnapshot, locale: Locale): strin
  * Two things on the line are touched with a click, both in the accent color with an arrow after them (▴ at rest, ▾ while their panel is open): «F614 ▴» at the start, which opens the Forge614
  * panel, and «⇌ N MCP ▴» at the right, right before the version and three spaces from it, which opens the MCP servers' panel (N counts the connected ones). The MCP indicator is drawn only when
  * the snapshot knows the MCP servers (what is not known is not represented). Nothing on the line reacts to the pointer moving over it: only a left click on the text of an indicator does, and
- * only where it was drawn (`panels` keeps those columns). When the line does not fit, the version goes first, then the MCP indicator; «F614 ▴» stays while there is room for it, and the rest
+ * only where it was drawn (`panels` keeps those columns). When the line does not fit, the end of the left part (folder, branch and changes, the last things on it) is cut with «…» first, to leave room for the MCP indicator and the version; only if
+ * that would leave the left part under 20 visible columns is the version given up, and if it still does not fit, the MCP indicator. «F614 ▴» stays while there is room for it, and the rest
  * of the line is cut with «…» as it always was.
  */
 export class ShellStatusBar implements Component {
@@ -75,13 +78,18 @@ export class ShellStatusBar implements Component {
     const mcp = snapshot.mcpServers ? cyan(`${t.mcpIndicator({ count: connectedCount(snapshot.mcpServers) })} ${arrow("mcp")}`) : undefined;
     const release = this.version ? muted(`v${this.version}`) : undefined;
     const innerWidth = Math.max(0, width - 4);
-    const leftWidth = visibleWidth(left);
+    const fullLeftWidth = visibleWidth(left);
     // What goes at the right, in the order it is given up when the line does not fit: the version first, then the MCP indicator.
     const candidates = [[mcp, release], [mcp], []].map(parts => parts.filter((part): part is string => Boolean(part)));
     const rightWidth = (parts: string[]) => parts.reduce((total, part) => total + visibleWidth(part), 0) + RIGHT_GAP.length * Math.max(0, parts.length - 1);
-    const right = candidates.find(parts => !parts.length || leftWidth + 1 + rightWidth(parts) <= innerWidth) ?? [];
+    // The end of the left part (folder, branch, changes) is cut with «…» first, to leave room for what goes at the right; a candidate is taken only while the left part keeps MIN_LEFT_WIDTH columns.
+    const fitted = candidates.map(parts => ({ parts, room: parts.length ? innerWidth - 1 - rightWidth(parts) : innerWidth }))
+      .find(({ parts, room }) => !parts.length || fullLeftWidth <= room || room >= MIN_LEFT_WIDTH) ?? { parts: [], room: innerWidth };
+    const right = fitted.parts;
+    const drawnLeft = fullLeftWidth <= fitted.room ? left : truncateToWidth(left, fitted.room, "…");
+    const leftWidth = visibleWidth(drawnLeft);
     const gap = Math.max(1, innerWidth - leftWidth - rightWidth(right));
-    const line = right.length ? `${left}${" ".repeat(gap)}${right.join(RIGHT_GAP)}` : left;
+    const line = right.length ? `${drawnLeft}${" ".repeat(gap)}${right.join(RIGHT_GAP)}` : drawnLeft;
     const indent = Math.min(2, width);
     const shown = visibleWidth(line) <= innerWidth ? line : truncateToWidth(line, innerWidth, "…");
     // Where each indicator is, in the chat's columns, counting only what was really drawn.

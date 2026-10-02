@@ -637,13 +637,11 @@ test("every SDK MCP status is mapped, and an unknown one has no state", async ()
   ]);
 });
 
-/** A new conversation forgets them with the rest of the init, and an init with no list (an older Claude Code) is no data at all: never an empty list written as «0». */
-test("a new conversation forgets the MCP states and an init without a list gives none", async () => {
+/** An init with no list (an older Claude Code) is no data at all: never an empty list written as «0». (A new conversation keeps the list: see «/new keeps the MCP list».) */
+test("an init without a list gives no MCP states", async () => {
   const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun([{ name: "a", status: "connected" }], { runs: 0 }) });
   await session.send("hello", () => {}, async () => false);
   expect(session.mcpStatus()).toHaveLength(1);
-  session.reset();
-  expect(session.mcpStatus()).toBeUndefined();
   const older = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun(undefined, { runs: 0 }) });
   await older.send("hello", () => {}, async () => false);
   expect(older.mcpStatus()).toBeUndefined();
@@ -674,4 +672,130 @@ test("memoryInUse keeps whether Engram's startup context reached the session", a
   const bare = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun([], { runs: 0 }) });
   await bare.send("hello", () => {}, async () => false);
   expect(bare.memoryInUse()).toBeUndefined();
+});
+
+/**
+ * A stand-in for the SDK's `query` that opens one probe per call: the prompt generator is watched (`delivered` turns true if it ever hands over a message), every `mcpServerStatus()` is
+ * answered by `answer(call, now)` (the call number from 1 and the test clock's time) and `close()` is counted. The clock never waits: `sleep` only moves its time forward, so a whole 30 s
+ * probe runs in no time and the times of the calls can be asserted exactly.
+ */
+function probeHarness(answer: (call: number, now: number) => Promise<{ name: string; status: string }[]>) {
+  const state = { opened: 0, delivered: false, closed: 0, asked: [] as number[], time: 0 };
+  const clock = { now: () => state.time, sleep: async (ms: number) => { state.time += ms; } };
+  const connect = (({ prompt }: any) => {
+    state.opened++;
+    prompt[Symbol.asyncIterator]().next().then((step: IteratorResult<unknown>) => { if (!step.done) state.delivered = true; });
+    return {
+      mcpServerStatus: () => { state.asked.push(state.time); return answer(state.asked.length, state.time); },
+      close: () => { state.closed++; },
+    };
+  }) as any;
+  return { state, clock, connect };
+}
+
+/** The probe a session opens with the chat: no message goes in, the servers are asked, and with everything connected it closes after the first answer. */
+test("the MCP probe opens with no message, asks the servers and closes once none is pending", async () => {
+  const h = probeHarness(async () => [{ name: "forge614-engram", status: "connected" }, { name: "github", status: "failed" }]);
+  let redraws = 0;
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, connect: h.connect, clock: h.clock, onMcpStatus: () => { redraws++; } });
+  expect(session.mcpStatus()).toBeUndefined();
+  await session.watchMcpServers();
+  expect(h.state.opened).toBe(1);
+  expect(h.state.delivered).toBe(false);
+  expect(h.state.asked).toEqual([0]);
+  expect(h.state.closed).toBe(1);
+  expect(session.mcpStatus()).toEqual([{ name: "forge614-engram", state: "connected" }, { name: "github", state: "failed" }]);
+  expect(redraws).toBe(1);
+});
+
+/** With a server still `pending` it is asked again every 2 s, and asking stops the moment none is pending (the calls are counted, with the time of each). */
+test("the MCP probe asks again every 2 s while a server is pending and stops when none is", async () => {
+  const h = probeHarness(async call => [{ name: "a", status: "connected" }, { name: "b", status: call < 3 ? "pending" : "connected" }]);
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, connect: h.connect, clock: h.clock });
+  await session.watchMcpServers();
+  expect(h.state.asked).toEqual([0, 2000, 4000]);
+  expect(h.state.closed).toBe(1);
+  expect(session.mcpStatus()).toEqual([{ name: "a", state: "connected" }, { name: "b", state: "connected" }]);
+});
+
+/** A server that stays `pending` forever does not keep the probe open: the last call is at 30 s at most, and then the query is closed. */
+test("the MCP probe gives up at 30 s with a server pending forever", async () => {
+  const h = probeHarness(async () => [{ name: "slow", status: "pending" }]);
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, connect: h.connect, clock: h.clock });
+  await session.watchMcpServers();
+  expect(h.state.asked).toHaveLength(16);
+  expect(h.state.asked.at(-1)).toBe(30000);
+  expect(h.state.closed).toBe(1);
+  expect(h.state.delivered).toBe(false);
+  expect(session.mcpStatus()).toEqual([{ name: "slow", state: "starting" }]);
+});
+
+/** A message sent while the probe is open closes it at once (without waiting for the answer) and the message's own `init` rules: a late answer of the probe changes nothing. */
+test("a message sent with the MCP probe open closes it and the init of the message rules", async () => {
+  let answerProbe!: (servers: { name: string; status: string }[]) => void;
+  const h = probeHarness(() => new Promise(resolve => { answerProbe = resolve; }));
+  let closedWhenTurnRan: number | undefined;
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: h.connect, clock: h.clock, run: () => {
+    closedWhenTurnRan = h.state.closed;
+    return (async function* () {
+      yield { type: "system", subtype: "init", session_id: "s", mcp_servers: [{ name: "from-init", status: "connected" }] } as unknown as SDKMessage;
+      yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+    })();
+  } });
+  void session.watchMcpServers();
+  await Promise.resolve();
+  expect(h.state.asked).toEqual([0]);
+  await session.send("hello", () => {}, async () => false);
+  expect(closedWhenTurnRan).toBe(1);
+  expect(session.mcpStatus()).toEqual([{ name: "from-init", state: "connected" }]);
+  answerProbe([{ name: "late", status: "connected" }]);
+  await new Promise(resolve => setTimeout(resolve, 5));
+  expect(session.mcpStatus()).toEqual([{ name: "from-init", state: "connected" }]);
+  expect(h.state.closed).toBe(1);
+  expect(h.state.asked).toEqual([0]);
+});
+
+/** A probe that fails leaves the state as it was (no data) and is not tried again. */
+test("a failing MCP probe leaves no data and is not retried", async () => {
+  const h = probeHarness(async () => { throw new Error("boom"); });
+  let redraws = 0;
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, connect: h.connect, clock: h.clock, onMcpStatus: () => { redraws++; } });
+  await session.watchMcpServers();
+  expect(session.mcpStatus()).toBeUndefined();
+  expect(h.state.asked).toEqual([0]);
+  expect(h.state.closed).toBe(1);
+  expect(redraws).toBe(0);
+  await session.watchMcpServers();
+  expect(h.state.opened).toBe(1);
+});
+
+/** One probe per session, whatever happens afterwards: asking again, or sending several messages, never opens another; and a message sent before the probe ever opened keeps it from opening. */
+test("only one MCP probe is opened in the whole session", async () => {
+  const h = probeHarness(async () => [{ name: "a", status: "connected" }]);
+  const run = () => (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: h.connect, clock: h.clock, run });
+  await session.watchMcpServers();
+  await session.watchMcpServers();
+  await session.send("one", () => {}, async () => false);
+  await session.send("two", () => {}, async () => false);
+  await session.watchMcpServers();
+  expect(h.state.opened).toBe(1);
+  const early = probeHarness(async () => [{ name: "a", status: "connected" }]);
+  const sent = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: early.connect, clock: early.clock, run });
+  await sent.send("first", () => {}, async () => false);
+  await sent.watchMcpServers();
+  expect(early.state.opened).toBe(0);
+});
+
+/** `/new` starts another conversation, not another Claude Code: the MCP list (its configuration) survives, whether it came from the probe or from an `init`. */
+test("/new keeps the MCP list", async () => {
+  const h = probeHarness(async () => [{ name: "probed", status: "connected" }]);
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, connect: h.connect, clock: h.clock });
+  await session.watchMcpServers();
+  session.reset();
+  expect(session.mcpStatus()).toEqual([{ name: "probed", state: "connected" }]);
+  const fromInit = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun([{ name: "a", status: "connected" }], { runs: 0 }) });
+  await fromInit.send("hello", () => {}, async () => false);
+  fromInit.reset();
+  expect(fromInit.mcpStatus()).toEqual([{ name: "a", state: "connected" }]);
 });
