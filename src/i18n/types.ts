@@ -17,7 +17,8 @@ export type ShellErrorCode =
   | "claude-new-chat-busy"
   | "claude-work-mode-unknown"
   | "claude-mode-rejected"
-  | "claude-turn-already-running"
+  | "claude-stop-timeout"
+  | "claude-session-closed"
   | "claude-no-result"
   | "codex-mode-unknown"
   | "codex-mode-rejected"
@@ -282,7 +283,6 @@ export interface Catalog {
     statusReady: string;
     statusConnectWithLogin: (params: { command: string }) => string;
     waitForCurrentOperation: string;
-    turnAlreadyRunning: string;
     reconnectBeforeMessage: string;
     errorPrefixed: (params: { message: string }) => string;
     turnStopped: (params: { message: string }) => string;

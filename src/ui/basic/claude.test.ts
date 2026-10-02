@@ -49,7 +49,8 @@ if(process.argv[2]==='auth') {
     expect(terminal.output).toContain("Connected");
     expect(await readFile(marker, "utf8")).toBe("auth status --json\n");
     expect(terminal.output).toContain("SESSION");
-    for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
+    // Claude Code opens in the background and the catalog is read over it once Engram's memory and the startup-hook check (real processes, slow on a cold start) are in: wait for the line, not for a fixed moment.
+    for (let i = 0; i < 200 && !terminal.output.includes("test@example.com"); i++) await tick();
     expect(terminal.output).toContain("test@example.com");
     // Claude always supports background-activity reporting (Task 8): once connected, the sidebar's
     // "Background activity" section should render — with nothing running yet, that means the idle
@@ -144,12 +145,16 @@ test.skipIf(process.platform === "win32")("Claude UI: /f614:stop cancels the run
   const previousForgeHome = process.env.FORGE614_HOME;
   process.env.FORGE614_HOME = join(root, "forge614-home");
   try {
+    // The fake keeps every message unanswered until it is interrupted, then ends them with the error result Claude Code gives (measured), so the turn closes with the stop and the process stays open.
     await writeFile(executable, `#!${process.execPath}
+const open=[];
 if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
 else {
   require('readline').createInterface({input:process.stdin}).on('line',line=>{
     const msg=JSON.parse(line);
-    if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
+    if(msg.type==='user') open.push(msg.uuid);
+    if(msg.type==='control_request' && msg.request.subtype==='interrupt') { console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{still_queued:[]}}})); const uuids=open.splice(0); if(uuids.length) console.log(JSON.stringify({type:'result',subtype:'error_during_execution',is_error:true,duration_ms:1,duration_api_ms:1,num_turns:1,errors:[],session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],user_message_uuids:uuids,uuid:'result-'+Date.now()})); }
+    else if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
   });
 }`, { mode: 0o755 });
     ui = startClaudeUI([], executable, terminal); await tick();
@@ -190,16 +195,17 @@ test.skipIf(process.platform === "win32")("Claude UI: a Bash permission reads in
   process.chdir("/tmp");
   try {
     await writeFile(executable, `#!${process.execPath}
-const fs=require('fs');
+const fs=require('fs'); let last;
 if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
 else {
   require('readline').createInterface({input:process.stdin}).on('line',line=>{
     const msg=JSON.parse(line);
     if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
+    if(msg.type==='user') last=msg.uuid;
     if(msg.type==='user') console.log(JSON.stringify({type:'control_request',request_id:'permission-'+Date.now(),request:{subtype:'can_use_tool',tool_name:'Bash',input:{command:'rtk grep -rn changelog .',description:'Buscar el changelog de Engram en este repositorio'},tool_use_id:'tool-1'}}));
     if(msg.type==='control_response' && msg.response.response && msg.response.response.behavior) {
       fs.appendFileSync(${JSON.stringify(marker)},msg.response.response.behavior+'\\n');
-      console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,duration_ms:1,duration_api_ms:1,num_turns:1,result:'ok',session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],uuid:'result-'+Date.now()}));
+      console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,duration_ms:1,duration_api_ms:1,num_turns:1,result:'ok',session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],user_message_uuids:[last],uuid:'result-'+Date.now()}));
     }
   });
 }`, { mode: 0o755 });
@@ -310,14 +316,14 @@ test.skipIf(process.platform === "win32")("Claude UI: the /logout question has i
 /**
  * A Claude Code screen over a fake `claude` that is signed in, reports `commands` as the assistant's own list, never answers a
  * prompt (so a turn stays open until it is stopped) and writes what it receives to a marker file: one `control` line per control
- * request and one `prompt:` line per chat prompt. With `rateLimit`, each prompt is also answered with that `rate_limit_event`
+ * request, one `interrupt` line per `interrupt` request, a `closed` line when the process is told to end (its input closes or it is terminated) and, per chat prompt, a `pid:` line (the fake process that got it) and a `prompt:` line. With `rateLimit`, each prompt is also answered with that `rate_limit_event`
  * (the turn still stays open), and with `events`, each prompt is also answered with those messages (an `init`, say). `account` is what the handshake
  * reports. `beforeStart` runs with the `$FORGE614_HOME` of the test before the screen opens (to install a stand-in for Engines, whose startup-hook check runs at
  * opening). No real account or network is involved. `versions` stands in for the reading of the two binaries' `--version` (without it the screen reads none) and `shellVersion` is
- * the version the bar shows. `mcpServers` is what the fake answers to the opening probe's `mcp_status` request (the SDK's `McpServerStatus` list; none: it answers with no list), and each such request is a
+ * the version the bar shows. `waitFor` is the text the helper waits for before it returns (the account's email by default: it shows once Claude Code has opened and the catalog was read). `mcpServers` is what the fake answers to the open query's `mcp_status` request (the SDK's `McpServerStatus` list; none: it answers with no list), and each such request is a
  * line `mcp_status` in the marker file. `finish` leaves the screen and cleans up.
  */
-async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120, events: object[] = [], account: object = { email: "test@example.com" }, beforeStart?: (forgeHome: string) => void, versions?: () => Promise<EcosystemVersions>, shellVersion?: string, mcpServers?: object[], startupContext?: Parameters<typeof startClaudeUI>[7]) {
+async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120, events: object[] = [], account: object = { email: "test@example.com" }, beforeStart?: (forgeHome: string) => void, versions?: () => Promise<EcosystemVersions>, shellVersion?: string, mcpServers?: object[], startupContext?: Parameters<typeof startClaudeUI>[7], waitFor: string = "test@example.com") {
   const root = await mkdtemp(join(tmpdir(), "forge614-prefix-ui-"));
   const executable = join(root, "claude"); const marker = join(root, "calls");
   const terminal = new TestTerminal(); terminal.columns = columns;
@@ -327,19 +333,22 @@ async function claudeUi(commands: { name: string; description: string; argumentH
   process.env.FORGE614_HOME = join(root, "forge614-home");
   beforeStart?.(process.env.FORGE614_HOME);
   await writeFile(executable, `#!${process.execPath}
-const fs=require('fs');
+const fs=require('fs'); const open=[];
 if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
 else {
-  require('readline').createInterface({input:process.stdin}).on('line',line=>{
+  process.on('SIGTERM',()=>{ fs.appendFileSync(${JSON.stringify(marker)},'closed\\n'); process.exit(0); });
+  const rl=require('readline').createInterface({input:process.stdin}); rl.on('close',()=>fs.appendFileSync(${JSON.stringify(marker)},'closed\\n'));
+  rl.on('line',line=>{
     const msg=JSON.parse(line);
-    if(msg.type==='control_request' && msg.request.subtype==='mcp_status') { fs.appendFileSync(${JSON.stringify(marker)},'mcp_status\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{mcpServers:${JSON.stringify(mcpServers)}}}})); }
+    if(msg.type==='control_request' && msg.request.subtype==='interrupt') { fs.appendFileSync(${JSON.stringify(marker)},'interrupt\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{still_queued:[]}}})); const uuids=open.splice(0); if(uuids.length) console.log(JSON.stringify({type:'result',subtype:'error_during_execution',is_error:true,duration_ms:1,duration_api_ms:1,num_turns:1,errors:[],session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],user_message_uuids:uuids,uuid:'result-'+Date.now()})); }
+    else if(msg.type==='control_request' && msg.request.subtype==='mcp_status') { fs.appendFileSync(${JSON.stringify(marker)},'mcp_status\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{mcpServers:${JSON.stringify(mcpServers)}}}})); }
     else if(msg.type==='control_request') { fs.appendFileSync(${JSON.stringify(marker)},'control\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:${JSON.stringify(account)},commands:${JSON.stringify(commands)},agents:[],output_style:'default',available_output_styles:[]}}})); }
-    if(msg.type==='user') { fs.appendFileSync(${JSON.stringify(marker)},'prompt:'+JSON.stringify(msg.message.content)+'\\n'); for (const info of ${JSON.stringify(rateLimit ?? [])}) console.log(JSON.stringify({type:'rate_limit_event',rate_limit_info:info,uuid:'00000000-0000-4000-8000-000000000001',session_id:'s'})); for (const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event)); }
+    if(msg.type==='user') { open.push(msg.uuid); fs.appendFileSync(${JSON.stringify(marker)},'pid:'+process.pid+'\\n'+'prompt:'+JSON.stringify(msg.message.content)+'\\n'); for (const info of ${JSON.stringify(rateLimit ?? [])}) console.log(JSON.stringify({type:'rate_limit_event',rate_limit_info:info,uuid:'00000000-0000-4000-8000-000000000001',session_id:'s'})); for (const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event)); }
   });
 }`, { mode: 0o755 });
   const ui = startClaudeUI([], executable, terminal, shellVersion, locale, undefined, versions, startupContext);
   await tick();
-  for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
+  for (let i = 0; i < 120 && !terminal.output.includes(waitFor); i++) await tick();
   const calls = () => existsSync(marker) ? readFileSync(marker, "utf8").split("\n").filter(Boolean) : [];
   /**
    * Leaves through `/f614:quit`, or, with `byCtrlC`, through Esc and Ctrl+C (for a test that leaves text in the box), and puts the environment back.
@@ -892,7 +901,7 @@ else { require('readline').createInterface({input:process.stdin}).on('line',line
   if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
   if(msg.type==='user') {
     console.log(JSON.stringify({type:'assistant',message:{role:'assistant',content:[{type:'text',text:${JSON.stringify(answer)}}]},parent_tool_use_id:null,session_id:'s1',uuid:'a-'+Date.now()}));
-    console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,duration_ms:1,duration_api_ms:1,num_turns:1,result:'ok',session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],uuid:'result-'+Date.now()}));
+    console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,duration_ms:1,duration_api_ms:1,num_turns:1,result:'ok',session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],user_message_uuids:[msg.uuid],uuid:'result-'+Date.now()}));
   } }); }`, { mode: 0o755 });
     ui = startClaudeUI([], executable, terminal, undefined, "en", tools); await tick();
     for (let i = 0; i < 60 && !screenRows(terminal.output).join("\n").includes(getCatalog("en").chat.statusReady); i++) await tick();
@@ -974,10 +983,10 @@ test.skipIf(process.platform === "win32")("Claude UI: the bottom bar shows «⇌
 }));
 
 /**
- * The probe's list is only the first word: when the person sends a message, that message's `init` rules (here it reports two connected where the probe knew one), and `/new` does not clear the list — it is Claude
- * Code's configuration, not the conversation's — so the bar keeps the last known list before and after it.
+ * The open query's first answer is only the first word: when the person sends a message, that message's `init` rules (here it reports two connected where the query's answer knew one), and `/new` does not clear the list — it is
+ * Claude Code's configuration, not the conversation's — so the bar keeps showing an MCP indicator through it, until the query opened again for the new conversation answers (the fake answers its one server every time it opens).
  */
-test.skipIf(process.platform === "win32")("Claude UI: a message's init rules over the opening probe, and /new keeps the MCP indicator", () => inFixedFolder(async () => {
+test.skipIf(process.platform === "win32")("Claude UI: a message's init rules over the opening answer, and /new keeps the MCP indicator", () => inFixedFolder(async () => {
   const h = await claudeUi([], "en", undefined, 120, [mcpInit], undefined, undefined, undefined, undefined, [{ name: "forge614-engram", status: "connected" }]);
   try {
     for (let i = 0; i < 60 && !h.plain().includes("⇌ 1 MCP ▴"); i++) await tick();
@@ -986,8 +995,12 @@ test.skipIf(process.platform === "win32")("Claude UI: a message's init rules ove
     for (let i = 0; i < 60 && !h.plain().includes("⇌ 2 MCP ▴"); i++) await tick();
     expect(await snapshot(h)).toContain("⇌ 2 MCP ▴");
     h.enter("/f614:stop"); await tick(); await tick();
-    h.enter("/new"); await tick();
-    expect(await snapshot(h)).toContain("⇌ 2 MCP ▴");
+    h.enter("/new");
+    // Never blank: the indicator is on screen right after `/new`, and the new query's own answer settles it on its list.
+    expect(await snapshot(h)).toMatch(/⇌ \d MCP ▴/);
+    for (let i = 0; i < 60 && h.calls().filter(line => line === "mcp_status").length < 2; i++) await tick();
+    expect(h.calls().filter(line => line === "mcp_status")).toHaveLength(2);
+    expect(await snapshot(h)).toContain("⇌ 1 MCP ▴");
   } finally { await h.finish(); }
 }));
 
@@ -1013,8 +1026,9 @@ test.skipIf(process.platform === "win32")("Claude UI: with a 150-character folde
 });
 
 /**
- * The Forge614 panel: Shell's version (the one the bar already has), Engines' and Engram's (read once, when Shell opens, by the injected reader) and the memory state, which is unknown until the first message asks
- * Engram for its startup context — here there is no Engram under the test's own $FORGE614_HOME, so the context does not arrive and the row says «not in use». The reader is called once however often the panel is opened.
+ * The Forge614 panel: Shell's version (the one the bar already has), Engines' and Engram's (read once, when Shell opens, by the injected reader) and the memory state, which is known as soon as Claude Code opens (it
+ * asks Engram for its startup context then, before any message) — here there is no Engram under the test's own $FORGE614_HOME, so the context does not arrive and the row says «not in use». The reader is called once
+ * however often the panel is opened.
  */
 test.skipIf(process.platform === "win32")("Claude UI: the Forge614 panel shows the three versions and the memory state, reading the versions once", async () => {
   let reads = 0;
@@ -1025,7 +1039,8 @@ test.skipIf(process.platform === "win32")("Claude UI: the Forge614 panel shows t
     leftClick(h, F614_X, STATUS_ROW); await tick();
     const first = await snapshot(h);
     for (const text of ["Forge614", "Shell", "1.13.0", "Engines", "1.16.0", "Engram", "1.8.6", "F614 ▾"]) expect(first, text).toContain(text);
-    expect(first).not.toContain("not in use");
+    // No message was sent, and the memory state is already known: Claude Code opened in the background and asked Engram.
+    expect(first).toContain("not in use");
     expect(first).not.toContain("memory in use");
     leftClick(h, F614_X, STATUS_ROW); await tick();
     expect(await snapshot(h)).not.toContain("Engines");
@@ -1060,18 +1075,69 @@ test.skipIf(process.platform === "win32")("Claude UI: Esc with a panel open clos
 });
 
 /**
+ * Claude Code is one open conversation: a message typed while it is still answering is drawn at once and handed to Claude Code (which takes it at its next tool boundary), not refused with «a turn is already
+ * running». Both messages reach the same process, in order, and the box keeps saying «Working» until the turn ends; `/f614:stop` then ends it with an `interrupt` and no new process starts.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: a message typed mid-answer is drawn and sent to the same open Claude Code; /f614:stop interrupts it without closing it", async () => {
+  const h = await claudeUi();
+  try {
+    const prompts = () => h.calls().filter(line => line.startsWith("prompt:"));
+    h.enter("first message");
+    for (let i = 0; i < 60 && prompts().length < 1; i++) await tick();
+    h.terminal.output = ""; h.enter("second message, while the first is answered");
+    for (let i = 0; i < 60 && prompts().length < 2; i++) await tick();
+    expect(prompts()).toEqual(['prompt:"first message"', 'prompt:"second message, while the first is answered"']);
+    expect(h.plain()).toContain("second message, while the first is answered");
+    expect(h.plain()).not.toContain(getCatalog("en").chat.waitForCurrentOperation);
+    expect(h.plain()).toContain(getCatalog("en").chat.statusWorking);
+    // One process got both messages.
+    const pids = h.calls().filter(line => line.startsWith("pid:"));
+    expect(pids).toHaveLength(2);
+    expect(pids[0]).toBe(pids[1]!);
+    h.terminal.output = ""; h.enter("/f614:stop");
+    for (let i = 0; i < 60 && !h.plain().includes(getCatalog("en").chat.statusReady); i++) await tick();
+    expect(h.calls().filter(line => line === "interrupt")).toHaveLength(1);
+    expect(h.plain()).toContain(getCatalog("en").chat.turnStopped({ message: "error_during_execution" }));
+    expect(h.plain()).not.toContain(getCatalog("en").claudeChat.claudeError({ message: "error_during_execution" }));
+    // The next message goes to the same process: stopping did not close Claude Code.
+    h.enter("after the stop");
+    for (let i = 0; i < 60 && prompts().length < 3; i++) await tick();
+    expect(h.calls().filter(line => line.startsWith("pid:")).at(-1)).toBe(pids[0]!);
+  } finally { await h.finish(); }
+});
+
+/**
+ * Leaving Shell closes Claude Code: the process the SDK started for the conversation ends with the screen, instead of staying behind with its MCP servers (it used to be left to the SDK to notice that Shell was gone).
+ * The fake `claude` writes `closed` when its input closes or it is terminated.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: leaving Shell closes the Claude Code that was kept open", async () => {
+  const h = await claudeUi();
+  try {
+    expect(h.calls()).not.toContain("closed");
+    h.enter("/f614:quit");
+    await h.ui;
+    for (let i = 0; i < 100 && !h.calls().includes("closed"); i++) await tick();
+    expect(h.calls()).toContain("closed");
+  } finally { await h.finish(); }
+});
+
+/**
  * The person's first message is on screen before Engram answers. `startup-context` takes about 650 ms and used to run inside `send()` with `spawnSync`, so the screen drew nothing — not even the message —
- * until it was done. Here Engram's answer is slow (400 ms): while it is still being waited for, the message already has to be drawn, and the screen must have asked Engram for it.
+ * until it was done. Claude Code now opens in the background when the account is connected and asks Engram then: here Engram's answer waits for the test and the message is typed as soon as Engram was asked,
+ * while it is still being waited for — the message must already be drawn.
  */
 test.skipIf(process.platform === "win32")("Claude UI: the first message is drawn before Engram's startup context answers", async () => {
-  let asked = false; let answered = false;
-  const slow = async () => { asked = true; await new Promise(resolve => setTimeout(resolve, 400)); answered = true; return { available: false as const, reason: "slow" }; };
-  const h = await claudeUi([], "en", undefined, 120, [], undefined, undefined, undefined, undefined, undefined, slow);
+  let asked = false; let answered = false; let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const slow = async () => { asked = true; await gate; answered = true; return { available: false as const, reason: "slow" }; };
+  const h = await claudeUi([], "en", undefined, 120, [], undefined, undefined, undefined, undefined, undefined, slow, getCatalog("en").chat.statusReady);
   try {
-    h.terminal.output = ""; h.enter("hola desde la prueba");
-    for (let i = 0; i < 4 && !screenRows(h.terminal.output).some(row => row.includes("hola desde la prueba")); i++) await tick();
+    for (let i = 0; i < 60 && !asked; i++) await tick();
     expect(asked).toBe(true);
+    h.terminal.output = ""; h.enter("hola desde la prueba");
+    for (let i = 0; i < 10 && !screenRows(h.terminal.output).some(row => row.includes("hola desde la prueba")); i++) await tick();
+    // Engram has not answered (its answer waits for the test) and the message is on screen anyway.
     expect(answered).toBe(false);
     expect(screenRows(h.terminal.output).some(row => row.includes("hola desde la prueba"))).toBe(true);
-  } finally { await h.finish(); }
+  } finally { release(); await h.finish(); }
 });

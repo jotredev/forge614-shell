@@ -22,6 +22,35 @@ export interface Telemetry {
 }
 export function emptyTelemetry(): Telemetry { return { quotas: {} }; }
 
+/** The counters of a `modelUsage` entry that add up across turns; the rest (`contextWindow`, `maxOutputTokens`) are sizes and are never subtracted. */
+const ADDITIVE_USAGE = ["inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens", "webSearchRequests", "costUSD"] as const;
+
+/** The running totals the SDK reported in the newest `result` of a live query: what the next result's own part is counted from. */
+export interface ResultTotals { cost: number; models: Record<string, Record<string, number>> }
+
+/**
+ * With one live query serving the whole conversation, `total_cost_usd` and `modelUsage` of a `result` are running totals of the query (the SDK says so: «cumulative across turns in streaming-input
+ * sessions»). This gives the result as the turn's OWN part — the totals minus those of the previous result — and the totals to remember. Without `previous` (the first result of a query, which
+ * starts fresh, also when it resumes a conversation) the event is returned as it came. A total that went down (the SDK resets it on `/clear`) is taken as a fresh start, never as a negative.
+ */
+export function perTurnResult(event: Record<string, any>, previous?: ResultTotals): { event: Record<string, any>; totals: ResultTotals } {
+  const cost = typeof event.total_cost_usd === "number" ? event.total_cost_usd : undefined;
+  const models: Record<string, Record<string, number>> = event.modelUsage && typeof event.modelUsage === "object" ? event.modelUsage : {};
+  const totals: ResultTotals = { cost: cost ?? previous?.cost ?? 0, models };
+  if (!previous) return { event, totals };
+  const part = (now: number, before: number) => now >= before ? now - before : now;
+  const next: Record<string, any> = { ...event };
+  if (cost !== undefined) next.total_cost_usd = part(cost, previous.cost);
+  next.modelUsage = Object.fromEntries(Object.entries(models).map(([model, usage]) => {
+    const before = previous.models[model];
+    if (!before) return [model, usage];
+    const own: Record<string, number> = { ...usage };
+    for (const key of ADDITIVE_USAGE) if (typeof usage[key] === "number" && typeof before[key] === "number") own[key] = part(usage[key]!, before[key]!);
+    return [model, own];
+  }));
+  return { event: next, totals };
+}
+
 // Events are external input. Unknown fields and missing counters are not fabricated.
 export function updateTelemetry(state: Telemetry, event: Record<string, any>): Telemetry {
   const next = { ...state, quotas: { ...state.quotas } };
