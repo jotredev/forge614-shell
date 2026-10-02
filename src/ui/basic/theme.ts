@@ -1,5 +1,6 @@
 import { Markdown, getCapabilities, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import type { Component } from "@earendil-works/pi-tui";
+import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
+import type { ChatLinks, LinkView } from "./chat-links.ts";
 
 /** A color as red, green and blue, each 0–255. */
 export type Rgb = readonly [number, number, number];
@@ -18,6 +19,8 @@ export const palette = {
   muted: [161, 161, 170],
   faint: [63, 63, 70],
   accent: [70, 222, 224],
+  /** The accent, brighter: a link under the pointer. */
+  accentBright: [150, 245, 247],
   success: [107, 238, 201],
   warning: [237, 183, 88],
   danger: [255, 102, 136],
@@ -80,6 +83,8 @@ export const background = (rgb: Rgb) => (text: string) => {
 
 export const accent = paint(palette.accent);
 export const foreground = paint(palette.foreground);
+/** How a link looks with the pointer over it: the brighter cyan, in bold and underlined. Nothing else changes: no box, no background. */
+export const linkHover = (text: string) => `\x1b[1m\x1b[4m${paint(palette.accentBright)(text)}\x1b[24m\x1b[22m`;
 export const bold = (text: string) => `\x1b[1m${text}\x1b[22m`;
 export const muted = paint(palette.muted);
 export const faint = paint(palette.faint);
@@ -119,17 +124,27 @@ export class PanelText implements Component {
   }
 }
 export class ChatText extends Markdown {
+  private readonly linkView?: LinkView;
+  /** Present only when the text has `links`: it reports the pointer over one of its links, and never takes the event. */
+  handleMouse?: (event: TuiMouseEvent) => undefined;
   /**
    * `baseColor` lets an error message read as red at a glance instead of blending into normal chat text. A code block has no drawn border: its rows sit on the
    * surface background, the opening row keeps only the language (in the secondary gray) and the closing row is empty — pi-tui's Markdown hands the theme just the
-   * text of those two rows, so they cannot be filled across the width.
+   * text of those two rows, so they cannot be filled across the width. With `links`, a path in the text or in `inline code` that exists on disk is drawn as a link and the link
+   * under the pointer is lit (see `ChatLinks`); without them the text is exactly what it always was.
    */
-  constructor(text: string, baseColor: (text: string) => string = foreground) {
+  constructor(text: string, baseColor: (text: string) => string = foreground, links?: ChatLinks) {
     super(text, 2, 1, {
-      heading: text => accent(text.replace(/^#+\s*/, "")), link: accent, linkUrl: muted, code: success, codeBlock: text => surface(foreground(text)),
+      heading: text => accent(text.replace(/^#+\s*/, "")), link: accent, linkUrl: muted, code: links ? text => links.linkify(text, success) : success, codeBlock: text => surface(foreground(text)),
       codeBlockBorder: text => muted(text.replace(/```/g, "")), quote: muted, quoteBorder: accent, hr: faint, listBullet: accent,
       bold: text => `\x1b[1m${text}\x1b[22m`, italic: text => `\x1b[3m${text}\x1b[23m`,
       strikethrough: text => `\x1b[9m${text}\x1b[29m`, underline: text => `\x1b[4m${text}\x1b[24m`,
-    }, { color: baseColor });
+    }, { color: links ? text => links.linkify(text, baseColor) : baseColor });
+    if (links) { this.linkView = links.view(); this.handleMouse = event => this.linkView!.pointer(event); }
+  }
+
+  override render(width: number): string[] {
+    const rows = super.render(width);
+    return this.linkView ? this.linkView.decorate(rows) : rows;
   }
 }

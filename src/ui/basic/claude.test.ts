@@ -853,3 +853,60 @@ else { require('readline').createInterface({input:process.stdin}).on('line',line
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
   }
 });
+
+/** The screen as the terminal shows it now, without escape codes: for each row, what the screen last wrote to it (`ESC[row;1H ESC[2K` and the row), so a test can find where a piece of text is. */
+function screenRows(output: string): string[] {
+  const rows: string[] = [];
+  for (const chunk of output.split(/(?=\x1b\[\d+;1H\x1b\[2K)/)) {
+    const marker = /^\x1b\[(\d+);1H\x1b\[2K([\s\S]*)$/.exec(chunk);
+    if (marker) rows[Number(marker[1]) - 1] = stripVTControlCharacters(marker[2]!.replace(/\x1b\[\?25[lh][\s\S]*$/, "").replace(/\x1b\[\d+;\d+H[\s\S]*$/, ""));
+  }
+  return Array.from(rows, row => row ?? "");
+}
+
+/**
+ * Links through the whole Claude Code screen, with real SGR mouse sequences and a fake `claude` whose answer carries a web address and a path that exists: clicking the address gives the
+ * opener exactly that address, clicking the path gives the path opener the file, and when the openers fail the chat gets one warning line with the catalog's text and the address or path.
+ * It exists because the unit tests build the screen by hand; this one proves Claude Code's screen wires the links, the clicks and the warning, as Codex's does.
+ */
+test.skipIf(process.platform === "win32")("links in a Claude Code answer open with a click and a failure is a warning line", async () => {
+  const root = await mkdtemp(join(tmpdir(), "forge614-links-ui-"));
+  const executable = join(root, "claude");
+  const file = join(root, "notes.txt"); writeFileSync(file, "x");
+  const terminal = new TestTerminal(); terminal.columns = 200; let ui: Promise<void> | undefined;
+  const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+  const previousForgeHome = process.env.FORGE614_HOME;
+  process.env.FORGE614_HOME = join(root, "forge614-home");
+  const opened = { web: [] as string[], path: [] as string[] };
+  let works = true;
+  const tools = { openWeb: async (url: string) => { opened.web.push(url); return works; }, openPath: async (path: string) => { opened.path.push(path); return works; } };
+  const answer = `Docs: https://example.com/docs and the notes ${file}:3`;
+  try {
+    await writeFile(executable, `#!${process.execPath}
+if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
+else { require('readline').createInterface({input:process.stdin}).on('line',line=>{ const msg=JSON.parse(line);
+  if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
+  if(msg.type==='user') {
+    console.log(JSON.stringify({type:'assistant',message:{role:'assistant',content:[{type:'text',text:${JSON.stringify(answer)}}]},parent_tool_use_id:null,session_id:'s1',uuid:'a-'+Date.now()}));
+    console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,duration_ms:1,duration_api_ms:1,num_turns:1,result:'ok',session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],uuid:'result-'+Date.now()}));
+  } }); }`, { mode: 0o755 });
+    ui = startClaudeUI([], executable, terminal, undefined, "en", tools); await tick();
+    for (let i = 0; i < 60 && !screenRows(terminal.output).join("\n").includes(getCatalog("en").chat.statusReady); i++) await tick();
+    enter("hello"); await tick();
+    for (let i = 0; i < 60 && !screenRows(terminal.output).join("\n").includes(file); i++) await tick();
+    const where = (text: string) => { const rows = screenRows(terminal.output); const y = rows.findIndex(row => row.includes(text)); return { x: rows[y]!.indexOf(text), y }; };
+    const click = async (x: number, y: number) => { terminal.input(`\x1b[<0;${x + 1};${y + 1}M`); terminal.input(`\x1b[<0;${x + 1};${y + 1}m`); await tick(); };
+    const web = where("https://example.com/docs"); const path = where(file);
+    await click(web.x + 4, web.y); await click(path.x + 4, path.y);
+    expect(opened).toEqual({ web: ["https://example.com/docs"], path: [file] });
+    expect(screenRows(terminal.output).join("\n")).not.toContain(getCatalog("en").chat.linkOpenFailed({ target: file }));
+    works = false;
+    await click(web.x + 4, web.y); await click(path.x + 4, path.y);
+    const text = screenRows(terminal.output).join("\n");
+    expect(text).toContain(getCatalog("en").chat.linkOpenFailed({ target: "https://example.com/docs" }));
+    expect(text).toContain(getCatalog("en").chat.linkOpenFailed({ target: file }));
+  } finally {
+    enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true });
+    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+  }
+});

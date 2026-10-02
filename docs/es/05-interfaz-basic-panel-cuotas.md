@@ -146,6 +146,24 @@ Claude Code y Codex mantienen una vista de transcripción independiente. Al alej
 
 Errores como un turno detenido, un comando inválido, una solicitud de permiso sin respuesta válida o un fallo de conexión se insertan con texto rojo. `ChatText` acepta un color base para que el formato Markdown del error conserve esa señal visual, en lugar de confundirse con una respuesta normal.
 
+## Enlaces y rutas con un clic
+
+Funciona igual con Claude Code y con Codex. Un clic izquierdo —presionar y soltar sobre el mismo enlace, sin arrastrar— abre lo que se ve subrayado o en cian en el chat; si se presiona en un enlace y se suelta en otro lugar, o hay arrastre de por medio, es una selección de texto y no abre nada.
+
+**Qué se vuelve clicable.**
+- *Enlaces web* del texto de los asistentes: los de Markdown `[texto](dirección)` y una dirección escrita sola (la que el Markdown de la pantalla reconoce). Se dibujan en cian y subrayados. Solo se abren las direcciones `http:` y `https:`, también con puerto (por ejemplo `http://localhost:3000`) y sin usuario ni contraseña dentro; cualquier otro esquema (`javascript:`, `file:`, `ftp:`, `mailto:`…), una dirección con usuario o contraseña y un enlace que un asistente escriba imitando los de Shell se dibujan pero no abren nada. Se abren en el navegador con el programa del sistema (`/usr/bin/open` en macOS, `xdg-open` en Linux, `rundll32.exe` en Windows), con la dirección como un argumento aparte y nunca a través de un shell.
+- *Rutas de archivo* en el texto de los asistentes (también dentro de `código en línea`) y en las tarjetas de herramientas (el título, la primera línea del detalle y el cuerpo de las tarjetas completas, como un permiso): absoluta, con `~/`, con `./` o `../`, o relativa a la carpeta de la sesión (también un nombre suelto con extensión, como `package.json`). Solo es enlace si **existe en disco en el momento de dibujarse**; una ruta que no existe queda como texto. Puede llevar `:línea` o `:línea:columna` al final: se ve en el enlace, pero se abre el archivo sin el sufijo. No se convierten en enlace las rutas de los bloques de código ni las líneas de un diff. Se dibujan en cian, sin subrayado.
+
+**Cómo se abre una ruta.** En macOS, con `/usr/bin/open <ruta>`: el archivo se abre con la app que la Mac tenga para él y una carpeta normal se abre en Finder. En Linux, con `xdg-open`. En Windows Shell nunca abre un archivo: una carpeta se abre en el Explorador y un archivo se muestra seleccionado en él. Siempre con la ruta como un argumento aparte y sin shell.
+
+**Qué se muestra en Finder en vez de abrirse, y por qué.** Shell nunca ejecuta nada por un clic. Por eso, en lugar de abrirse, se muestra en Finder (`/usr/bin/open -R <ruta>`; en Linux se abre la carpeta que lo contiene) una app o paquete (carpetas `.app`, `.bundle`, `.framework`, `.plugin`, `.kext`, `.pkg`, `.mpkg`, `.workflow`, `.xpc`, `.appex`, `.prefpane`, `.saver`, `.component`, `.action`, `.dext` y `.systemextension`), un archivo con permiso de ejecución y un archivo con extensión `.command`, `.tool`, `.terminal`, `.sh`, `.zsh`, `.bash`, `.pkg`, `.mpkg`, `.dmg`, `.workflow`, `.scpt` o `.applescript` (sin distinguir mayúsculas). Un enlace simbólico se juzga por lo que apunta: uno llamado `notas.txt` que lleva a una app se muestra, no se abre.
+
+**Hipervínculos de la terminal.** Los enlaces web llegan a la terminal como hipervínculos OSC 8. La librería de pantalla (pi-tui) los deja apagados en Terminal de macOS y en Orca, que no reconoce; Shell los enciende en esas dos (`TERM_PROGRAM` igual a `Apple_Terminal` u `Orca`) además de donde la librería ya los detecta. En tmux y screen, o si se definió `PI_HYPERLINKS`, queda lo que decide la librería; donde los hipervínculos están apagados no hay enlaces (los de Markdown salen como «texto (dirección)»). El clic lo atiende la pantalla de Shell, no la terminal.
+
+**Con el ratón encima.** El enlace completo —todas sus columnas, también la segunda fila si se parte— se dibuja más brillante, en negrita y subrayado; al salir vuelve a cian. No hay bordes, cajas ni fondos de color. Además, mientras el ratón está sobre un enlace, Shell le pide a la terminal el puntero de mano (OSC 22, `pointer`) y lo devuelve (`default`) al salir del enlace, al presionar otra cosa y al cerrar la pantalla; no se lo quita a la agarradera de la barra lateral si esta lo tiene. La flecha del ratón solo cambia en las terminales que entienden ese pedido; Terminal de macOS y Orca no lo entienden, y ahí la señal es el color.
+
+**Si abrir falla.** Si el programa del sistema da error o la ruta ya no existe, el chat muestra una línea en ámbar con el texto «No se pudo abrir» seguido de la ruta o la dirección (`chat.linkOpenFailed` en `src/i18n/es.ts`), sin romper nada.
+
 ## Estado vivo, modelo y razonamiento
 
 Como el semáforo de una consola de operaciones, el compositor comunica si se puede escribir, si el motor está ocupado o si espera una decisión humana.

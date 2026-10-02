@@ -30,6 +30,8 @@ export const GRIP_WIDTH = 2;
 /** The two escape sequences (OSC 22) that ask the terminal for the resize pointer and give it back; a terminal that does not know them ignores them. */
 export const RESIZE_POINTER = "\x1b]22;ew-resize\x07";
 export const DEFAULT_POINTER = "\x1b]22;default\x07";
+/** The hand pointer (OSC 22) the chat asks for while the pointer is over a link; it is given back with `DEFAULT_POINTER`, the same way. */
+export const LINK_POINTER = "\x1b]22;pointer\x07";
 
 type Hovered = "grip" | "hide" | "show";
 
@@ -63,6 +65,9 @@ export class SidebarLayout {
     this.hidden = options.hidden === true;
     this.gripComponent = { invalidate() {}, render: () => this.renderGrip(), handleMouse: event => this.gripMouse(event) };
   }
+
+  /** Whether the resize pointer is asked for right now (the grip is hovered or held); the chat's links do not take the pointer back while it is. */
+  holdsPointer(): boolean { return this.pointerRaised; }
 
   /** Told by the layout, on each pass, how many columns the terminal has: everything else is measured from it. */
   observe(columns: number): void { this.columns = columns; }

@@ -1,5 +1,5 @@
 import { stripVTControlCharacters } from "node:util";
-import { Container, HStack, ProcessTerminal, ScrollView, Text, TuiAltScreen, VStack, matchesKey } from "@earendil-works/pi-tui";
+import { Container, HStack, ProcessTerminal, ScrollView, Text, VStack, matchesKey } from "@earendil-works/pi-tui";
 import type { Terminal } from "@earendil-works/pi-tui";
 import type { Approve, Emit, NativeEvent, NativeId, NativeSession, NativeSessionInfo } from "../../engines/types.ts";
 import { createComposer } from "./composer.ts";
@@ -17,10 +17,12 @@ import type { WorkModeControl } from "../../engines/work-mode.ts";
 import { ShellStatusBar } from "./status-bar.ts";
 import { ActivityCard, chatMessage } from "./transcript.ts";
 import { effortDescription, effortLabel } from "./metrics.ts";
-import { ChatText, danger } from "./theme.ts";
+import { ChatText, danger, warning } from "./theme.ts";
+import { ChatLinks, enableTerminalLinks, realChatLinkTools } from "./chat-links.ts";
+import type { ChatLinkTools } from "./chat-links.ts";
 import { nodeWarningRow, takeNodeWarnings } from "./node-warnings.ts";
 import { ChatLogo } from "./logo.ts";
-import { IndependentScrollView, attachJumpToLatest, workspaceLayout, workspaceTerminal } from "./workspace.ts";
+import { IndependentScrollView, attachJumpToLatest, chatScreen, workspaceLayout } from "./workspace.ts";
 import { createSidebarLayout } from "./sidebar-layout.ts";
 import { codexMenuCommands, findCodexCommand } from "../../engines/codex/commands.ts";
 import { codexCommandHandlers, skillChoices } from "./codex-commands.ts";
@@ -47,11 +49,14 @@ export async function runNativeUI(
   version?: string,
   locale: Locale = "en",
   local: CodexLocalTools = realLocalTools,
+  linkTools: ChatLinkTools = realChatLinkTools,
 ): Promise<void> {
   const t = getCatalog(locale).chat;
   const tc = getCatalog(locale).codexChat;
-  const surface = workspaceTerminal(terminal);
-  const tui = new TuiAltScreen(surface, true, undefined, { mouse: true });
+  // A click on a link or a path opens it; `writeWarning` is declared below and only runs when a click fails, long after it exists.
+  enableTerminalLinks(process.env);
+  const links = new ChatLinks({ cwd, home: process.env.HOME, tools: linkTools, onFailure: target => writeWarning(t.linkOpenFailed({ target })) });
+  const { surface, tui } = chatScreen(terminal, links);
   const composer = createComposer(tui, locale);
   const transcript = new Container();
   let transcriptScroll!: IndependentScrollView;
@@ -65,6 +70,7 @@ export async function runNativeUI(
   const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd, process.env.HOME, locale);
   // The sidebar's width and whether it is hidden come back from the preferences and are saved when the person lets go of the grip or clicks a button; the footer takes the sidebar's data while it is not drawn.
   const sidebarLayout = createSidebarLayout(surface, locale);
+  links.pointerHeldElsewhere = () => sidebarLayout.holdsPointer();
   const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version, locale, () => sidebarLayout.isVisible());
   tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface, sidebarLayout));
   attachJumpToLatest(tui, transcriptScroll, locale, sidebarLayout);
@@ -87,15 +93,17 @@ export async function runNativeUI(
   const approvals: { description: string; answer: (allow: boolean) => void }[] = [];
   let sessions: NativeSessionInfo[] = [];
   let session: NativeSession;
-  const write = (text: string) => { const component = new ChatText(clean(text)); transcript.addChild(component); tui.requestRender(); return component; };
+  const write = (text: string) => { const component = new ChatText(clean(text), undefined, links); transcript.addChild(component); tui.requestRender(); return component; };
   /** Red, so an error reads as an error at a glance instead of blending into a normal reply. */
-  const writeError = (text: string) => { const component = new ChatText(clean(text), danger); transcript.addChild(component); tui.requestRender(); return component; };
+  const writeError = (text: string) => { const component = new ChatText(clean(text), danger, links); transcript.addChild(component); tui.requestRender(); return component; };
+  /** Yellow, for a line that says something did not work without being an error of the conversation (a click on a link that could not be opened). */
+  const writeWarning = (text: string) => { const component = new ChatText(clean(text), warning, links); transcript.addChild(component); tui.requestRender(); return component; };
   /** A Node process warning, as a normal Shell notice: one muted row with the catalog's prefix (see `takeNodeWarnings`). */
   const writeNodeWarning = (message: string) => { transcript.addChild(nodeWarningRow(clean(t.nodeWarning({ message })))); tui.requestRender(); };
   /** `at` is the time of a message replayed from history (`null`: unknown, no time shown); a live message leaves it out and takes the time of now. */
   const writeChat = (role: "user" | "assistant" | "system", text: string, at?: number | null) => write(chatMessage(role, clean(text), locale, at));
   const writeActivity = (title: string, detail: string, expanded = false) => {
-    const card = new ActivityCard(title, "", clean(detail), expanded);
+    const card = new ActivityCard(title, "", clean(detail), expanded, undefined, undefined, undefined, links);
     transcript.addChild(card); tui.requestRender();
     return card;
   };
@@ -201,7 +209,7 @@ export async function runNativeUI(
   const showApproval = () => {
     const item = approvals[0];
     if (!item) return;
-    transcript.addChild(new ActivityCard(t.permissionRequestedTitle, "", clean(item.description), true));
+    transcript.addChild(new ActivityCard(t.permissionRequestedTitle, "", clean(item.description), true, undefined, undefined, undefined, links));
     tui.requestRender();
     void askPermission(input, locale).then(allowed => item.answer(allowed));
   };

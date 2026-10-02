@@ -289,6 +289,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     errorPrefixed: ({ message }) => `Error: ${message}`,
     turnStopped: ({ message }) => `Turn stopped: ${message}`,
     nodeWarning: ({ message }) => `Node warning: ${message}`,
+    linkOpenFailed: ({ target }) => `Could not open ${target}`,
     resumeUseNumber: "Use /resume <number>. This loads history and waits for your next message.",
     noSessionsFound: "No sessions found for this project.",
     quitConfirmActiveWork: "Work or authentication is active. Use /f614:quit to leave: it asks before stopping anything. Nothing was stopped.",
