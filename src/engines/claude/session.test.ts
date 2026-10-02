@@ -368,7 +368,7 @@ test("a task_id missing from a background_tasks_changed snapshot without an expl
   ]);
 });
 
-test("a task still running when the turn ends is dropped, not frozen at running", async () => {
+test("a task still running when the turn ends stays running: it lives in the open process and goes on between turns", async () => {
   const session = new ClaudeSession({
     cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
     run: () => (async function* () {
@@ -378,7 +378,20 @@ test("a task still running when the turn ends is dropped, not frozen at running"
     })(),
   });
   await session.send("go", () => {}, async () => true);
-  expect(session.backgroundActivity.find(activity => activity.id === "t1")).toBeUndefined();
+  expect(session.backgroundActivity.map(activity => [activity.id, activity.state])).toEqual([["t1", "running"]]);
+  expect(session.runningTasks()).toBe(1);
+});
+
+/** A foreground task cannot outlive its turn, so nothing would ever close it: it is the one kind that is dropped when the turn ends. */
+test("a foreground task still running when the turn ends is dropped, because nothing would close it", async () => {
+  const session = new ClaudeSession({
+    cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
+    run: () => (async function* () {
+      yield { type: "system", subtype: "task_started", task_id: "fg", description: "foreground", task_type: "local_agent", is_backgrounded: false, uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
+      yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+    })(),
+  });
+  await session.send("go", () => {}, async () => true);
   expect(session.backgroundActivity).toEqual([]);
 });
 

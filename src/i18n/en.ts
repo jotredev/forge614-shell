@@ -359,6 +359,9 @@ The selected engine's project settings and permissions apply. This is not a sand
     toolRunning: ({ duration }) => `Running · ${duration}`,
     toolCompleted: ({ duration }) => `Completed · ${duration}`,
     toolFailed: ({ duration }) => `Failed · ${duration}`,
+    statusReadyBackground: ({ count }) => `Ready · ${count} in the background`,
+    backgroundCutQuestion: ({ count }) => count === 1 ? "There is 1 background task; it will be cut. Continue?" : `There are ${count} background tasks; they will be cut. Continue?`,
+    backgroundStopQuestion: ({ count }) => count === 1 ? "Stopping also cuts 1 background task. Continue?" : `Stopping also cuts ${count} background tasks. Continue?`,
   },
   memorySource: {
     byAssistant: "Memory: the assistant delivers it at startup",
@@ -525,6 +528,12 @@ The selected engine's project settings and permissions apply. This is not a sand
     idle: "Nothing running in the background right now.",
     notReportedByEngine: "This engine doesn't report background activity.",
     statusBarCount: ({ count }) => `${count} background`,
+    interrupted: "interrupted",
+    cardDone: "finished",
+    cardFailed: "failed",
+    cardStopped: "stopped",
+    cardInterrupted: "interrupted",
+    noticeTitle: "Notice from Claude Code",
   },
   update: {
     updated: ({ label, detail }) => `${label}: updated${detail ? ` (${detail})` : ""}`,

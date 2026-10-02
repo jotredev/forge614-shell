@@ -123,7 +123,7 @@ export class ShellSidebar implements Component {
       } else {
         for (const activity of snapshot.backgroundActivity) {
           const elapsed = formatDuration(((activity.endedAt ?? Date.now()) - activity.startedAt) / 1000);
-          const stateLabel = activity.state === "running" ? ba.running : activity.state === "done" ? ba.done : ba.failed;
+          const stateLabel = activity.state === "running" ? ba.running : activity.state === "done" ? ba.done : activity.state === "interrupted" ? ba.interrupted : ba.failed;
           const expanded = this.expandedActivityIds.has(activity.id);
           const status = `${stateLabel} · ${elapsed}`;
           // One row: the title gives way (cut with "…") so the state and time stay visible; expanded, the full title shows.

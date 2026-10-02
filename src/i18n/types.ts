@@ -364,6 +364,12 @@ export interface Catalog {
     toolRunning: (params: { duration: string }) => string;
     toolCompleted: (params: { duration: string }) => string;
     toolFailed: (params: { duration: string }) => string;
+    /** The box's text when Claude Code is quiet but `count` background tasks are still running inside it. */
+    statusReadyBackground: (params: { count: number }) => string;
+    /** The question before something cuts `count` background tasks (leaving, `/new`, `/resume`, `/logout`, a new effort): they live inside the process and do not survive it. */
+    backgroundCutQuestion: (params: { count: number }) => string;
+    /** The question before `/f614:stop`, which also kills the background tasks together with the turn. */
+    backgroundStopQuestion: (params: { count: number }) => string;
   };
   /** The status line that says where Engram's memory comes from (`memorySourceLine`). */
   memorySource: {
@@ -541,6 +547,15 @@ export interface Catalog {
     idle: string;
     notReportedByEngine: string;
     statusBarCount: (params: { count: number }) => string;
+    /** The state of a task that was running when Claude Code was closed or died. */
+    interrupted: string;
+    /** The state words of the card a finished task draws in the chat. */
+    cardDone: string;
+    cardFailed: string;
+    cardStopped: string;
+    cardInterrupted: string;
+    /** The title of the card that carries a notice Claude Code gives about its background agents (for example on resuming a conversation). */
+    noticeTitle: string;
   };
   update: {
     updated: (params: { label: string; detail?: string }) => string;
