@@ -25,5 +25,6 @@ Shell is a TypeScript application run with Bun and Node.js 22.19+. It is the hum
 | 06 | [Releases, seguridad y mantenimiento](docs/es/06-preparacion-release-1.0.0-instalador.md) | [Releases, security, and maintenance](docs/en/06-release-1.0.0-bundle-installer.md) |
 | 07 | [Inicialización de Engram e integración de memoria](docs/es/07-inicializacion-engram-y-mcp.md) | [Engram initialization and memory integration](docs/en/07-engram-initialization-and-mcp.md) |
 | 08 | [Diagnóstico y límites operativos](docs/es/08-diagnostico-y-limites.md) | [Troubleshooting and operational limits](docs/en/08-troubleshooting-and-limits.md) |
+| 09 | [Idioma y configuración regional](docs/es/09-idioma-y-configuracion-regional.md) | [Language and locale](docs/en/09-language-and-locale.md) |
 
 The local-to-Notion correspondence, version, and content fingerprints (short change-detection hashes) live in [`docs/notion-map.json`](docs/notion-map.json).
