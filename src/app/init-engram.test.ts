@@ -112,7 +112,41 @@ class TestTerminal implements Terminal {
   moveBy() {} hideCursor() {} showCursor() {} clearLine() {}
   clearFromCursor() {} clearScreen() {} setTitle() {} setProgress() {}
 }
-const tick = () => new Promise(resolve => setTimeout(resolve, 25));
+
+/**
+ * Waits until `text` is on the terminal's output, i.e. until the screen the next keystroke is meant for has really been drawn.
+ * A keystroke sent before its screen is up (the memory picker only appears after Engines answered `detect` and `capabilities`) is lost, so a fixed pause is a race; this waits for the
+ * condition itself and fails with a readable error, instead of hanging, if the screen never comes.
+ */
+async function screen(terminal: TestTerminal, text: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!terminal.output.includes(text)) {
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for the screen to show: ${text}`);
+    await new Promise(resolve => setTimeout(resolve, 2));
+  }
+}
+
+/** Sends one keystroke and waits until the screen answers it with a new frame (for keys that always change what is drawn, such as moving the selection). */
+async function redrawAfter(terminal: TestTerminal, data: string, timeoutMs = 10_000): Promise<void> {
+  const before = terminal.output.length;
+  terminal.input(data);
+  const deadline = Date.now() + timeoutMs;
+  while (terminal.output.length === before) {
+    if (Date.now() > deadline) throw new Error("Timed out waiting for the screen to redraw after a keystroke");
+    await new Promise(resolve => setTimeout(resolve, 2));
+  }
+}
+
+/** The titles that tell each screen of the English flow is up (each appears on that screen only). */
+const SCREEN = {
+  intro: "Forge614 Engram — memory initialization",
+  postgres: "PostgreSQL synchronization",
+  postgresConnection: "PostgreSQL connection string",
+  reinforcement: "Memory reinforcement",
+  summary: "Forge614 Engram commands that will run:",
+  picker: "Configure Engram memory integration",
+  preview: "Confirm memory integration",
+} as const;
 
 class FakeStdin {
   private listeners = new Map<string, Set<() => void>>();
@@ -172,13 +206,14 @@ test("FORGE614_SHELL_DEBUG_INIT=1 never writes raw debug event lines to stderr w
     const run = runInitCommand(["--product", "engram"], {
       terminal, home, env: { FORGE614_SHELL_DEBUG_INIT: "1" },
     });
-    await tick();
-    terminal.input("\r"); await tick(); // Continue
+    await screen(terminal, SCREEN.intro);
+    terminal.input("\r"); // Continue
+    await screen(terminal, SCREEN.postgres);
     // Repeatedly navigate up/down on the PostgreSQL screen — this is exactly the sequence that
     // left stale `→` markers in Orca when the debug logger wrote to stderr mid-render.
     for (let i = 0; i < 4; i++) {
-      terminal.input("\x1b[B"); await tick();
-      terminal.input("\x1b[A"); await tick();
+      await redrawAfter(terminal, "\x1b[B");
+      await redrawAfter(terminal, "\x1b[A");
     }
     terminal.input("\x1b"); // Esc cancels
     await run;
@@ -205,12 +240,16 @@ test("the debug log file is written under $FORGE614_HOME/shell/logs/, and a Post
       run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
       enginesRun: async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, agents: [] }), stderr: "" }),
     });
-    await tick();
-    terminal.input("\r"); await tick(); // Continue
-    terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
+    await screen(terminal, SCREEN.intro);
+    terminal.input("\r"); // Continue
+    await screen(terminal, SCREEN.postgres);
+    terminal.input("\x1b[B"); terminal.input("\r"); // PostgreSQL: Yes
+    await screen(terminal, SCREEN.postgresConnection);
     terminal.input(postgresUrl);
-    terminal.input("\r"); await tick(); // submit connection string
-    terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
+    terminal.input("\r"); // submit connection string
+    await screen(terminal, SCREEN.reinforcement);
+    terminal.input("\x1b[B"); terminal.input("\r"); // Reinforcement: No
+    await screen(terminal, SCREEN.summary);
     terminal.input("\x1b"); // cancel on the summary screen instead of confirming
     await run;
     const logsDir = join(home, ".forge614", "shell", "logs");
@@ -236,7 +275,7 @@ test("once the TUI has exited, the debug log path is announced exactly once on t
     const run = runInitCommand(["--product", "engram"], {
       terminal, home, env: { FORGE614_SHELL_DEBUG_INIT: "1" },
     });
-    await tick();
+    await screen(terminal, SCREEN.intro);
     terminal.input("\x1b"); // Esc cancels on the intro screen
     await run;
     const announceLines = stderrWrites.filter(line => line.includes("init debug log:"));
@@ -258,7 +297,7 @@ test("without FORGE614_SHELL_DEBUG_INIT, nothing is written to stderr and no log
     const terminal = new TestTerminal();
     process.exitCode = 0;
     const run = runInitCommand(["--product", "engram"], { terminal, home });
-    await tick();
+    await screen(terminal, SCREEN.intro);
     terminal.input("\x1b");
     await run;
     expect(stderrWrites).toEqual([]);
@@ -275,7 +314,7 @@ test("stdin closing for real (not a Ctrl-D keypress) is never a silent cancel: i
   const stdin = new FakeStdin();
   process.exitCode = 0;
   const run = runInitCommand(["--product", "engram"], { terminal, stdin });
-  await tick(); // intro screen is up, waiting on input
+  await screen(terminal, SCREEN.intro); // intro screen is up, waiting on input
   stdin.emit("end"); // the real stdin stream closed, not a Ctrl-D keypress
   await run;
   expect(process.exitCode as number | undefined).toBe(1);
@@ -295,7 +334,7 @@ test("stdin closing before any confirmation makes zero Engram or Engines calls, 
     run: async (command, args) => { engramCalls.push([command, ...args]); return { status: 0, stdout: "{}", stderr: "" }; },
     enginesRun: async (command, args) => { enginesCalls.push([command, ...args]); return { status: 0, stdout: "{}", stderr: "" }; },
   });
-  await tick(); // intro screen is up, waiting on input — nothing has been confirmed yet
+  await screen(terminal, SCREEN.intro); // intro screen is up, waiting on input — nothing has been confirmed yet
   stdin.emit("end");
   await run;
   expect(engramCalls).toEqual([]);
@@ -328,7 +367,7 @@ test("stdin closing mid-flow stops the flow: no memory-setup Engines calls happe
   });
   await driveEngramScreens(terminal); // through intro, postgres, reinforcement, and the summary confirm
   await capabilitiesReached; // memory setup has detected the assistant and is about to show the picker
-  await tick();
+  await screen(terminal, SCREEN.picker);
   const callsBeforeAbort = enginesCalls.length;
   stdin.emit("end"); // real stdin close while the assistant picker is up, waiting on input
   await run; // must resolve — a hang here means the abort never propagated
@@ -352,13 +391,17 @@ test("locale: \"es\" translates the whole Engram flow end to end, including the 
       return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code")), stderr: "" };
     },
   });
-  await tick();
-  expect(terminal.output).toContain("Forge614 Engram — inicialización de memoria");
-  terminal.input("\r"); await tick(); // Continuar
-  terminal.input("\r"); await tick(); // PostgreSQL: No
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Refuerzo: No
-  terminal.input("\r"); await tick(); // Resumen: Confirmar
-  terminal.input(" "); terminal.input("\r"); await tick(); // elegir Claude Code, enviar
+  await screen(terminal, "Forge614 Engram — inicialización de memoria");
+  terminal.input("\r"); // Continuar
+  await screen(terminal, "Sincronización con PostgreSQL");
+  terminal.input("\r"); // PostgreSQL: No
+  await screen(terminal, "Refuerzo de memoria");
+  terminal.input("\x1b[B"); terminal.input("\r"); // Refuerzo: No
+  await screen(terminal, "Comandos de Forge614 Engram que se ejecutarán:");
+  terminal.input("\r"); // Resumen: Confirmar
+  await screen(terminal, "Configurar la integración de memoria de Engram");
+  terminal.input(" "); terminal.input("\r"); // elegir Claude Code, enviar
+  await screen(terminal, "Confirmar integración de memoria");
   terminal.input("\r"); // vista previa: Confirmar
   await run;
   expect(terminal.output).toContain("La inicialización de memoria de Forge614 Engram se completó.");
@@ -377,8 +420,7 @@ test("an injected terminal alone is enough to run, even with no TTY on the real 
     const terminal = new TestTerminal();
     process.exitCode = 0;
     const run = runInitCommand(["--product", "engram"], { terminal });
-    await tick();
-    expect(terminal.output).toContain("Forge614 Engram stores persistent memory locally on this device.");
+    await screen(terminal, "Forge614 Engram stores persistent memory locally on this device.");
     terminal.input("\x1b"); // Escape on the intro screen
     await run;
     process.exitCode = 0;
@@ -396,7 +438,7 @@ test("cancelling makes zero Engram calls and sets exit code 130", async () => {
     terminal,
     run: async (command, args) => { calls.push([command, ...args]); return { status: 0, stdout: "{}", stderr: "" }; },
   });
-  await tick();
+  await screen(terminal, SCREEN.intro);
   terminal.input("\x1b"); // Escape on the intro screen
   await run;
   expect(calls).toEqual([]);
@@ -417,11 +459,7 @@ test("confirming with local storage only runs exactly init --json", async () => 
     run: async (command, args) => { calls.push([command, ...args]); return { status: 0, stdout: "{}", stderr: "" }; },
     enginesRun: async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, agents: [] }), stderr: "" }),
   });
-  await tick();
-  terminal.input("\r"); await tick(); // Continue
-  terminal.input("\r"); await tick(); // PostgreSQL: No (default)
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
-  terminal.input("\r"); // Summary: Confirm (default)
+  await driveEngramScreens(terminal);
   await run;
   expect(calls).toEqual([["/Users/tester/.forge614/engram/bin/forge614-engram", "init", "--json"]]);
 });
@@ -434,12 +472,16 @@ test("confirming with PostgreSQL sends the connection string only to Engram, nev
     run: async (command, args) => { calls.push([command, ...args]); return { status: 0, stdout: "{}", stderr: "" }; },
     enginesRun: async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, agents: [] }), stderr: "" }),
   });
-  await tick();
-  terminal.input("\r"); await tick(); // Continue
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
+  await screen(terminal, SCREEN.intro);
+  terminal.input("\r"); // Continue
+  await screen(terminal, SCREEN.postgres);
+  terminal.input("\x1b[B"); terminal.input("\r"); // PostgreSQL: Yes
+  await screen(terminal, SCREEN.postgresConnection);
   terminal.input("postgres://user:pw@host/db");
-  terminal.input("\r"); await tick(); // submit connection string
-  terminal.input("\r"); await tick(); // Reinforcement: Yes (default)
+  terminal.input("\r"); // submit connection string
+  await screen(terminal, SCREEN.reinforcement);
+  terminal.input("\r"); // Reinforcement: Yes (default)
+  await screen(terminal, SCREEN.summary);
   terminal.input("\r"); // Summary: Confirm
   await run;
   expect(calls).toEqual([
@@ -455,11 +497,7 @@ test("an Engram failure is reported, not swallowed as success", async () => {
     terminal, home: "/Users/tester",
     run: async () => ({ status: 1, stdout: "", stderr: JSON.stringify({ code: "STORAGE_ERROR", error: "No se pudo completar la operación." }) }),
   });
-  await tick();
-  terminal.input("\r"); await tick(); // Continue
-  terminal.input("\r"); await tick(); // PostgreSQL: No (default)
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
-  terminal.input("\r"); // Summary: Confirm (default)
+  await driveEngramScreens(terminal);
   await expect(run).rejects.toThrow("No se pudo completar la operación.");
 });
 
@@ -474,12 +512,16 @@ test("a failure that echoes the connection string never leaks it to the error or
       stderr: JSON.stringify({ code: "POSTGRES_UNAVAILABLE", error: `No se pudo conectar a ${postgresUrl}.` }),
     }),
   });
-  await tick();
-  terminal.input("\r"); await tick(); // Continue
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
+  await screen(terminal, SCREEN.intro);
+  terminal.input("\r"); // Continue
+  await screen(terminal, SCREEN.postgres);
+  terminal.input("\x1b[B"); terminal.input("\r"); // PostgreSQL: Yes
+  await screen(terminal, SCREEN.postgresConnection);
   terminal.input(postgresUrl);
-  terminal.input("\r"); await tick(); // submit connection string
-  terminal.input("\r"); await tick(); // Reinforcement: Yes (default)
+  terminal.input("\r"); // submit connection string
+  await screen(terminal, SCREEN.reinforcement);
+  terminal.input("\r"); // Reinforcement: Yes (default)
+  await screen(terminal, SCREEN.summary);
   terminal.input("\r"); // Summary: Confirm
   const error = await run.catch((thrown: Error) => thrown);
   expect((error as Error).message).not.toContain(postgresUrl);
@@ -603,12 +645,29 @@ function agentIdFrom(args: string[]): string {
   return args[args.indexOf("--agent") + 1]!;
 }
 
+/** Takes the Engram screens in turn, each one only once it is on screen, and confirms the summary. What comes next (the memory picker, or a result) is up to the caller to wait for. */
 async function driveEngramScreens(terminal: TestTerminal): Promise<void> {
-  await tick();
-  terminal.input("\r"); await tick(); // Continue
-  terminal.input("\r"); await tick(); // PostgreSQL: No (default)
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
-  terminal.input("\r"); await tick(); // Engram summary: Confirm
+  await screen(terminal, SCREEN.intro);
+  terminal.input("\r"); // Continue
+  await screen(terminal, SCREEN.postgres);
+  terminal.input("\r"); // PostgreSQL: No (default)
+  await screen(terminal, SCREEN.reinforcement);
+  terminal.input("\x1b[B"); terminal.input("\r"); // Reinforcement: No
+  await screen(terminal, SCREEN.summary);
+  terminal.input("\r"); // Engram summary: Confirm
+}
+
+/** Checks the given rows of the memory picker (`keys` moves and toggles) once it is on screen, and submits it. */
+async function submitPicker(terminal: TestTerminal, keys: string[] = [" "]): Promise<void> {
+  await screen(terminal, SCREEN.picker);
+  for (const key of keys) terminal.input(key);
+  terminal.input("\r");
+}
+
+/** Confirms the preview once it is on screen. */
+async function confirmPreview(terminal: TestTerminal): Promise<void> {
+  await screen(terminal, SCREEN.preview);
+  terminal.input("\r");
 }
 
 test("selecting no assistants initializes Engram without configuring any memory integration", async () => {
@@ -624,7 +683,7 @@ test("selecting no assistants initializes Engram without configuring any memory 
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input("\r"); // memory picker: submit with nothing checked
+  await submitPicker(terminal, []); // memory picker: submit with nothing checked
   await run;
   expect(enginesCalls).toEqual([
     ["/Users/tester/.forge614/engines/bin/forge614-engines", "detect"],
@@ -659,8 +718,8 @@ test("Claude Code and Codex both plan, apply, and verify to a complete memory in
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\x1b[B"); terminal.input(" "); terminal.input("\r"); await tick(); // check both, submit
-  terminal.input("\r"); // preview: Confirm
+  await submitPicker(terminal, [" ", "\x1b[B", " "]); // check both, submit
+  await confirmPreview(terminal);
   await run;
   expect(enginesCalls.filter(c => c[2] === "memory-install").map(c => agentIdFrom(c)).sort()).toEqual(["claude-code", "codex"]);
   expect(enginesCalls.filter(c => c[2] === "memory-integration").map(c => agentIdFrom(c)).sort()).toEqual(["claude-code", "codex"]);
@@ -730,7 +789,7 @@ test("a conflict on every component makes no apply call and reports the conflict
   // Both components are blocked, so the plan is noop:true — the memory picker's submit is the
   // last screen: no preview/confirm screen appears (there is nothing pending to apply), so no
   // further terminal input is sent here.
-  terminal.input(" "); terminal.input("\r"); // check Claude Code, submit
+  await submitPicker(terminal); // check Claude Code, submit
   await run;
   expect(enginesCalls.some(c => c[0] === "apply" || c.includes("apply"))).toBe(false);
   expect(terminal.output).toContain(`Claude Code: blocked — An existing "forge614-engram" MCP entry with different content is already present.`);
@@ -750,7 +809,8 @@ test("cancelling the memory preview makes zero writes", async () => {
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
+  await submitPicker(terminal); // check Claude Code, submit
+  await screen(terminal, SCREEN.preview);
   terminal.input("\x1b[B"); terminal.input("\r"); // preview: move to Cancel, submit
   await run;
   expect(enginesCalls.some(c => c.includes("apply"))).toBe(false);
@@ -771,7 +831,7 @@ test("a plan-level Engines failure for one assistant is reported without failing
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); // check Claude Code, submit (no preview: nothing was planned)
+  await submitPicker(terminal); // check Claude Code, submit (no preview: nothing was planned)
   await run;
   expect(enginesCalls.some(c => c.includes("apply"))).toBe(false);
   expect(terminal.output).toContain("Forge614 Engram memory initialization is complete.");
@@ -794,8 +854,8 @@ test("an apply that reports applied: false is shown as not configured, without c
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
-  terminal.input("\r"); // preview: Confirm
+  await submitPicker(terminal); // check Claude Code, submit
+  await confirmPreview(terminal);
   await run;
   expect(enginesCalls.some(c => c.includes("memory-integration"))).toBe(false);
   expect(terminal.output).toContain("Claude Code: could not be configured — Forge614 Engines reported the change was not applied.");
@@ -815,8 +875,8 @@ test("verify reporting absent after a successful apply is communicated, never as
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
-  terminal.input("\r"); // preview: Confirm
+  await submitPicker(terminal); // check Claude Code, submit
+  await confirmPreview(terminal);
   await run;
   expect(terminal.output).toContain("Claude Code: could not be configured — Forge614 Engines could not confirm any memory integration for Claude Code.");
 });
@@ -835,8 +895,8 @@ test("verify reporting partial after a successful apply explains exactly what is
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
-  terminal.input("\r"); // preview: Confirm
+  await submitPicker(terminal); // check Claude Code, submit
+  await confirmPreview(terminal);
   await run;
   expect(terminal.output).toContain("Claude Code: could not be configured — Forge614 Engines could not confirm full memory integration for Claude Code.");
 });
@@ -868,8 +928,8 @@ test("two selected assistants report independently when one apply fails", async 
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\x1b[B"); terminal.input(" "); terminal.input("\r"); await tick(); // check both, submit
-  terminal.input("\r"); // preview: Confirm
+  await submitPicker(terminal, [" ", "\x1b[B", " "]); // check both, submit
+  await confirmPreview(terminal);
   await run;
   expect(terminal.output).toContain("Claude Code: configured — MCP server and memory instructions are installed and active");
   expect(terminal.output).toContain("Codex: could not be configured — File changed since the plan was computed: /Users/tester/.codex/config.toml");
@@ -902,7 +962,7 @@ test("an assistant whose plan is already complete and needs no writes is reporte
   });
   await driveEngramScreens(terminal);
   // Nothing is pending, so the picker's submit is the last screen: no preview/confirm appears.
-  terminal.input(" "); terminal.input("\r"); // check Claude Code, submit
+  await submitPicker(terminal); // check Claude Code, submit
   await run;
   expect(enginesCalls.some(c => c.includes("apply"))).toBe(false);
   expect(enginesCalls.some(c => c.includes("memory-integration"))).toBe(true);
@@ -945,8 +1005,8 @@ test("init offers Claude Code and hides an agent that is not fully supported whe
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); await tick(); // check the only listed assistant, submit
-  terminal.input("\r"); // preview: Confirm
+  await submitPicker(terminal); // check the only listed assistant, submit
+  await confirmPreview(terminal);
   await run;
   expect(enginesCalls.filter(c => c[1] === "plan" || c[1] === "apply" || c[1] === "verify").some(c => c.includes("example-agent"))).toBe(false);
   expect(enginesCalls.filter(c => c[2] === "memory-install").map(c => agentIdFrom(c))).toEqual(["claude-code"]);
@@ -968,15 +1028,19 @@ test("a PostgreSQL connection string never reaches the screen or the log through
       return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code")), stderr: "" };
     },
   });
-  await tick();
-  terminal.input("\r"); await tick(); // Continue
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
+  await screen(terminal, SCREEN.intro);
+  terminal.input("\r"); // Continue
+  await screen(terminal, SCREEN.postgres);
+  terminal.input("\x1b[B"); terminal.input("\r"); // PostgreSQL: Yes
+  await screen(terminal, SCREEN.postgresConnection);
   terminal.input(postgresUrl);
-  terminal.input("\r"); await tick(); // submit connection string
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
-  terminal.input("\r"); await tick(); // Engram summary: Confirm
-  terminal.input(" "); terminal.input("\r"); await tick(); // memory picker: check Claude Code, submit
-  terminal.input("\r"); // preview: Confirm
+  terminal.input("\r"); // submit connection string
+  await screen(terminal, SCREEN.reinforcement);
+  terminal.input("\x1b[B"); terminal.input("\r"); // Reinforcement: No
+  await screen(terminal, SCREEN.summary);
+  terminal.input("\r"); // Engram summary: Confirm
+  await submitPicker(terminal); // memory picker: check Claude Code, submit
+  await confirmPreview(terminal);
   await run;
   // The whole run really reached the end of the memory flow, not just the Engram summary.
   expect(terminal.output).toContain("Claude Code: configured — MCP server and memory instructions are installed and active");
@@ -1029,8 +1093,8 @@ test("a freshly-configured Claude Code with no runtime hook evidence yet is repo
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
-  terminal.input("\r"); // preview: Confirm
+  await submitPicker(terminal); // check Claude Code, submit
+  await confirmPreview(terminal);
   await run;
   expect(verifyCalls).toBe(1);
   expect(terminal.output).toContain("Claude Code: ready — Claude Code memory integration is ready. It finishes confirming itself the next time you use Claude Code normally.");
@@ -1054,8 +1118,8 @@ test("Claude Code is reported fully configured when verify already observes the 
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); await tick(); // check Claude Code, submit
-  terminal.input("\r"); // preview: Confirm
+  await submitPicker(terminal); // check Claude Code, submit
+  await confirmPreview(terminal);
   await run;
   expect(verifyCalls).toBe(1);
   expect(terminal.output).toContain("Claude Code: configured — MCP server and memory instructions are installed and active");
@@ -1077,8 +1141,8 @@ test("Codex reporting needs-user-trust is never launched, is verified exactly on
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r"); await tick(); // check Codex, submit
-  terminal.input("\r"); // preview: Confirm — this is the ONLY confirmation in the whole run
+  await submitPicker(terminal); // check Codex, submit
+  await confirmPreview(terminal); // preview: Confirm — this is the ONLY confirmation in the whole run
   await run;
   expect(verifyCalls).toBe(1);
   expect(terminal.output).toContain("Codex: ready — Codex memory integration is ready. When you next start Codex normally, Codex may ask you once to approve the Forge614 memory hook.");
@@ -1115,7 +1179,7 @@ test("evidence-expired for an already-fully-configured Claude Code is reported r
   });
   await driveEngramScreens(terminal);
   // Nothing is pending (plan.noop is true), so no preview/confirm screen appears.
-  terminal.input(" "); terminal.input("\r");
+  await submitPicker(terminal);
   await run;
   expect(verifyCalls).toBe(1);
   const allText = terminal.output;
@@ -1147,7 +1211,7 @@ test("Codex's expired evidence is never reported or worded as a lack of trust �
     },
   });
   await driveEngramScreens(terminal);
-  terminal.input(" "); terminal.input("\r");
+  await submitPicker(terminal);
   await run;
   expect(terminal.output.includes("has not trusted the memory hook")).toBe(false);
   expect(terminal.output.includes("may ask you once to approve")).toBe(false);
@@ -1196,7 +1260,7 @@ test("a genuine hook conflict is reported blocked even when MCP and instructions
   await driveEngramScreens(terminal);
   // The plan is noop:true (nothing Engines can write), so no preview/confirm screen appears — the
   // picker's submit goes straight through the `resolved` branch, which calls verify but never apply.
-  terminal.input(" "); terminal.input("\r");
+  await submitPicker(terminal);
   await run;
   expect(enginesCalls.some(c => c.includes("apply"))).toBe(false);
   expect(terminal.output).toContain(`Claude Code: blocked — An existing SessionStart hook with different content is already present in /Users/tester/.claude/settings.json`);
@@ -1259,15 +1323,19 @@ test("no run of this flow ever prints a PostgreSQL connection string, a token, o
       return { status: 0, stdout: JSON.stringify(verifyPayload("claude-code", { hookRuntimeStatus: { kind: "runtime-observed" } })), stderr: "" };
     },
   });
-  await tick();
-  terminal.input("\r"); await tick(); // Continue
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // PostgreSQL: Yes
+  await screen(terminal, SCREEN.intro);
+  terminal.input("\r"); // Continue
+  await screen(terminal, SCREEN.postgres);
+  terminal.input("\x1b[B"); terminal.input("\r"); // PostgreSQL: Yes
+  await screen(terminal, SCREEN.postgresConnection);
   terminal.input(postgresUrl);
-  terminal.input("\r"); await tick(); // submit connection string
-  terminal.input("\x1b[B"); terminal.input("\r"); await tick(); // Reinforcement: No
-  terminal.input("\r"); await tick(); // Engram summary: Confirm
-  terminal.input(" "); terminal.input("\r"); await tick(); // memory picker: check Claude Code, submit
-  terminal.input("\r"); // preview: Confirm
+  terminal.input("\r"); // submit connection string
+  await screen(terminal, SCREEN.reinforcement);
+  terminal.input("\x1b[B"); terminal.input("\r"); // Reinforcement: No
+  await screen(terminal, SCREEN.summary);
+  terminal.input("\r"); // Engram summary: Confirm
+  await submitPicker(terminal); // memory picker: check Claude Code, submit
+  await confirmPreview(terminal);
   await run;
   for (const forbidden of [postgresUrl, "sup3rsecret", fakeSecret, "afterContent", "beforeHash", "abc123"]) {
     expect(terminal.output).not.toContain(forbidden);
