@@ -755,7 +755,6 @@ The selected engine's project settings and permissions apply. This is not a sand
     feedbackFailed: ({ error }) => `Failed to upload feedback: ${error}`,
     importNone: "No compatible setup was found to import.",
     importDetectFailed: ({ errors }) => `Could not check for importable setup: ${errors}`,
-    importSourceTitle: "Where do you want to import from?",
     importTitle: ({ source }) => `Import from ${source}`,
     importHelp: "Enter marks or unmarks an item. Nothing is copied until you confirm.",
     importProceed: ({ count }) => `Import selected (${count})`,

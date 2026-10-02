@@ -55,7 +55,7 @@ Shell never builds the MCP entry or the instructions content itself, and never r
 
 1. Shell calls `forge614-engines detect` and requires `schemaVersion: 1`.
 2. For every installed assistant, it calls `forge614-engines capabilities --agent <id>`.
-3. It offers only assistants whose response has `fullySupported: true` (today Claude Code and Codex; Cursor is not offered). A response without a boolean `fullySupported` means an outdated Engines and Shell asks for `forge614-shell update`; if the call itself fails, that assistant is simply not listed. This list does not depend on a chat adapter existing.
+3. It offers only assistants whose response has `fullySupported: true` (today Claude Code and Codex). A response without a boolean `fullySupported` means an outdated Engines and Shell asks for `forge614-shell update`; if the call itself fails, that assistant is simply not listed. This list does not depend on a chat adapter existing.
 4. The person can select zero, one, or many assistants. Esc cancels memory setup; selecting zero writes nothing.
 5. For every selection, Shell requests a read-only plan covering both parts at once:
 
@@ -84,7 +84,7 @@ forge614-engines verify memory-integration --agent <id>
 
 ## Assistants without full support are not offered
 
-An assistant Engines does not fully support (Cursor today, which has no officially supported way to auto-load global instructions) is never offered here, even when it reports MCP support. Shell still keeps a local defense: if Engines' verification ever reports an assistant's instructions as unsupported, Shell reports `partially configured` with the reason, even if the overall status says `complete`. Shell never invents unofficial files or hooks to compensate.
+An assistant Engines does not fully support is never offered here, even when it reports MCP support. Shell still keeps a local defense: if Engines' verification ever reports an assistant's instructions as unsupported, Shell reports `partially configured` with the reason, even if the overall status says `complete`, unless Engines blocked a component over a conflict (then it reports `blocked`) or confirms no integration at all (`could not be configured`). Shell never invents unofficial files or hooks to compensate.
 
 ## The memory hook and its runtime evidence
 

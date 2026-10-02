@@ -149,8 +149,8 @@ function withinTime<T>(ms: number, work: Promise<T>): Promise<T> {
   });
 }
 
-/** The tools `/import` can copy from, in Codex's order: the id `migrationSource` takes and the name shown. */
-const IMPORT_SOURCES = [{ id: "claude-code", label: "Claude Code" }, { id: "cursor", label: "Cursor" }] as const;
+/** The tools `/import` can copy from: the id `migrationSource` takes and the name shown. */
+const IMPORT_SOURCES = [{ id: "claude-code", label: "Claude Code" }] as const;
 
 function wrapStartupContext(text: string): string {
   return [
@@ -1318,8 +1318,8 @@ export class CodexSession implements NativeSession {
     return { threadId: String(response?.threadId) };
   }
   /**
-   * `/import`, step one → `externalAgentConfig/detect` (`v2/ExternalAgentConfigDetectParams.ts`) for Claude Code and then Cursor, with the home folder and this project, as
-   * Codex's flow does. Copies nothing. A source that has nothing to import is left out; one that fails is reported by name, and the others are still read.
+   * `/import`, step one → `externalAgentConfig/detect` (`v2/ExternalAgentConfigDetectParams.ts`) for Claude Code, with the home folder and this project, as
+   * Codex's flow does. Copies nothing. A source that has nothing to import is left out; one whose check fails is reported by name.
    */
   async detectExternalSetup(): Promise<NativeImportDetection> {
     const sources: NativeImportSource[] = []; const errors: string[] = [];

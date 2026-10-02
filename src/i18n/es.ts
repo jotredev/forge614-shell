@@ -755,7 +755,6 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     feedbackFailed: ({ error }) => `No se pudo enviar el comentario: ${error}`,
     importNone: "No se encontró ninguna configuración compatible para importar.",
     importDetectFailed: ({ errors }) => `No se pudo revisar qué se puede importar: ${errors}`,
-    importSourceTitle: "¿Desde dónde quieres importar?",
     importTitle: ({ source }) => `Importar desde ${source}`,
     importHelp: "Enter marca o desmarca un elemento. No se copia nada hasta que lo confirmes.",
     importProceed: ({ count }) => `Importar lo marcado (${count})`,

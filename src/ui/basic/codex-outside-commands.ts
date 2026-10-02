@@ -112,7 +112,7 @@ function importStartedLines(nt: Catalog["codexNative"], items: NativeImportItem[
 }
 
 /**
- * `/import`: looks for setup in Claude Code and Cursor (Codex's own flow), lets the person choose the source when both have something, and then the items:
+ * `/import`: looks for setup in Claude Code (Codex's own flow) and then lists the items:
  * every one starts marked and Enter on it marks or unmarks it (Shell has no check boxes; the list reopens on that row, like `/experimental`). «Import selected»
  * comes first, so Enter alone goes to the confirmation. Because copying writes into `~/.codex` — MCP keys and chats can be part of it — the confirmation names exactly
  * what is copied and from where, warns about both in plain words and has «No» marked; only «Yes» calls `externalAgentConfig/import`.
@@ -123,11 +123,7 @@ async function importSetup(screen: CodexCommandScreen): Promise<void> {
   if (!session.detectExternalSetup || !session.importExternalSetup) { notAllowed(screen, "import"); return; }
   const detection = await session.detectExternalSetup();
   if (!detection.sources.length) { write(detection.errors.length ? nt.importDetectFailed({ errors: detection.errors.join("; ") }) : nt.importNone); return; }
-  let source: NativeImportSource | undefined = detection.sources[0];
-  if (detection.sources.length > 1) {
-    const chosen = await screen.choose(nt.importSourceTitle, detection.sources.map(item => ({ value: item.id, display: item.label, label: "" })));
-    source = detection.sources.find(item => item.id === chosen);
-  }
+  const source: NativeImportSource | undefined = detection.sources[0];
   if (!source) return;
   const marked = source.items.map(() => true);
   let startAt: string | undefined;

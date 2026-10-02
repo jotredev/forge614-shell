@@ -27,7 +27,7 @@ const report = {
   agents: [
     { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude" },
     { id: "codex", label: "Codex", installed: true, executable: "/usr/local/bin/codex" },
-    { id: "cursor", label: "Cursor", installed: true, executable: "/Applications/Cursor.app/Contents/MacOS/Cursor" },
+    { id: "example-agent", label: "Example Agent", installed: true, executable: "/usr/local/bin/example-agent" },
   ],
 };
 
@@ -43,8 +43,8 @@ function enginesDouble(detectReport: unknown, capsFor: (id: string) => Record<st
   };
 }
 
-/** Fully-supported map as Engines 1.14.0 reports it today: Claude Code and Codex yes, Cursor no. */
-const fullySupportedToday = (id: string) => ({ fullySupported: id !== "cursor" });
+/** Fully-supported map: Claude Code and Codex are fully supported; any other agent is not. */
+const fullySupportedToday = (id: string) => ({ fullySupported: id !== "example-agent" });
 
 /**
  * The chat selector offers only what Engines calls `fullySupported` AND Shell has an adapter for.
@@ -126,7 +126,7 @@ test("rejects malformed detect output", async () => {
 
 /**
  * `init --product engram` lists agents by Engines' `fullySupported`, not by `supportsMcp`.
- * Exists because Cursor reports `supportsMcp: true` yet is not fully supported, so it must not be offered.
+ * Exists because an agent can report `supportsMcp: true` yet not be fully supported, so it must not be offered.
  */
 test("discoverMcpCapableAgents checks capabilities per installed agent and keeps only fullySupported:true", async () => {
   const calls: string[][] = [];
@@ -138,7 +138,7 @@ test("discoverMcpCapableAgents checks capabilities per installed agent and keeps
         agents: [
           { id: "claude-code", label: "Claude Code", installed: true, executable: "/usr/local/bin/claude", configDir: "/x", configFound: true },
           { id: "codex", label: "Codex", installed: true, executable: "/usr/local/bin/codex", configDir: "/x", configFound: true },
-          { id: "cursor", label: "Cursor", installed: true, executable: "/Applications/Cursor.app/Contents/MacOS/Cursor", configDir: "/x", configFound: true },
+          { id: "example-agent", label: "Example Agent", installed: true, executable: "/usr/local/bin/example-agent", configDir: "/x", configFound: true },
           { id: "gemini", label: "Gemini", installed: false, executable: undefined, configDir: "/x", configFound: false },
         ],
       },
@@ -150,7 +150,7 @@ test("discoverMcpCapableAgents checks capabilities per installed agent and keeps
     [BIN, "detect"],
     [BIN, "capabilities", "--agent", "claude-code"],
     [BIN, "capabilities", "--agent", "codex"],
-    [BIN, "capabilities", "--agent", "cursor"],
+    [BIN, "capabilities", "--agent", "example-agent"],
   ]);
   expect(agents).toEqual([
     { id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" },
@@ -406,23 +406,23 @@ test("planMemoryInstall never exposes afterContent or beforeHash", async () => {
   expect(JSON.stringify(plan)).not.toContain("beforeHash");
 });
 
-test("planMemoryInstall reports partial for an assistant whose instructions are unsupported (e.g. Cursor)", async () => {
+test("planMemoryInstall reports partial for an assistant whose instructions are unsupported (e.g. Example Agent)", async () => {
   const plan = await planMemoryInstall({
-    agentId: "cursor", home: "/Users/tester",
+    agentId: "example-agent", home: "/Users/tester",
     run: async () => ({
       status: 0,
       stdout: JSON.stringify({
         schemaVersion: 1,
         plan: {
-          planId: "plan-cursor", agentId: "cursor", action: "memory-install", noop: false,
-          writes: [{ path: "/Users/tester/.cursor/mcp.json", beforeHash: "", afterContent: "{}" }],
+          planId: "plan-example-agent", agentId: "example-agent", action: "memory-install", noop: false,
+          writes: [{ path: "/Users/tester/.example-agent/mcp.json", beforeHash: "", afterContent: "{}" }],
           metadata: {
-            mcp: { path: "/Users/tester/.cursor/mcp.json", status: { kind: "write" } },
+            mcp: { path: "/Users/tester/.example-agent/mcp.json", status: { kind: "write" } },
             instructions: {
               paths: [],
-              status: { kind: "unsupported", reason: "Cursor has no officially supported, stable, file-based mechanism to auto-load global instructions." },
+              status: { kind: "unsupported", reason: "Example Agent has no officially supported mechanism to auto-load global instructions." },
             },
-            hook: { path: "", status: { kind: "unsupported", reason: "Cursor has no officially supported, stable session-start hook mechanism this installer configures" }, runtimeStatus: { kind: "unsupported" } },
+            hook: { path: "", status: { kind: "unsupported", reason: "Example Agent has no officially supported mechanism to run a session-start hook." }, runtimeStatus: { kind: "unsupported" } },
             overallStatus: "partial",
           },
         },
@@ -433,7 +433,7 @@ test("planMemoryInstall reports partial for an assistant whose instructions are 
   expect(plan.overallStatus).toBe("partial");
   expect(plan.instructions.status).toEqual({
     kind: "unsupported",
-    reason: "Cursor has no officially supported, stable, file-based mechanism to auto-load global instructions.",
+    reason: "Example Agent has no officially supported mechanism to auto-load global instructions.",
   });
 });
 
@@ -708,16 +708,16 @@ test("verifyMemoryIntegration sends only --agent and reads the verification", as
   });
 });
 
-test("verifyMemoryIntegration reports complete for Cursor once its MCP is present, per Engines' own achievable-state semantics", async () => {
+test("verifyMemoryIntegration reports complete for an MCP-only agent once its MCP is present, per Engines' own achievable-state semantics", async () => {
   const verification = await verifyMemoryIntegration({
-    agentId: "cursor", home: "/Users/tester",
+    agentId: "example-agent", home: "/Users/tester",
     run: async () => ({
       status: 0,
       stdout: JSON.stringify({
         schemaVersion: 1,
         verification: {
-          agentId: "cursor",
-          mcp: { path: "/Users/tester/.cursor/mcp.json", present: true },
+          agentId: "example-agent",
+          mcp: { path: "/Users/tester/.example-agent/mcp.json", present: true },
           instructions: { supported: false, paths: [], present: false },
           hook: { supported: false, path: "", present: false, dryRunOk: false, runtimeStatus: { kind: "unsupported" } },
           overallStatus: "complete",

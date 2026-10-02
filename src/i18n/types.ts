@@ -785,7 +785,6 @@ export interface Catalog {
     feedbackFailed: (params: { error: string }) => string;
     importNone: string;
     importDetectFailed: (params: { errors: string }) => string;
-    importSourceTitle: string;
     importTitle: (params: { source: string }) => string;
     importHelp: string;
     importProceed: (params: { count: number }) => string;

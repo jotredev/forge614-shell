@@ -219,13 +219,13 @@ const mcpItem = { itemType: "MCP_SERVER_CONFIG", description: "Migrate MCP serve
 const sessionsItem = { itemType: "SESSIONS", description: "Migrate recent Claude Code sessions", cwd: "/project",
   details: { plugins: [], skills: [], sessions: [{ path: "/home/u/.claude/projects/p/1.jsonl", cwd: "/project", title: "Fix login" }, { path: "/home/u/.claude/projects/p/2.jsonl", cwd: "/project", title: null }], mcpServers: [], hooks: [], subagents: [], commands: [] } };
 
-/** Detection asks Claude Code and Cursor in that order with the home folder and this project, keeps the sources that found something, and reports the ones that failed. */
-test("import detection asks both sources with Codex's parameters and reads the items", async () => {
+/** Detection asks only Claude Code, with the home folder and this project, keeps the source when it found something, and reports it when it failed. */
+test("import detection asks Claude Code with Codex's parameters and reads the items", async () => {
   const env = await connected("en", rpc => {
     rpc.handler = async (method, params) => {
       if (method === "externalAgentConfig/detect") {
         if (params.migrationSource === "claude-code") return { items: [settingsItem, mcpItem, sessionsItem], connectors: [] };
-        throw new Error("cursor exploded");
+        throw new Error("unexpected source");
       }
       if (!rpc.replies.has(method)) throw new Error(`Unexpected ${method}`);
       return rpc.replies.get(method);
@@ -234,15 +234,28 @@ test("import detection asks both sources with Codex's parameters and reads the i
   const result = await env.session.detectExternalSetup();
   expect(env.rpc.calls.filter(call => call.method === "externalAgentConfig/detect").map(call => call.params)).toEqual([
     { includeHome: true, cwds: ["/project"], migrationSource: "claude-code" },
-    { includeHome: true, cwds: ["/project"], migrationSource: "cursor" },
   ]);
-  expect(result.errors).toEqual(["Cursor: cursor exploded"]);
+  expect(result.errors).toEqual([]);
   expect(result.sources.map(source => [source.id, source.label])).toEqual([["claude-code", "Claude Code"]]);
   expect(result.sources[0]!.items.map(item => ({ type: item.type, description: item.description, cwd: item.cwd, count: item.count, names: item.names }))).toEqual([
     { type: "CONFIG", description: settingsItem.description, cwd: null, count: 1, names: [] },
     { type: "MCP_SERVER_CONFIG", description: mcpItem.description, cwd: null, count: 2, names: ["forge614-engram", "github"] },
     { type: "SESSIONS", description: sessionsItem.description, cwd: "/project", count: 2, names: ["Fix login"] },
   ]);
+});
+
+/** When Claude Code's own check fails, the failure is reported by name and no source is returned. */
+test("import detection reports Claude Code by name when its check fails", async () => {
+  const env = await connected("en", rpc => {
+    rpc.handler = async method => {
+      if (method === "externalAgentConfig/detect") throw new Error("boom");
+      if (!rpc.replies.has(method)) throw new Error(`Unexpected ${method}`);
+      return rpc.replies.get(method);
+    };
+  });
+  const result = await env.session.detectExternalSetup();
+  expect(result.errors).toEqual(["Claude Code: boom"]);
+  expect(result.sources).toEqual([]);
 });
 
 /**
