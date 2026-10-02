@@ -4,33 +4,17 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { getStartupContext } from "../../infrastructure/forge614-engram.ts";
 import { withStartupNotices } from "../../infrastructure/engram-notices.ts";
 import { ShellError, describeError } from "../../shell-error.ts";
+import { fakeResult, fakeSdk, settle } from "./fake-query.ts";
 
-test("context summary is read before closing the single-message input stream", async () => {
-  let closed = false;
-  let inputEnded = false;
-  let drained: Promise<unknown>;
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: (({ prompt }: any) => {
-    const iterator = prompt[Symbol.asyncIterator]();
-    return {
-      supportedModels: async () => [],
-      async *[Symbol.asyncIterator]() {
-        expect((await iterator.next()).value.message.content).toBe("hello");
-        drained = iterator.next().then(() => { inputEnded = true; });
-        yield { type: "result", subtype: "success" };
-      },
-      getContextUsage: async (options: unknown) => {
-        expect(options).toEqual({ detail: "summary" });
-        expect(inputEnded).toBe(false);
-        return { totalTokens: 18000, rawMaxTokens: 128000 };
-      },
-      close: () => { closed = true; },
-    };
-  }) as any });
+test("the context summary is read when each turn ends, over the same open query, which stays open", async () => {
+  const sdk = fakeSdk({ context: { totalTokens: 18000, rawMaxTokens: 128000 } });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: sdk.connect });
   await session.send("hello", () => {}, async () => false);
-  await drained!;
+  expect(sdk.opened[0]!.calls.getContextUsage).toBe(1);
   expect(session.context).toEqual({ used: 18000, window: 128000 });
-  expect(closed).toBe(true);
-  expect(inputEnded).toBe(true);
+  // The query is not closed with the turn: it stays open for the next message (and for any background task running inside it).
+  expect(sdk.opened[0]!.calls.close).toBe(0);
+  expect(sdk.opened[0]!.closed).toBe(false);
 });
 
 test("resume only selects a session; no model work starts before send", async () => {
@@ -67,23 +51,6 @@ test("Claude applies its selected native permission mode to the next turn", asyn
 });
 
 /**
- * A fake live SDK query that stays open until `release()`, and records what `setPermissionMode` is
- * asked. `running` resolves once the query is iterating, i.e. mid-turn.
- */
-function liveQuery(setPermissionMode: (mode: string) => Promise<void>) {
-  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
-  let started!: () => void; const running = new Promise<void>(resolve => { started = resolve; });
-  const connect = (() => ({
-    supportedModels: async () => [],
-    async *[Symbol.asyncIterator]() { started(); await gate; yield { type: "result", subtype: "success", session_id: "s", is_error: false }; },
-    getContextUsage: async () => ({ totalTokens: 1, rawMaxTokens: 0 }),
-    setPermissionMode,
-    close: () => {},
-  })) as any;
-  return { connect, running, release };
-}
-
-/**
  * The modes are the SDK's own `PermissionMode` values (`sdk.d.ts` of @anthropic-ai/claude-agent-sdk
  * 0.3.274), named with the `title` Claude Code itself gives each one in its mode table (read from the
  * `claude` binary that ships with that SDK): Manual, Accept edits, Plan, Don't Ask, Auto, Bypass Permissions.
@@ -95,50 +62,52 @@ test("Claude offers the SDK permission modes with Claude Code's own names", () =
   expect(session.workModes().every(mode => typeof mode.tone === "string")).toBe(true);
 });
 
-/** Idea 1: while a turn runs, the SDK's live query is told the new mode at once (`Query.setPermissionMode`), and Shell no longer throws «Finish or /stop…». */
+/** The SDK's open query is told the new mode at once, mid-turn too, and Shell no longer throws «Finish or /stop…» nor says «next turn». */
 test("changing the Claude mode mid-turn calls the live query's setPermissionMode and is applied at once", async () => {
-  const asked: string[] = [];
-  const { connect, running, release } = liveQuery(async mode => { asked.push(mode); });
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect });
+  const sdk = fakeSdk({ hold: true });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: sdk.connect });
   const turn = session.send("long job", () => {}, async () => false);
-  await running;
+  await settle();
   expect(session.busy).toBe(true);
   expect(await session.setWorkMode("acceptEdits")).toBe("applied");
-  expect(asked).toEqual(["acceptEdits"]);
+  expect(sdk.opened[0]!.calls.setPermissionMode).toEqual(["acceptEdits"]);
   expect(session.workMode()).toBe("acceptEdits");
-  release(); await turn;
+  sdk.opened[0]!.answer([sdk.opened[0]!.sent[0]!.uuid!]);
+  await turn;
 });
 
 /** Row 26: if Claude Code refuses the live change, the person hears it plainly and the previous mode stays. */
 test("a live mode change that Claude Code refuses is reported plainly and the previous mode stays", async () => {
-  const { connect, running, release } = liveQuery(async () => { throw new Error("refused"); });
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect });
+  const sdk = fakeSdk({ hold: true, refuseMode: true });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: sdk.connect });
   const turn = session.send("long job", () => {}, async () => false);
-  await running;
+  await settle();
   let caught: unknown;
   try { await session.setWorkMode("plan"); } catch (error) { caught = error; }
   expect((caught as ShellError).code).toBe("claude-mode-rejected");
   expect(describeError(caught, "en")).toContain("Claude Code did not accept that work mode");
   expect(describeError(caught, "es")).toContain("Claude Code no aceptó ese modo de trabajo");
   expect(session.workMode()).toBe("default");
-  release(); await turn;
+  sdk.opened[0]!.answer([sdk.opened[0]!.sent[0]!.uuid!]);
+  await turn;
 });
 
-/** With no live query to tell (the options are already fixed), the change is accepted, reported as next-turn, and the following turn opens in the new mode. */
-test("a mode change with no live query to tell is accepted for the next turn", async () => {
-  const seen: string[] = [];
-  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: input => {
-    seen.push(input.options.permissionMode as string);
-    return (async function* () { await gate; yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
-  } });
+/** With the query open there is always something to tell: the change is «applied», never «next-turn» (the one that used to wait for the next query, now there is no next one). */
+test("a mode change while a turn runs is applied to the open query, not kept for the next turn", async () => {
+  const sdk = fakeSdk({ hold: true });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: sdk.connect });
   const first = session.send("one", () => {}, async () => false);
-  await new Promise(resolve => setImmediate(resolve));
+  await settle();
   expect(session.busy).toBe(true);
-  expect(await session.setWorkMode("plan")).toBe("next-turn");
-  release(); await first;
-  await session.send("two", () => {}, async () => false);
-  expect(seen).toEqual(["default", "plan"]);
+  expect(await session.setWorkMode("plan")).toBe("applied");
+  sdk.opened[0]!.answer([sdk.opened[0]!.sent[0]!.uuid!]);
+  await first;
+  const second = session.send("two", () => {}, async () => false);
+  await settle();
+  sdk.opened[0]!.answer([sdk.opened[0]!.sent[1]!.uuid!]);
+  await second;
+  expect(sdk.opened).toHaveLength(1);
+  expect(sdk.opened[0]!.calls.setPermissionMode).toEqual(["plan"]);
 });
 
 /** A change made while the turn is still preparing (before its options exist) simply becomes that turn's mode. */
@@ -181,15 +150,16 @@ test("failed authentication never reaches the model and releases busy state", as
 
 test("tool denial and cancellation cannot become permission approvals", async () => {
   const decisions: unknown[] = [];
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: ({ options }) => {
-    return (async function* () {
-      const context = { signal: options.abortController!.signal, toolUseID: "tool-1", requestId: "request-1" };
-      decisions.push(await options.canUseTool!("Bash", { command: "echo test" }, context));
-      session.stop();
-      decisions.push(await options.canUseTool!("Bash", { command: "echo test" }, context));
-      yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
-    })();
+  const sdk = fakeSdk({ turn: async (message, fake) => {
+    // The SDK aborts the request's own signal when Claude Code cancels it (measured: an interrupt denies a pending permission).
+    const cancellation = new AbortController();
+    const context = { signal: cancellation.signal, toolUseID: "tool-1", requestId: "request-1" };
+    decisions.push(await fake.params.options.canUseTool!("Bash", { command: "echo test" }, context));
+    cancellation.abort();
+    decisions.push(await fake.params.options.canUseTool!("Bash", { command: "echo test" }, context));
+    fake.emit(fakeResult([message.uuid!]));
   } });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: sdk.connect });
   let requests = 0;
   await session.send("test", () => {}, async () => ++requests > 1);
   expect(decisions).toMatchObject([{ behavior: "deny" }, { behavior: "deny" }]);
@@ -318,16 +288,17 @@ test("a long, unclosed special-token marker from a real (fake-run) startup-conte
   expect(append).toContain("[contenido filtrado]");
 });
 
-test("concurrent messages cannot start a second writer", async () => {
+test("a second message sent while the first still waits for the start rides the same query: no second writer opens", async () => {
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => gate, run: () => (async function* () {
-    yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
-  })() });
+  const sdk = fakeSdk();
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: () => gate, connect: sdk.connect });
   const first = session.send("first", () => {}, async () => false);
-  await expect(session.send("second", () => {}, async () => false)).rejects.toThrow("already running");
+  const second = session.send("second", () => {}, async () => false);
   expect(() => session.resume("other")).toThrow();
-  release(); await first;
+  release(); await first; await second;
+  expect(sdk.opened).toHaveLength(1);
+  expect(sdk.opened[0]!.sent.map(message => message.message.content)).toEqual(["first", "second"]);
 });
 
 test("Claude's own errors are typed ShellErrors, translatable at the presentation boundary — never hardcoded English that leaks past a Spanish selection", async () => {
@@ -408,6 +379,27 @@ test("a task still running when the turn ends is dropped, not frozen at running"
   });
   await session.send("go", () => {}, async () => true);
   expect(session.backgroundActivity.find(activity => activity.id === "t1")).toBeUndefined();
+  expect(session.backgroundActivity).toEqual([]);
+});
+
+test("a finished task stays in the list until the next message starts a turn, which forgets it", async () => {
+  let turn = 0;
+  const session = new ClaudeSession({
+    cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {},
+    run: () => {
+      turn++;
+      return (async function* () {
+        if (turn === 1) {
+          yield { type: "system", subtype: "task_started", task_id: "t1", description: "Investigar X", task_type: "local_agent", is_backgrounded: true, uuid: "123e4567-e89b-12d3-a456-426614174000", session_id: "s" } as SDKMessage;
+          yield { type: "system", subtype: "task_notification", task_id: "t1", status: "completed", summary: "Listo", output_file: "/tmp/out", uuid: "123e4567-e89b-12d3-a456-426614174002", session_id: "s" } as SDKMessage;
+        }
+        yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+      })();
+    },
+  });
+  await session.send("one", () => {}, async () => true);
+  expect(session.backgroundActivity.map(activity => [activity.id, activity.state])).toEqual([["t1", "done"]]);
+  await session.send("two", () => {}, async () => true);
   expect(session.backgroundActivity).toEqual([]);
 });
 
@@ -571,18 +563,15 @@ test("an init message without version or servers leaves those fields out", async
 
 /**
  * The account of the catalog handshake (`AccountInfo`: email, organization, plan, provider) is kept whole, not only the email, so `/status` can show it. The handshake
- * goes through the same injected SDK connection as a turn, which is what lets a test stand in for it.
+ * is read over the same open query as the turns, which is what lets a test stand in for it.
  */
 test("initialize keeps the whole account the SDK reports", async () => {
-  const connection = {
-    initializationResult: async () => ({ models: [], commands: [], account: { email: "a@b.c", organization: "Acme", subscriptionType: "max", apiProvider: "firstParty" } }),
-    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({ rate_limits_available: false }),
-    close() {},
-  };
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, connect: (() => connection) as any });
-  await session.initialize();
+  const account = { email: "a@b.c", organization: "Acme", subscriptionType: "max", apiProvider: "firstParty" as const };
+  const sdk = fakeSdk({ account });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, connect: sdk.connect });
+  await session.initialize(undefined, { accountVerified: true });
   expect(session.user).toBe("a@b.c");
-  expect(session.account).toEqual({ email: "a@b.c", organization: "Acme", subscriptionType: "max", apiProvider: "firstParty" });
+  expect(session.account).toEqual(account);
 });
 
 /** The setting sources Shell asks Claude Code to load are one list, the same for the handshake and for every turn, so what `/status` says is what is really requested. */
@@ -675,123 +664,15 @@ test("memoryInUse keeps whether Engram's startup context reached the session", a
 });
 
 /**
- * A stand-in for the SDK's `query` that opens one probe per call: the prompt generator is watched (`delivered` turns true if it ever hands over a message), every `mcpServerStatus()` is
- * answered by `answer(call, now)` (the call number from 1 and the test clock's time) and `close()` is counted. The clock never waits: `sleep` only moves its time forward, so a whole 30 s
- * probe runs in no time and the times of the calls can be asserted exactly.
+ * `/new` starts another conversation, not another Claude Code: the MCP list (its configuration) survives it — whether it came from the open query's own answer or from an `init` — while the query
+ * is closed and opened again in the background (the new one asks the servers again).
  */
-function probeHarness(answer: (call: number, now: number) => Promise<{ name: string; status: string }[]>) {
-  const state = { opened: 0, delivered: false, closed: 0, asked: [] as number[], time: 0 };
-  const clock = { now: () => state.time, sleep: async (ms: number) => { state.time += ms; } };
-  const connect = (({ prompt }: any) => {
-    state.opened++;
-    prompt[Symbol.asyncIterator]().next().then((step: IteratorResult<unknown>) => { if (!step.done) state.delivered = true; });
-    return {
-      mcpServerStatus: () => { state.asked.push(state.time); return answer(state.asked.length, state.time); },
-      close: () => { state.closed++; },
-    };
-  }) as any;
-  return { state, clock, connect };
-}
-
-/** The probe a session opens with the chat: no message goes in, the servers are asked, and with everything connected it closes after the first answer. */
-test("the MCP probe opens with no message, asks the servers and closes once none is pending", async () => {
-  const h = probeHarness(async () => [{ name: "forge614-engram", status: "connected" }, { name: "github", status: "failed" }]);
-  let redraws = 0;
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, connect: h.connect, clock: h.clock, onMcpStatus: () => { redraws++; } });
-  expect(session.mcpStatus()).toBeUndefined();
-  await session.watchMcpServers();
-  expect(h.state.opened).toBe(1);
-  expect(h.state.delivered).toBe(false);
-  expect(h.state.asked).toEqual([0]);
-  expect(h.state.closed).toBe(1);
-  expect(session.mcpStatus()).toEqual([{ name: "forge614-engram", state: "connected" }, { name: "github", state: "failed" }]);
-  expect(redraws).toBe(1);
-});
-
-/** With a server still `pending` it is asked again every 2 s, and asking stops the moment none is pending (the calls are counted, with the time of each). */
-test("the MCP probe asks again every 2 s while a server is pending and stops when none is", async () => {
-  const h = probeHarness(async call => [{ name: "a", status: "connected" }, { name: "b", status: call < 3 ? "pending" : "connected" }]);
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, connect: h.connect, clock: h.clock });
-  await session.watchMcpServers();
-  expect(h.state.asked).toEqual([0, 2000, 4000]);
-  expect(h.state.closed).toBe(1);
-  expect(session.mcpStatus()).toEqual([{ name: "a", state: "connected" }, { name: "b", state: "connected" }]);
-});
-
-/** A server that stays `pending` forever does not keep the probe open: the last call is at 30 s at most, and then the query is closed. */
-test("the MCP probe gives up at 30 s with a server pending forever", async () => {
-  const h = probeHarness(async () => [{ name: "slow", status: "pending" }]);
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, connect: h.connect, clock: h.clock });
-  await session.watchMcpServers();
-  expect(h.state.asked).toHaveLength(16);
-  expect(h.state.asked.at(-1)).toBe(30000);
-  expect(h.state.closed).toBe(1);
-  expect(h.state.delivered).toBe(false);
-  expect(session.mcpStatus()).toEqual([{ name: "slow", state: "starting" }]);
-});
-
-/** A message sent while the probe is open closes it at once (without waiting for the answer) and the message's own `init` rules: a late answer of the probe changes nothing. */
-test("a message sent with the MCP probe open closes it and the init of the message rules", async () => {
-  let answerProbe!: (servers: { name: string; status: string }[]) => void;
-  const h = probeHarness(() => new Promise(resolve => { answerProbe = resolve; }));
-  let closedWhenTurnRan: number | undefined;
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: h.connect, clock: h.clock, run: () => {
-    closedWhenTurnRan = h.state.closed;
-    return (async function* () {
-      yield { type: "system", subtype: "init", session_id: "s", mcp_servers: [{ name: "from-init", status: "connected" }] } as unknown as SDKMessage;
-      yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
-    })();
-  } });
-  void session.watchMcpServers();
-  await Promise.resolve();
-  expect(h.state.asked).toEqual([0]);
-  await session.send("hello", () => {}, async () => false);
-  expect(closedWhenTurnRan).toBe(1);
-  expect(session.mcpStatus()).toEqual([{ name: "from-init", state: "connected" }]);
-  answerProbe([{ name: "late", status: "connected" }]);
-  await new Promise(resolve => setTimeout(resolve, 5));
-  expect(session.mcpStatus()).toEqual([{ name: "from-init", state: "connected" }]);
-  expect(h.state.closed).toBe(1);
-  expect(h.state.asked).toEqual([0]);
-});
-
-/** A probe that fails leaves the state as it was (no data) and is not tried again. */
-test("a failing MCP probe leaves no data and is not retried", async () => {
-  const h = probeHarness(async () => { throw new Error("boom"); });
-  let redraws = 0;
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, connect: h.connect, clock: h.clock, onMcpStatus: () => { redraws++; } });
-  await session.watchMcpServers();
-  expect(session.mcpStatus()).toBeUndefined();
-  expect(h.state.asked).toEqual([0]);
-  expect(h.state.closed).toBe(1);
-  expect(redraws).toBe(0);
-  await session.watchMcpServers();
-  expect(h.state.opened).toBe(1);
-});
-
-/** One probe per session, whatever happens afterwards: asking again, or sending several messages, never opens another; and a message sent before the probe ever opened keeps it from opening. */
-test("only one MCP probe is opened in the whole session", async () => {
-  const h = probeHarness(async () => [{ name: "a", status: "connected" }]);
-  const run = () => (async function* () { yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage; })();
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: h.connect, clock: h.clock, run });
-  await session.watchMcpServers();
-  await session.watchMcpServers();
-  await session.send("one", () => {}, async () => false);
-  await session.send("two", () => {}, async () => false);
-  await session.watchMcpServers();
-  expect(h.state.opened).toBe(1);
-  const early = probeHarness(async () => [{ name: "a", status: "connected" }]);
-  const sent = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: early.connect, clock: early.clock, run });
-  await sent.send("first", () => {}, async () => false);
-  await sent.watchMcpServers();
-  expect(early.state.opened).toBe(0);
-});
-
-/** `/new` starts another conversation, not another Claude Code: the MCP list (its configuration) survives, whether it came from the probe or from an `init`. */
 test("/new keeps the MCP list", async () => {
-  const h = probeHarness(async () => [{ name: "probed", status: "connected" }]);
-  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, connect: h.connect, clock: h.clock });
-  await session.watchMcpServers();
+  const sdk = fakeSdk({ mcp: () => [{ name: "probed", status: "connected" }] });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: sdk.connect });
+  await session.open();
+  await settle();
+  expect(session.mcpStatus()).toEqual([{ name: "probed", state: "connected" }]);
   session.reset();
   expect(session.mcpStatus()).toEqual([{ name: "probed", state: "connected" }]);
   const fromInit = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun([{ name: "a", status: "connected" }], { runs: 0 }) });

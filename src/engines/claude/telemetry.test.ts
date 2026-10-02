@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { emptyTelemetry, updateTelemetry, telemetryLines } from "./telemetry.ts";
+import { emptyTelemetry, perTurnResult, updateTelemetry, telemetryLines } from "./telemetry.ts";
 
 test("telemetry keeps quota separate from tokens and never labels an estimate as a bill", () => {
   let state = emptyTelemetry();
@@ -79,4 +79,23 @@ test("token counters are per query and subagent input is not main context occupa
   expect(state.inputTokens).toBe(5);
   expect(state.estimateUSD).toBe(0.1);
   expect(state.contextWindow).toBe(200000);
+});
+
+/** The SDK's totals are running totals of the live query: each result shows its own part, sizes are not subtracted, and a total that went down is a fresh start. */
+test("perTurnResult shows each turn's own part of the running totals and keeps sizes whole", () => {
+  const usage = (input: number, output: number) => ({ "claude-test": { inputTokens: input, outputTokens: output, cacheReadInputTokens: 10, cacheCreationInputTokens: 0, webSearchRequests: 0, costUSD: input / 100, contextWindow: 200000, maxOutputTokens: 32000 } });
+  const first = perTurnResult({ type: "result", total_cost_usd: 0.25, modelUsage: usage(100, 40) });
+  // The first result of a query is as it came, and its totals are what the next is counted from.
+  expect(first.event.total_cost_usd).toBe(0.25);
+  expect(first.totals).toEqual({ cost: 0.25, models: usage(100, 40) });
+  const second = perTurnResult({ type: "result", total_cost_usd: 0.75, modelUsage: usage(350, 90) }, first.totals);
+  expect(second.event.total_cost_usd).toBe(0.5);
+  expect(second.event.modelUsage["claude-test"]).toEqual({ inputTokens: 250, outputTokens: 50, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, webSearchRequests: 0, costUSD: 2.5, contextWindow: 200000, maxOutputTokens: 32000 });
+  expect(second.totals.cost).toBe(0.75);
+  // A total that went down (the SDK resets it on /clear) is a fresh start, never a negative number.
+  const reset = perTurnResult({ type: "result", total_cost_usd: 0.125, modelUsage: usage(20, 5) }, second.totals);
+  expect(reset.event.total_cost_usd).toBe(0.125);
+  expect(reset.event.modelUsage["claude-test"].inputTokens).toBe(20);
+  // A result with no counters (an older Claude Code) passes unchanged.
+  expect(perTurnResult({ type: "result" }, second.totals).event).toEqual({ type: "result", modelUsage: {} });
 });

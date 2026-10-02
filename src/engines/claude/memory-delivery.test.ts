@@ -6,6 +6,7 @@ import { withStartupNotices } from "../../infrastructure/engram-notices.ts";
 import { createMemoryHookProbe } from "../../infrastructure/memory-hook.ts";
 import { enginesDouble, hookOf, verifyStdout } from "../../../tests/support/memory-hook-fixtures.ts";
 import { getCatalog } from "../../i18n/index.ts";
+import { fakeSdk, settle } from "./fake-query.ts";
 
 /** A real-shaped `startup-context` (format 1) payload with a shared memory and one Engram notice, as `getStartupContext` reads it. */
 const memoryPayload = JSON.stringify({
@@ -94,17 +95,12 @@ test("memoryDeliveredByAssistant() is true only with an active hook and is decid
  */
 test("Claude asks whether the startup hook delivers the memory when the session opens, before any message, and only once", async () => {
   const engines = enginesDouble(verifyStdout(hookOf({ kind: "runtime-observed" })));
-  const connection = {
-    initializationResult: async () => ({ models: [], commands: [], account: { email: "a@b.c" } }),
-    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({ rate_limits_available: false }),
-    close() {},
-  };
   const session = new ClaudeSession({
-    ...baseDependencies, getStartupContext: fetchMemory({ count: 0 }), connect: (() => connection) as any,
-    memoryHookActive: createMemoryHookProbe("claude-code", { home: "/Users/tester", run: engines.run }), run: () => okRun(),
+    ...baseDependencies, getStartupContext: fetchMemory({ count: 0 }), connect: fakeSdk().connect,
+    memoryHookActive: createMemoryHookProbe("claude-code", { home: "/Users/tester", run: engines.run }),
   });
   let turns = 0;
-  const counting = new ClaudeSession({ ...baseDependencies, connect: (() => connection) as any, memoryHookActive: async () => { turns++; return true; }, run: () => okRun() });
+  const counting = new ClaudeSession({ ...baseDependencies, connect: fakeSdk().connect, memoryHookActive: async () => { turns++; return true; } });
   await counting.initialize();
   await new Promise(resolve => setImmediate(resolve));
   expect(turns).toBe(1);
@@ -117,27 +113,28 @@ test("Claude asks whether the startup hook delivers the memory when the session 
   expect(engines.commands).toHaveLength(1);
 });
 
-/** The check is in the background: `initialize()` does not wait for a slow one, the first message does (only if it has not finished), and a «no» means Shell puts its block in. */
-test("a slow startup-hook check does not hold the catalog loading; the first message waits for it and, if it says no, adds the block", async () => {
-  let release!: (delivers: boolean) => void; let asked = 0; let append = "";
-  const connection = {
-    initializationResult: async () => ({ models: [], commands: [], account: { email: "a@b.c" } }),
-    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({ rate_limits_available: false }),
-    close() {},
-  };
+/**
+ * The check is in the background, but the query is opened with its final system prompt, which depends on the answer: the catalog (read over that same query) waits for the check, and
+ * the first message finds the query already open. A «no» means Shell puts its block in; the check is asked once.
+ */
+test("a slow startup-hook check holds the opening of the query, which then carries the block when the check says no, and the check is asked once", async () => {
+  let release!: (delivers: boolean) => void; let asked = 0;
+  const sdk = fakeSdk();
   const session = new ClaudeSession({
-    ...baseDependencies, getStartupContext: fetchMemory({ count: 0 }), connect: (() => connection) as any,
+    ...baseDependencies, getStartupContext: fetchMemory({ count: 0 }), connect: sdk.connect,
     memoryHookActive: () => { asked++; return new Promise<boolean>(resolve => { release = resolve; }); },
-    run: input => { append = (input.options.systemPrompt as { append?: string }).append ?? ""; return okRun(); },
   });
-  await session.initialize();
+  let loaded = false;
+  const loading = session.initialize().then(() => { loaded = true; });
+  await settle();
   expect(asked).toBe(1);
-  let sent = false;
-  const pending = session.send("hello", () => {}, async () => true).then(() => { sent = true; });
-  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
-  expect(sent).toBe(false);
+  expect(loaded).toBe(false);
+  expect(sdk.opened).toHaveLength(0);
   release(false);
-  await pending;
+  await loading;
+  expect(sdk.opened).toHaveLength(1);
+  await session.send("hello", () => {}, async () => true);
   expect(asked).toBe(1);
-  expect(append).toContain("forge614-engram-memory");
+  expect(sdk.opened).toHaveLength(1);
+  expect((sdk.opened[0]!.params.options.systemPrompt as { append: string }).append).toContain("forge614-engram-memory");
 });

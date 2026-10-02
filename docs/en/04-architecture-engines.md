@@ -19,7 +19,7 @@ Claude Code uses its official subscription flow and Codex uses `app-server` with
 
 ## Launch mechanisms
 
-Shell has two chat adapters for interactive conversation: Claude Code (which uses Anthropic's official SDK) and Codex (which uses JSON-RPC over `app-server`). Shell never spawns a native client's own real binary and hands it the terminal — not during `init --product engram`, not for memory-hook verification, and not anywhere else. Whether a memory hook's runtime evidence has actually been observed is status information Engines reports, never something Shell forces by launching a native process; see [doc 07](07-engram-initialization-and-mcp.md).
+Shell has two chat adapters for interactive conversation: Claude Code (which uses Anthropic's official SDK and keeps a single query open for the whole conversation) and Codex (which uses JSON-RPC over `app-server`). Shell never spawns a native client's own real binary and hands it the terminal — not during `init --product engram`, not for memory-hook verification, and not anywhere else. Whether a memory hook's runtime evidence has actually been observed is status information Engines reports, never something Shell forces by launching a native process; see [doc 07](07-engram-initialization-and-mcp.md).
 
 ## Which assistants Shell lists
 

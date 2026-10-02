@@ -40,7 +40,7 @@ import { workingStatus } from "./duration.ts";
 import { ToolTracker } from "./tool-tracker.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
-import { describeError } from "../../shell-error.ts";
+import { ShellError, describeError } from "../../shell-error.ts";
 
 const clean = (text: string) => stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
 
@@ -126,8 +126,9 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const session = new ClaudeSession({
     cwd, env, executable, getStartupContext: withStartupNotices(startupContext, showNotice, locale),
     memoryHookActive: createMemoryHookProbe("claude-code", { env }),
-    // The opening probe's answers redraw the bottom bar; `refresh` is declared below and only runs once an answer arrives, long after it exists.
+    // The MCP answers of the open query, and what happens to it outside of an event (the process dies, a stop is not answered), redraw the screen; `refresh` is declared below and only runs long after it exists.
     onMcpStatus: () => { if (!closed) refresh(); },
+    onChange: () => { if (!closed) refresh(); },
   });
   // A click on a link or a path opens it; `writeWarning` is declared below and only runs when a click fails, long after it exists.
   enableTerminalLinks(process.env);
@@ -159,9 +160,12 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   attachStatusPanels(tui, panels, { chatWidth: () => sidebarLayout.chatWidth() });
   tui.setFocus(input);
   let telemetry = emptyTelemetry();
-  let activeTurn: Promise<void> | undefined;
+  /** The messages of the person that have not finished (Claude Code answers several sent in a row as one turn), so leaving can wait for them. */
+  const turns = new Set<Promise<void>>();
   let commandBusy = false;
   let loginAbort: AbortController | undefined;
+  /** Stops the opening of Claude Code that starts when the chat opens (leaving, or a confirmed `/logout`, ends it). */
+  let catalogAbort: AbortController | undefined;
   let closed = false;
   let disconnected = false;
   let accountConnected = false;
@@ -177,22 +181,30 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   // Remembers the person's own /model and /effort picks across Shell restarts — the native `claude`
   // CLI remembers its own picks the same way when used directly; Shell keeps its own copy rather
   // than writing into the native CLI's config file, which Shell does not own.
-  let preferenceApplied = false;
+  let effortAndModeRestored = false;
+  let modelRestored = false;
+  let savedPreference: ReturnType<typeof loadEnginePreference>;
   const persistPreference = () => saveEnginePreference("claude", { model: session.model, effort: session.effort }, { env: process.env });
   const loadCatalog = async (signal?: AbortSignal) => {
     try {
-      await session.initialize(signal);
-      // The MCP servers' states for the bottom bar, learned in the background without any message (asked at most once per session; it delays nothing here).
-      void session.watchMcpServers();
-      if (!preferenceApplied) {
-        preferenceApplied = true;
-        const saved = loadEnginePreference("claude", { env: process.env });
-        if (saved?.model && session.models.some(model => model.value === saved.model)) session.model = saved.model;
-        if (saved?.effort) session.effort = saved.effort as EffortLevel;
-        // The last work mode comes back without asking; one Claude Code no longer lists leaves its default.
-        await restoreWorkMode(session, saved?.mode);
+      // The effort and the work mode saved last time are put in BEFORE Claude Code opens (they are options of the one query that serves the whole conversation; the effort has no live control). The last
+      // work mode comes back without asking; one Claude Code no longer lists leaves its default.
+      if (!effortAndModeRestored) {
+        effortAndModeRestored = true;
+        savedPreference = loadEnginePreference("claude", { env: process.env });
+        if (savedPreference?.effort) session.effort = savedPreference.effort as EffortLevel;
+        await restoreWorkMode(session, savedPreference?.mode);
+      }
+      // Opens Claude Code in the background (the account was just verified) and reads the catalog over it; the MCP servers' states for the bottom bar come from the same query.
+      await session.initialize(signal, { accountVerified: true });
+      // The saved model needs the catalog to know it still exists; it is told to the open query, with no reopening.
+      if (!modelRestored) {
+        modelRestored = true;
+        if (savedPreference?.model && session.models.some(model => model.value === savedPreference!.model)) await session.setModel(savedPreference.model);
       }
       syncCommandGroups();
+      // The account's email, the plan usage and the model are known now: draw them (the opening runs in the background, so nothing else redraws when it ends).
+      if (!closed) refresh();
     }
     catch { if (!closed && !signal?.aborted) write(tc.catalogLoadFailed); }
   };
@@ -247,6 +259,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   };
   const modelDisplay = (): string | undefined => resolveModelDisplay(session.models, session.model, telemetry.model);
   const refresh = () => {
+    syncTurn();
     if (accountUnknown) shellState.unknown();
     else if (!accountChecked) shellState.checking();
     else if (disconnected || !accountConnected) shellState.disconnect();
@@ -291,14 +304,23 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     clearInterval(turnTicker);
     turnTicker = undefined;
   };
+  /**
+   * Keeps the «Working» clock in step with Claude Code: it starts the moment Claude Code is working (a message of the person, or a turn it started by itself) and ends the moment it is not, whichever event
+   * or answer made it so. A message sent while Claude Code answers joins the turn that is running.
+   */
+  const syncTurn = () => {
+    if (session.busy && turnStartedAt === undefined) beginTurn();
+    else if (!session.busy && turnStartedAt !== undefined) { endTurn(); streaming = undefined; }
+  };
   const shutdown = async () => {
     if (closed) return;
     closed = true;
     input.cancelChoice();
-    loginAbort?.abort();
-    session.stop();
+    loginAbort?.abort(); catalogAbort?.abort();
+    // Claude Code is closed on every way out of Shell, also while it is still opening.
+    session.close();
     for (const approval of [...approvals]) approval.finish(false);
-    await activeTurn;
+    await Promise.allSettled([...turns]);
     endTurn();
     tui.stop({ preserveScreen: true });
     resolveExit();
@@ -382,7 +404,28 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
         toolTracker.finished(block.tool_use_id, Boolean(block.is_error), clean(detail).slice(0, 3000));
       }
     }
-    if (event.type === "result" && event.is_error) writeError(tc.claudeError({ message: event.subtype === "success" ? event.result : event.errors.join("\n") }));
+    // The error result of a turn the person stopped is the stop itself: the line «Turn stopped» says it, so it is not shown a second time as an error.
+    if (event.type === "result" && event.is_error && !session.stopping) writeError(tc.claudeError({ message: event.subtype === "success" ? event.result : event.errors.join("\n") }));
+    refresh();
+  };
+  // Claude Code is one open conversation: the events (also those that arrive between messages) and the permission questions belong to the session, set once here.
+  session.attach({ onEvent, approve });
+  /** What the person hears when a message ends in a failure: «Turn stopped: …», and a lost account also leaves the box disconnected, as when the chat opens without one. */
+  const messageFailed = (error: unknown) => {
+    if (closed) return;
+    if (error instanceof ShellError && error.code === "claude-login-required") { disconnected = true; accountConnected = false; accountChecked = true; accountUnknown = false; }
+    writeError(t.turnStopped({ message: describeError(error, locale) }));
+  };
+  /**
+   * Draws a message of the person and hands it to Claude Code. One sent while Claude Code is still answering is drawn at once and queued: Claude Code takes it at its next tool boundary and answers
+   * both in the same turn (one result carries both), as in Claude Code itself. A message that starts a turn also starts its telemetry.
+   */
+  const sendMessage = (value: string) => {
+    chatLogo.dismiss();
+    writeChat("user", value);
+    if (!session.busy) telemetry = { ...emptyTelemetry(), quotas: telemetry.quotas };
+    const turn: Promise<void> = session.send(value).catch(messageFailed).finally(() => { turns.delete(turn); refresh(); });
+    turns.add(turn);
     refresh();
   };
   /** Whether the «Quit anyway?» question is on screen, so a second Ctrl+C does not open it again. */
@@ -423,16 +466,13 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     if (name && !["/model", "/effort"].includes(name) && session.commands.some(command => `/${command.name}` === name || command.aliases?.some(alias => `/${alias}` === name))) {
       if (session.busy) throw new Error(tc.finishOrStopFirst);
       // A native command sent as a turn is the chat's first turn, like a message: it removes the opening sign (Shell's own `/f614:` commands, and a command refused above, do not).
-      chatLogo.dismiss();
-      writeChat("user", value); telemetry = { ...emptyTelemetry(), quotas: telemetry.quotas };
-      beginTurn();
-      activeTurn = session.send(value, onEvent, approve).catch(error => { writeError(t.turnStopped({ message: describeError(error, locale) })); }).finally(() => { activeTurn = undefined; endTurn(); refresh(); });
-      refresh(); return;
+      sendMessage(value); return;
     }
     if (name === "/f614:yes" || name === "/f614:no") {
       if (!approvals[0]) throw new Error(t.noPermissionPending);
       approvals[0].finish(name === "/f614:yes"); return;
     }
+    // Stops the turn with an `interrupt`, keeping Claude Code open; a stop it never answers closes and reopens it after 5 s.
     if (name === "/f614:stop") { loginAbort?.abort(); session.stop(); return; }
     if (name === "/exit" || name === "/quit") { await quitLikeClaude(); return; }
     if (name === "/f614:quit") { await quit(); return; }
@@ -476,7 +516,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
           async () => { disconnected = true; accountConnected = false; accountChecked = true; accountUnknown = false; }, locale);
         if (done) {
           // The account goes too, so `/status` does not keep showing the email, organization and plan of the one just disconnected.
-          session.reset(); session.models = []; session.model = undefined; session.effort = undefined; session.account = undefined; session.user = undefined;
+          // Claude Code is closed (and no new one opens: the account is gone) before the conversation is forgotten.
+          catalogAbort?.abort(); session.close(); session.reset(); session.models = []; session.model = undefined; session.effort = undefined; session.account = undefined; session.user = undefined;
           telemetry = emptyTelemetry(); sessions = [];
           write(tc.disconnectedLocally);
         } else write(tc.logoutCancelled);
@@ -493,12 +534,12 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
             display: model.displayName,
             label: model.description ?? "",
           })), session.model);
-          if (selected) { session.model = selected; telemetry = { ...telemetry, model: undefined }; persistPreference(); }
+          if (selected) { await session.setModel(selected); telemetry = { ...telemetry, model: undefined }; persistPreference(); }
         }
       }
       else {
         if (session.models.length && !session.models.some(model => model.value === argument || model.resolvedModel === argument)) throw new Error(tc.chooseModelFromCommand);
-        session.model = argument; telemetry = { ...telemetry, model: undefined }; persistPreference(); write(tc.requestedModel({ model: argument }));
+        await session.setModel(argument); telemetry = { ...telemetry, model: undefined }; persistPreference(); write(tc.requestedModel({ model: argument }));
       }
     } else if (name === "/effort") {
       if (!session.models.length && accountConnected && !disconnected) await loadCatalog();
@@ -513,14 +554,14 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
             value, display: value === "default" ? tc.defaultRecommended : effortLabel(value, locale),
             label: value === "default" ? tc.defaultResolvesLater : effortDescription(value, locale),
           })), session.effort ?? "default");
-          if (selected) { session.effort = selected === "default" ? undefined : selected as EffortLevel; telemetry = { ...telemetry, effort: undefined }; persistPreference(); }
+          if (selected) { session.setEffort(selected === "default" ? undefined : selected as EffortLevel); telemetry = { ...telemetry, effort: undefined }; persistPreference(); }
         }
       }
-      else if (argument === "default") { session.effort = undefined; persistPreference(); }
+      else if (argument === "default") { session.setEffort(undefined); persistPreference(); }
       else if (["low", "medium", "high", "xhigh", "max"].includes(argument)) {
         const model = session.models.find(model => model.value === session.model || model.resolvedModel === telemetry.model);
         if (model?.supportedEffortLevels && !model.supportedEffortLevels.includes(argument as EffortLevel)) throw new Error(tc.effortNotSupported);
-        session.effort = argument as EffortLevel; persistPreference();
+        session.setEffort(argument as EffortLevel); persistPreference();
       } else throw new Error(tc.invalidEffort);
     } else if (name === "/resume") {
       let chosen: string | undefined;
@@ -564,17 +605,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       commandBusy = true;
       void command(value).catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))).finally(() => { commandBusy = false; refresh(); });
     } else if (disconnected) writeError(t.reconnectBeforeMessage);
-    else if (session.busy) writeError(t.turnAlreadyRunning);
-    else {
-      chatLogo.dismiss();
-      writeChat("user", value);
-      telemetry = { ...emptyTelemetry(), quotas: telemetry.quotas };
-      beginTurn();
-      activeTurn = session.send(value, onEvent, approve)
-        .catch(error => { writeError(t.turnStopped({ message: describeError(error, locale) })); })
-        .finally(() => { streaming = undefined; endTurn(); refresh(); });
-      refresh();
-    }
+    else sendMessage(value);
   };
   tui.addInputListener(data => {
     if (matchesKey(data, "shift+tab")) {
@@ -617,7 +648,12 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     refresh();
     tui.start();
     void claudeLoginState(executable, env, cwd, undefined, startupAbort.signal)
-      .then(async connected => { if (!closed && !startupAbort.signal.aborted) { accountChecked = true; accountConnected = connected; disconnected = !connected; refresh(); if (connected) await loadCatalog(startupAbort.signal); } })
+      .then(connected => {
+        if (closed || startupAbort.signal.aborted) return;
+        accountChecked = true; accountConnected = connected; disconnected = !connected; refresh();
+        // Claude Code opens in the background as soon as the account is connected: the person can already type (a message waits for the opening), so this is not part of the operation that keeps the box busy.
+        if (connected) { catalogAbort = new AbortController(); void loadCatalog(catalogAbort.signal); }
+      })
       .catch(() => { if (!closed) { accountUnknown = true; write(tc.couldNotVerifyAccount); } })
       .finally(() => { loginAbort = undefined; commandBusy = false; if (!closed) refresh(); });
     await exited;
