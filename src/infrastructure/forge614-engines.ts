@@ -65,7 +65,8 @@ function validateReport(value: unknown): EnginesReport {
   return report;
 }
 
-function enginesBinary(home: string, env?: NodeJS.ProcessEnv): string {
+/** Where Shell looks for the Engines binary: `<FORGE614_HOME or ~/.forge614>/engines/bin/forge614-engines`. */
+export function enginesBinary(home: string, env?: NodeJS.ProcessEnv): string {
   const forgeHome = env?.FORGE614_HOME ?? join(home, ".forge614");
   return join(forgeHome, "engines", "bin", "forge614-engines");
 }

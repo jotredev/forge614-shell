@@ -596,3 +596,82 @@ test("the turn asks for the same setting sources the session reports", async () 
   expect(received.options.settingSources).toEqual(["user", "project", "local"]);
   expect(session.settingSources).toEqual(["user", "project", "local"]);
 });
+
+/** A fake run whose `init` message carries `servers` (the SDK's `mcp_servers`: a name and a status each), then a result; every call is counted. */
+function initRun(servers: { name: string; status: string }[] | undefined, counter: { runs: number }) {
+  return () => {
+    counter.runs++;
+    return (async function* () {
+      yield { type: "system", subtype: "init", session_id: "s", ...(servers ? { mcp_servers: servers } : {}) } as unknown as SDKMessage;
+      yield { type: "result", subtype: "success", session_id: "s", is_error: false } as SDKMessage;
+    })();
+  };
+}
+
+/**
+ * The MCP states of the bottom bar come from the `init` message every turn already brings (nothing new is asked of the SDK): none before the first message, and each message replaces the list with
+ * the newest one — a second message with one more server changes the list with no other call, only the turn's own. Each of the SDK's statuses becomes one of Shell's states.
+ */
+test("the MCP states are the newest init's, replaced by each message and asked of nobody", async () => {
+  const counter = { runs: 0 };
+  let servers: { name: string; status: string }[] | undefined = [{ name: "forge614-engram", status: "connected" }, { name: "github", status: "failed" }];
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: input => initRun(servers, counter)() });
+  expect(session.mcpStatus()).toBeUndefined();
+  await session.send("one", () => {}, async () => false);
+  expect(session.mcpStatus()).toEqual([{ name: "forge614-engram", state: "connected" }, { name: "github", state: "failed" }]);
+  servers = [{ name: "forge614-engram", status: "connected" }, { name: "github", status: "failed" }, { name: "context7", status: "pending" }];
+  await session.send("two", () => {}, async () => false);
+  expect(session.mcpStatus()).toEqual([{ name: "forge614-engram", state: "connected" }, { name: "github", state: "failed" }, { name: "context7", state: "starting" }]);
+  // Two messages, two runs: the list came with the turns, never from a call of its own.
+  expect(counter.runs).toBe(2);
+});
+
+/** Each status the SDK reports, and one it may report later (no state, never a guess). */
+test("every SDK MCP status is mapped, and an unknown one has no state", async () => {
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun([
+    { name: "a", status: "connected" }, { name: "b", status: "pending" }, { name: "c", status: "needs-auth" }, { name: "d", status: "failed" }, { name: "e", status: "disabled" }, { name: "f", status: "brand-new" },
+  ], { runs: 0 }) });
+  await session.send("hello", () => {}, async () => false);
+  expect(session.mcpStatus()).toEqual([
+    { name: "a", state: "connected" }, { name: "b", state: "starting" }, { name: "c", state: "needs-sign-in" }, { name: "d", state: "failed" }, { name: "e", state: "disabled" }, { name: "f" },
+  ]);
+});
+
+/** A new conversation forgets them with the rest of the init, and an init with no list (an older Claude Code) is no data at all: never an empty list written as «0». */
+test("a new conversation forgets the MCP states and an init without a list gives none", async () => {
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun([{ name: "a", status: "connected" }], { runs: 0 }) });
+  await session.send("hello", () => {}, async () => false);
+  expect(session.mcpStatus()).toHaveLength(1);
+  session.reset();
+  expect(session.mcpStatus()).toBeUndefined();
+  const older = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun(undefined, { runs: 0 }) });
+  await older.send("hello", () => {}, async () => false);
+  expect(older.mcpStatus()).toBeUndefined();
+  const none = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun([], { runs: 0 }) });
+  await none.send("hello", () => {}, async () => false);
+  expect(none.mcpStatus()).toEqual([]);
+});
+
+/**
+ * Whether Engram's startup context reached this session, kept for the Forge614 panel: unknown until the first message asks for it, «in use» when it came (`available: true`), «not in use» when it did not (not
+ * installed, unreadable) and unknown again if the call itself threw. With the startup hook delivering the memory, the context still came: it is «in use» too.
+ */
+test("memoryInUse keeps whether Engram's startup context reached the session", async () => {
+  const outcomes: [string, () => Promise<any>, boolean | undefined][] = [
+    ["arrived", async () => ({ available: true, text: "Favorite color: black." }), true],
+    ["did not arrive", async () => ({ available: false, reason: "Forge614 Engram is not installed." }), false],
+    ["failed", async () => { throw new Error("boom"); }, undefined],
+  ];
+  for (const [label, getStartupContext, expected] of outcomes) {
+    const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, getStartupContext, run: initRun([], { runs: 0 }) });
+    expect(session.memoryInUse(), label).toBeUndefined();
+    await session.send("hello", () => {}, async () => false);
+    expect(session.memoryInUse(), label).toBe(expected);
+  }
+  const delivered = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, memoryHookActive: async () => true, getStartupContext: async () => ({ available: true, text: "x" }), run: initRun([], { runs: 0 }) });
+  await delivered.send("hello", () => {}, async () => false);
+  expect(delivered.memoryInUse()).toBe(true);
+  const bare = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, run: initRun([], { runs: 0 }) });
+  await bare.send("hello", () => {}, async () => false);
+  expect(bare.memoryInUse()).toBeUndefined();
+});

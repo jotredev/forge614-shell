@@ -1,4 +1,5 @@
-const ENGRAM_SERVER = "forge614-engram";
+/** The name Forge614 Engram's MCP server goes by in every assistant: the one server Shell knows to be Forge614's. */
+export const ENGRAM_SERVER = "forge614-engram";
 
 /** Friendly label for an Engram MCP tool call (e.g. "🧠 memory search"), or undefined for any other server. */
 export function engramToolLabel(server: string, tool: string): string | undefined {

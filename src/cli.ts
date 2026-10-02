@@ -120,12 +120,14 @@ if (args.length === 1 && args[0] === "update") {
     }
     if (selected.engine === "claude") {
       const { startClaudeUI } = await import("./ui/basic/claude.ts");
-      await startClaudeUI(selected.args, selectedExecutable, undefined, metadata.version, effectiveLocale);
+      const { readEcosystemVersions } = await import("./infrastructure/ecosystem-versions.ts");
+      await startClaudeUI(selected.args, selectedExecutable, undefined, metadata.version, effectiveLocale, undefined, () => readEcosystemVersions({ env: process.env }));
     } else if (selected.engine === "codex") {
       const executable = selectedExecutable;
       if (!executable) throw new Error(getCatalog(effectiveLocale).cli.engineNotOnPath({ engine: selected.engine }));
       const { startNativeUI } = await import("./app/native-chat.ts");
-      await startNativeUI(selected.engine, executable, selected.args, metadata.version, effectiveLocale);
+      const { readEcosystemVersions } = await import("./infrastructure/ecosystem-versions.ts");
+      await startNativeUI(selected.engine, executable, selected.args, metadata.version, effectiveLocale, () => readEcosystemVersions({ env: process.env }));
     } else if (selected.engine === "pi") {
     const piModule = import.meta.resolve("@earendil-works/pi-coding-agent");
     const piRoot = new URL("../", piModule);

@@ -497,6 +497,36 @@ export interface Catalog {
     changes: (params: { count: number }) => string;
     clean: string;
     context: (params: { percent: number }) => string;
+    /** «F614», the first thing of the line: it opens the Forge614 panel. The same in every language. */
+    forge614Indicator: string;
+    /** «⇌ {count} MCP», the number of connected MCP servers: it opens the MCP panel. The same in every language. */
+    mcpIndicator: (params: { count: number }) => string;
+    /** The arrow after an indicator: pointing up at rest, down while its panel is open. The same in every language. */
+    arrowClosed: string;
+    arrowOpen: string;
+  };
+  /** The two panels the bottom bar opens (`ui/basic/status-panel.ts`). */
+  statusPanel: {
+    mcpTitle: string;
+    /** The state words of an MCP server, each drawn in its own color. */
+    stateConnected: string;
+    stateStarting: string;
+    stateNeedsSignIn: string;
+    stateFailed: string;
+    stateCancelled: string;
+    stateDisabled: string;
+    /** Marks the row of Forge614 Engram's MCP server (`forge614-engram`). The same in every language. */
+    engramServer: string;
+    /** The Forge614 panel's title and the names of its three rows. The same in every language. */
+    forge614Title: string;
+    shell: string;
+    engines: string;
+    engram: string;
+    memoryInUse: string;
+    memoryNotInUse: string;
+    notInstalled: string;
+    /** The last row of a panel that does not fit: how many rows were left out. */
+    more: (params: { count: number }) => string;
   };
   backgroundActivity: {
     heading: string;

@@ -4,6 +4,8 @@ import { checkAuthentication, claudeEnvironment } from "./auth.ts";
 import { CLAUDE_SETTING_SOURCES, loadClaudeCatalog, readPlanUsage } from "./catalog.ts";
 import type { getStartupContext } from "../../infrastructure/forge614-engram.ts";
 import { ShellError } from "../../shell-error.ts";
+import { claudeMcpState } from "../mcp-status.ts";
+import type { McpServerState } from "../mcp-status.ts";
 import type { BackgroundActivity, BackgroundActivityKind, NativeWorkMode, WorkModeChange } from "../types.ts";
 
 type RunInput = { prompt: string; options: Options };
@@ -140,6 +142,18 @@ export class ClaudeSession {
   account?: AccountInfo;
   /** The `init` message of the newest turn, for `/status`; undefined until a turn has run. */
   initInfo?: ClaudeInitInfo;
+  /**
+   * The MCP servers the newest turn's `init` reported, with their states, for the bottom bar. Every message brings a new `init`, so this follows the turns and asks nothing of the SDK;
+   * undefined until the first message and after `reset()`, and when an `init` carries no list (an older Claude Code): nothing known is never written as «no servers».
+   */
+  mcpStatus(): McpServerState[] | undefined {
+    return this.initInfo?.mcpServers?.map(server => {
+      const state = claudeMcpState(server.status);
+      return { name: server.name, ...(state ? { state } : {}) };
+    });
+  }
+  /** Whether Engram's startup context reached this session (what the Forge614 panel calls «memory in use»): undefined until a message has asked for it, or when asking failed. */
+  memoryInUse(): boolean | undefined { return this.startupContextAvailable; }
   /** The setting files requested from Claude Code (`settingSources`). */
   readonly settingSources: readonly string[] = CLAUDE_SETTING_SOURCES;
   usage: { label: string; usedPercent: number; reset?: string }[] = [];
@@ -172,6 +186,8 @@ export class ClaudeSession {
   }
   private abort?: AbortController;
   private startupContextText?: string;
+  /** Whether the last startup-context call found Engram's digest (`available`); undefined while it was not asked for or the call itself threw. */
+  private startupContextAvailable?: boolean;
   private startupContextStale = true;
   /** The one answer of the run to «does the startup hook deliver the memory?»: asked in the background when the session opens (`initialize`), or by whoever needs it first, and never again. */
   private hookDelivers?: Promise<boolean>;
@@ -220,8 +236,10 @@ export class ClaudeSession {
     try {
       const [result, byAssistant] = await Promise.all([fetch(this.dependencies.cwd, { env: this.dependencies.env }), this.memoryDeliveredByAssistant()]);
       this.startupContextText = result.available && !byAssistant ? result.text : undefined;
+      this.startupContextAvailable = result.available;
     } catch {
       this.startupContextText = undefined;
+      this.startupContextAvailable = undefined;
     }
   }
 

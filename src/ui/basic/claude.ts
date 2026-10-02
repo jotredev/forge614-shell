@@ -23,6 +23,8 @@ import { withStartupNotices } from "../../infrastructure/engram-notices.ts";
 import { createMemoryHookProbe } from "../../infrastructure/memory-hook.ts";
 import { memorySourceLine } from "../../engines/memory-source.ts";
 import { ShellStatusBar } from "./status-bar.ts";
+import { StatusPanels, attachStatusPanels } from "./status-panel.ts";
+import type { EcosystemVersions } from "../../infrastructure/ecosystem-versions.ts";
 import { effortDescription, effortLabel, isDisplayableUsage } from "./metrics.ts";
 import { ActivityCard, chatMessage } from "./transcript.ts";
 import { lineDiff } from "./diff.ts";
@@ -104,7 +106,11 @@ export function claudeMenuCommands(commands: SlashCommand[], t: ReturnType<typeo
   return [...native, ...providerControls];
 }
 
-export async function startClaudeUI(args: string[], selectedExecutable?: string, terminal?: Terminal, version?: string, locale: Locale = "en", linkTools: ChatLinkTools = realChatLinkTools): Promise<void> {
+/**
+ * The Claude Code chat screen. `readVersions` reads the Engines and Engram versions the Forge614 panel shows: it is called once, in the background, when the screen opens (the composition root gives the real
+ * reader; without one the panel shows no versions for them).
+ */
+export async function startClaudeUI(args: string[], selectedExecutable?: string, terminal?: Terminal, version?: string, locale: Locale = "en", linkTools: ChatLinkTools = realChatLinkTools, readVersions?: () => Promise<EcosystemVersions>): Promise<void> {
   const t = getCatalog(locale).chat;
   const tc = getCatalog(locale).claudeChat;
   if (args.length) throw new Error(tc.cliOptionsUnsupported);
@@ -124,7 +130,14 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   // A click on a link or a path opens it; `writeWarning` is declared below and only runs when a click fails, long after it exists.
   enableTerminalLinks(process.env);
   const links = new ChatLinks({ cwd, home: process.env.HOME, tools: linkTools, onFailure: target => writeWarning(t.linkOpenFailed({ target })) });
-  const { surface, tui } = chatScreen(terminal ?? new ProcessTerminal(), links);
+  // The two panels the bottom bar opens: the MCP servers' (from the newest `init`) and Forge614's (Shell's version, the two read once in the background, and whether Engram's memory reached this session).
+  // The data is asked when a panel is drawn, so `shellState` and `session` need only exist by then.
+  let versions: EcosystemVersions | undefined;
+  const panels = new StatusPanels({
+    mcp: () => shellState.snapshot().mcpServers,
+    forge614: () => ({ ...(version ? { shell: version } : {}), ...versions, ...(session.memoryInUse() === undefined ? {} : { memoryInUse: session.memoryInUse()! }) }),
+  }, locale);
+  const { surface, tui } = chatScreen(terminal ?? new ProcessTerminal(), links, panels);
   const composer = createComposer(tui, locale);
   const transcript = new Container();
   let transcriptScroll!: IndependentScrollView;
@@ -138,9 +151,10 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   // The sidebar's width and whether it is hidden come back from the preferences and are saved when the person lets go of the grip or clicks a button; the footer takes the sidebar's data while it is not drawn.
   const sidebarLayout = createSidebarLayout(surface, locale);
   links.pointerHeldElsewhere = () => sidebarLayout.holdsPointer();
-  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version, locale, () => sidebarLayout.isVisible());
+  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version, locale, () => sidebarLayout.isVisible(), panels);
   tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface, sidebarLayout));
   attachJumpToLatest(tui, transcriptScroll, locale, sidebarLayout);
+  attachStatusPanels(tui, panels, { chatWidth: () => sidebarLayout.chatWidth() });
   tui.setFocus(input);
   let telemetry = emptyTelemetry();
   let activeTurn: Promise<void> | undefined;
@@ -236,8 +250,10 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       const usage = Object.entries(telemetry.quotas)
         .filter(([label, quota]) => isDisplayableUsage(label) && quota.utilization !== undefined)
         .map(([label, quota]) => ({ label, usedPercent: Math.round(quota.utilization! * 100), ...(quota.resetsAt ? { reset: new Date(quota.resetsAt * 1000).toLocaleString() } : {}) }));
+      const mcpServers = session.mcpStatus();
       shellState.connect({
         user: session.user, sessionId: session.sessionId,
+        ...(mcpServers ? { mcpServers } : {}),
         inputTokens: telemetry.inputTokens, outputTokens: telemetry.outputTokens, estimateUSD: telemetry.estimateUSD,
         model: modelDisplay(),
         reasoning: effortLabel(telemetry.effort ?? session.effort, locale),
@@ -585,6 +601,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   };
   const clock = setInterval(() => { void updateProject(); }, 15_000);
   void updateProject();
+  // Engines' and Engram's versions are read once, in the background: the screen does not wait for them, and a failed reading leaves the panel without them.
+  if (readVersions) void readVersions().then(read => { versions = read; if (!closed) refresh(); }).catch(() => {});
   process.once("SIGTERM", terminate);
   // While this screen is open no Node warning is written raw on it: the SDK's expected one is ignored, any other shows in the chat (see `takeNodeWarnings`).
   const giveBackNodeWarnings = takeNodeWarnings(writeNodeWarning);

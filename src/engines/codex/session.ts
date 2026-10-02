@@ -22,6 +22,8 @@ import { openLoginBrowser } from "../../infrastructure/browser.ts";
 import { confirmedLogout } from "../logout.ts";
 import { formatCodexPermission } from "../permission-text.ts";
 import { engramToolLabel } from "../mcp-labels.ts";
+import { codexMcpState } from "../mcp-status.ts";
+import type { McpServerState } from "../mcp-status.ts";
 import type { getStartupContext } from "../../infrastructure/forge614-engram.ts";
 import { ShellError, describeError } from "../../shell-error.ts";
 import { MEMORY_HOOK_TIMEOUT_MS } from "../../infrastructure/memory-hook.ts";
@@ -195,6 +197,12 @@ export class CodexSession implements NativeSession {
   /** The mode of the last thread/turn request Codex accepted (undefined = the default it opened with); where a rejected mode goes back to. */
   private acceptedMode?: CodexWorkMode;
   private pendingStartupContext?: string;
+  /** Whether the last startup-context call found Engram's digest (`available`); undefined while it was not asked for or the call itself threw. */
+  private startupContextAvailable?: boolean;
+  /** The MCP servers and their states for the bottom bar: the one list `loadMcpStatus` reads, then changed only by `mcpServer/startupStatus/updated`; undefined while nothing is known. */
+  private mcpStates?: McpServerState[];
+  /** Whether `loadMcpStatus` has already asked Codex (it asks once, whatever the answer was). */
+  private mcpListed = false;
   /** The one answer of the run to «does the startup hook deliver the memory?» (see `memoryDeliveredByAssistant`), asked lazily and never again. */
   private hookDelivers?: Promise<boolean>;
   /** The skills Codex listed the last time (`skills/list`), used to recognize `$name` when a message is sent; undefined until it has been read. */
@@ -683,8 +691,10 @@ export class CodexSession implements NativeSession {
     try {
       const [context, byAssistant] = await Promise.all([this.getStartupContextFn(this.cwd, {}), this.memoryDeliveredByAssistant()]);
       this.pendingStartupContext = context.available && !byAssistant ? wrapStartupContext(context.text) : undefined;
+      this.startupContextAvailable = context.available;
     } catch {
       this.pendingStartupContext = undefined;
+      this.startupContextAvailable = undefined;
     }
   }
   /**
@@ -806,24 +816,63 @@ export class CodexSession implements NativeSession {
    */
   async mcpServers(verbose: boolean): Promise<NativeMcpServer[]> {
     const servers: NativeMcpServer[] = [];
+    for (const server of await this.mcpServerPages(verbose ? "full" : "toolsAndAuthOnly")) servers.push({
+      name: server.name, status: server.runtimeStatus ?? "unknown", auth: server.authStatus ?? "unknown",
+      tools: Object.entries(server.tools ?? {}).map(([key, tool]: [string, any]) => ({ name: tool?.name ?? key, ...(tool?.description ? { description: String(tool.description) } : {}) })),
+      resources: Array.isArray(server.resources) ? server.resources.length : 0,
+      ...(server.toolsError ? { toolsError: String(server.toolsError) } : {}),
+      ...(server.serverInfo?.version ? { version: String(server.serverInfo.version) } : {}),
+      ...(server.httpOrigin ? { origin: String(server.httpOrigin) } : {}),
+    });
+    return servers;
+  }
+  /** Every page of `mcpServerStatus/list` at the given detail level, as Codex reports it; with a conversation loaded its id goes along, so Codex reuses that conversation's connections. */
+  private async mcpServerPages(detail: "toolsAndAuthOnly" | "full"): Promise<any[]> {
+    const servers: any[] = [];
     let cursor: string | undefined;
     do {
       const response = await this.rpc.request("mcpServerStatus/list", {
-        detail: verbose ? "full" : "toolsAndAuthOnly",
+        detail,
         ...(this.loaded && this.sessionId ? { threadId: this.sessionId } : {}),
         ...(cursor ? { cursor } : {}),
       });
-      for (const server of response.data ?? []) servers.push({
-        name: server.name, status: server.runtimeStatus ?? "unknown", auth: server.authStatus ?? "unknown",
-        tools: Object.entries(server.tools ?? {}).map(([key, tool]: [string, any]) => ({ name: tool?.name ?? key, ...(tool?.description ? { description: String(tool.description) } : {}) })),
-        resources: Array.isArray(server.resources) ? server.resources.length : 0,
-        ...(server.toolsError ? { toolsError: String(server.toolsError) } : {}),
-        ...(server.serverInfo?.version ? { version: String(server.serverInfo.version) } : {}),
-        ...(server.httpOrigin ? { origin: String(server.httpOrigin) } : {}),
-      });
+      servers.push(...(response.data ?? []));
       cursor = response.nextCursor ?? undefined;
     } while (cursor);
     return servers;
+  }
+  /**
+   * Reads the MCP servers' states for the bottom bar: one `mcpServerStatus/list` (the short `toolsAndAuthOnly` detail, every page), asked once however often this is called and however many
+   * messages follow; from then on only `mcpServer/startupStatus/updated` changes the states. A list Codex cannot give leaves them unknown; this never throws. The screen is told to draw again.
+   */
+  async loadMcpStatus(): Promise<void> {
+    if (this.mcpListed) return;
+    this.mcpListed = true;
+    try {
+      this.mcpStates = (await this.mcpServerPages("toolsAndAuthOnly")).map(server => {
+        const state = codexMcpState(server.runtimeStatus);
+        return { name: String(server.name), ...(state ? { state } : {}) };
+      });
+      this.emit({ type: "status", text: "" });
+    } catch { /* the states stay unknown */ }
+  }
+  /** The MCP servers and their states for the bottom bar; undefined while nothing is known. */
+  mcpStatus(): McpServerState[] | undefined { return this.mcpStates; }
+  /** Whether Engram's startup context reached this session (what the Forge614 panel calls «memory in use»): undefined until the conversation opened and asked for it, or when asking failed. */
+  memoryInUse(): boolean | undefined { return this.startupContextAvailable; }
+  /**
+   * `mcpServer/startupStatus/updated` (`{ threadId, name, status: "starting" | "ready" | "failed" | "cancelled", error, failureReason }`): the row of that name takes the new state, or is added when it
+   * was not there. It counts when its `threadId` is null (the app-server's own) or the open conversation's; one of any other thread (a side conversation, a subagent, `/recap`) is not this chat's.
+   */
+  private applyMcpStartup(params: any): void {
+    if (params.threadId != null && params.threadId !== this.sessionId) return;
+    const name = typeof params.name === "string" ? params.name : "";
+    if (!name) return;
+    const state = codexMcpState(params.status);
+    const next: McpServerState = { name, ...(state ? { state } : {}) };
+    const states = this.mcpStates ?? [];
+    this.mcpStates = states.some(server => server.name === name) ? states.map(server => server.name === name ? next : server) : [...states, next];
+    this.emit({ type: "status", text: "" });
   }
   /** `/hooks`: `hooks/list` for this folder (`v2/HooksListParams.ts`) — view only; managing them is not connected. `timeoutMs` bounds the wait for Codex's answer (none by default). */
   async hooks(timeoutMs?: number): Promise<NativeHook[]> {
@@ -1491,6 +1540,7 @@ export class CodexSession implements NativeSession {
       void this.readAccount().then(() => this.readQuotas()).then(() => this.emit({ type: "status", text: "" })).catch(() => {});
       return;
     }
+    if (method === "mcpServer/startupStatus/updated") { this.applyMcpStartup(params); return; }
     if (method === "account/rateLimits/updated") { this.updateQuotas(params); this.emit({ type: "status", text: "" }); return; }
     if (method === "externalAgentConfig/import/completed") { this.importFinished(params); return; }
     // The temporary thread of `/recap` is hidden work: what it streams is read by the recap alone and never reaches the conversation.

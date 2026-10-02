@@ -352,7 +352,7 @@ test("workspace leaves one blank row above the status bar, under the chat column
   expect(chat!.children.map(child => child.rect.height).slice(-2)).toEqual([1, 2]);
   expect([chat!.rect.height, sidebar!.rect.height]).toEqual([36, 36]);
   expect(chat!.rect.width).toBe(95);
-  const footerRow = lines.findIndex(line => line.includes("F614 ·"));
+  const footerRow = lines.findIndex(line => line.includes("F614 ▴ ·"));
   expect(lines[footerRow]!.indexOf("F614")).toBe(2);
   expect(lines[footerRow - 1]!.slice(0, 95).trim()).toBe("");
   expect(backgrounds(rows[footerRow - 2]!).slice(2, 93).every(background => background === SURFACE)).toBe(true);
@@ -378,7 +378,7 @@ test("the sidebar reaches the last row of the terminal and the footer sits only 
   const { rows, lines, sidebarStart, chatWidth } = assembledScreen(156);
   expect(sidebarStart).toBe(120);
   for (const [index, row] of rows.entries()) expect({ index, rail: backgrounds(row).slice(120, 156).every(background => background === SURFACE) }).toEqual({ index, rail: true });
-  const footerRow = lines.findIndex(line => line.includes("F614 ·"));
+  const footerRow = lines.findIndex(line => line.includes("F614 ▴ ·"));
   expect(footerRow).toBe(38);
   for (const index of [footerRow - 1, footerRow, footerRow + 1]) {
     expect(lines[index]!.slice(chatWidth).trim()).toBe("");
@@ -394,7 +394,7 @@ test("the sidebar reaches the last row of the terminal and the footer sits only 
 test("the version ends in the column where the writing box's gray block ends, with and without the sidebar", () => {
   for (const [width, expectedEnd] of [[156, 115], [90, 87]] as const) {
     const { rows, lines, chatWidth } = assembledScreen(width);
-    const footerRow = lines.findIndex(line => line.includes("F614 ·"));
+    const footerRow = lines.findIndex(line => line.includes("F614 ▴ ·"));
     const modeRow = lines.findIndex(line => line.includes("✓ Ready"));
     const blockEnd = backgrounds(rows[modeRow]!).slice(0, chatWidth).lastIndexOf(SURFACE);
     expect({ width, version: lines[footerRow]!.trimEnd().length - 1, block: blockEnd }).toEqual({ width, version: expectedEnd, block: expectedEnd });
@@ -437,7 +437,7 @@ test("the header starts in the column of the writing box and no longer shows the
     const { rows, lines } = assembledScreen(width);
     const header = lines.findIndex(line => line.includes("FORGE614 / SHELL"));
     const modeRow = lines.findIndex(line => line.includes("✓ Ready"));
-    const footerRow = lines.findIndex(line => line.includes("F614 ·"));
+    const footerRow = lines.findIndex(line => line.includes("F614 ▴ ·"));
     const blockStart = backgrounds(rows[modeRow]!).indexOf(SURFACE);
     expect({ width, header: lines[header]!.indexOf("FORGE614"), block: blockStart, footer: lines[footerRow]!.indexOf("F614") }).toEqual({ width, header: 2, block: 2, footer: 2 });
     expect(lines[header]!.slice(0, width >= 100 ? width - 38 : width).trim()).toBe("FORGE614 / SHELL");

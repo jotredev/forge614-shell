@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { claudeMenuCommands, startClaudeUI } from "./claude.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import { emptyTelemetry, telemetryLines } from "../../engines/claude/telemetry.ts";
+import type { EcosystemVersions } from "../../infrastructure/ecosystem-versions.ts";
 
 class TestTerminal implements Terminal {
   columns = 120; rows = 50; kittyProtocolActive = false;
@@ -312,9 +313,10 @@ test.skipIf(process.platform === "win32")("Claude UI: the /logout question has i
  * request and one `prompt:` line per chat prompt. With `rateLimit`, each prompt is also answered with that `rate_limit_event`
  * (the turn still stays open), and with `events`, each prompt is also answered with those messages (an `init`, say). `account` is what the handshake
  * reports. `beforeStart` runs with the `$FORGE614_HOME` of the test before the screen opens (to install a stand-in for Engines, whose startup-hook check runs at
- * opening). No real account or network is involved. `finish` leaves the screen and cleans up.
+ * opening). No real account or network is involved. `versions` stands in for the reading of the two binaries' `--version` (without it the screen reads none) and `shellVersion` is
+ * the version the bar shows. `finish` leaves the screen and cleans up.
  */
-async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120, events: object[] = [], account: object = { email: "test@example.com" }, beforeStart?: (forgeHome: string) => void) {
+async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120, events: object[] = [], account: object = { email: "test@example.com" }, beforeStart?: (forgeHome: string) => void, versions?: () => Promise<EcosystemVersions>, shellVersion?: string) {
   const root = await mkdtemp(join(tmpdir(), "forge614-prefix-ui-"));
   const executable = join(root, "claude"); const marker = join(root, "calls");
   const terminal = new TestTerminal(); terminal.columns = columns;
@@ -333,7 +335,7 @@ else {
     if(msg.type==='user') { fs.appendFileSync(${JSON.stringify(marker)},'prompt:'+JSON.stringify(msg.message.content)+'\\n'); for (const info of ${JSON.stringify(rateLimit ?? [])}) console.log(JSON.stringify({type:'rate_limit_event',rate_limit_info:info,uuid:'00000000-0000-4000-8000-000000000001',session_id:'s'})); for (const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event)); }
   });
 }`, { mode: 0o755 });
-  const ui = startClaudeUI([], executable, terminal, undefined, locale);
+  const ui = startClaudeUI([], executable, terminal, shellVersion, locale, undefined, versions);
   await tick();
   for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
   const calls = () => existsSync(marker) ? readFileSync(marker, "utf8").split("\n").filter(Boolean) : [];
@@ -909,4 +911,109 @@ else { require('readline').createInterface({input:process.stdin}).on('line',line
     enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
   }
+});
+
+/** The SDK's `init` message of a turn, with two MCP servers connected and one failed (what the bottom bar and its panel show). */
+const mcpInit = { type: "system", subtype: "init", session_id: "s-bar-1", claude_code_version: "2.1.274", apiKeySource: "none", model: "claude-test", permissionMode: "default", cwd: process.cwd(),
+  mcp_servers: [{ name: "forge614-engram", status: "connected" }, { name: "context7", status: "connected" }, { name: "github", status: "failed" }], slash_commands: [], tools: [], output_style: "default", skills: [], plugins: [],
+  uuid: "00000000-0000-4000-8000-000000000003" };
+type ClaudeHarness = Awaited<ReturnType<typeof claudeUi>>;
+/** What is on the screen now, drawn again from scratch, as plain text. */
+async function snapshot(h: ClaudeHarness): Promise<string> {
+  // The width changes by one column (which is what makes the screen write every row) and comes back, so the clicks that follow land where they were measured.
+  h.terminal.columns = 121; h.terminal.output = ""; h.terminal.resize(); await tick();
+  const shown = h.plain();
+  h.terminal.columns = 120; h.terminal.resize(); await tick();
+  return shown;
+}
+/** A left click at column `x`, row `y` (0-based) as the terminal sends it: the press and then the release, in SGR mode. */
+function leftClick(h: ClaudeHarness, x: number, y: number): void { h.terminal.input(`\x1b[<0;${x + 1};${y + 1}M`); h.terminal.input(`\x1b[<0;${x + 1};${y + 1}m`); }
+/** On the 120×50 stand-in terminal the chat is 82 wide and the status line is row 48; «F614 ▴» starts in column 2 and, with no version, «⇌ N MCP ▴» ends in column 80. */
+const STATUS_ROW = 48; const F614_X = 3; const MCP_X = 72;
+
+/**
+ * The bottom bar learns the MCP servers from the `init` of each message, so before the first message it shows no MCP indicator; once the message is sent it shows «⇌ 2 MCP ▴» (two connected, one failed). A click on it
+ * opens the panel with the three servers, each with its state, the Forge614 one marked; the same click closes it, and so does Esc.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: the bottom bar shows «⇌ 2 MCP ▴» after the first message and its click opens the servers' panel", async () => {
+  const h = await claudeUi([], "en", undefined, 120, [mcpInit]);
+  try {
+    const before = await snapshot(h);
+    expect(before).toContain("F614 ▴");
+    expect(before).not.toContain("MCP ▴");
+    h.enter("go");
+    for (let i = 0; i < 60 && !h.plain().includes("⇌ 2 MCP ▴"); i++) await tick();
+    expect(await snapshot(h)).toContain("⇌ 2 MCP ▴");
+    leftClick(h, MCP_X, STATUS_ROW); await tick();
+    const opened = await snapshot(h);
+    for (const text of ["MCP servers · 3", "forge614-engram", "Forge614 · Engram", "context7", "github", "connected", "failed", "⇌ 2 MCP ▾"]) expect(opened, text).toContain(text);
+    leftClick(h, MCP_X, STATUS_ROW); await tick();
+    const closed = await snapshot(h);
+    expect(closed).not.toContain("MCP servers · 3");
+    expect(closed).toContain("⇌ 2 MCP ▴");
+    leftClick(h, MCP_X, STATUS_ROW); await tick();
+    expect(await snapshot(h)).toContain("MCP servers · 3");
+    h.terminal.input("\x1b"); await tick();
+    expect(await snapshot(h)).not.toContain("MCP servers · 3");
+  } finally { await h.finish(); }
+});
+
+/** `/new` forgets what the last `init` reported, and the bar with it: no MCP indicator until the first message of the new conversation. */
+test.skipIf(process.platform === "win32")("Claude UI: after /new the bar shows no MCP indicator until the next message", async () => {
+  const h = await claudeUi([], "en", undefined, 120, [mcpInit]);
+  try {
+    h.enter("go");
+    for (let i = 0; i < 60 && !h.plain().includes("⇌ 2 MCP ▴"); i++) await tick();
+    expect(await snapshot(h)).toContain("⇌ 2 MCP ▴");
+    h.enter("/f614:stop"); await tick(); await tick();
+    h.enter("/new"); await tick();
+    expect(await snapshot(h)).not.toContain("MCP ▴");
+  } finally { await h.finish(); }
+});
+
+/**
+ * The Forge614 panel: Shell's version (the one the bar already has), Engines' and Engram's (read once, when Shell opens, by the injected reader) and the memory state, which is unknown until the first message asks
+ * Engram for its startup context — here there is no Engram under the test's own $FORGE614_HOME, so the context does not arrive and the row says «not in use». The reader is called once however often the panel is opened.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: the Forge614 panel shows the three versions and the memory state, reading the versions once", async () => {
+  let reads = 0;
+  const versions = async (): Promise<EcosystemVersions> => { reads++; return { engines: { state: "version", version: "1.16.0" }, engram: { state: "version", version: "1.8.6" } }; };
+  const h = await claudeUi([], "en", undefined, 120, [mcpInit], undefined, undefined, versions, "1.13.0");
+  try {
+    await tick();
+    leftClick(h, F614_X, STATUS_ROW); await tick();
+    const first = await snapshot(h);
+    for (const text of ["Forge614", "Shell", "1.13.0", "Engines", "1.16.0", "Engram", "1.8.6", "F614 ▾"]) expect(first, text).toContain(text);
+    expect(first).not.toContain("not in use");
+    expect(first).not.toContain("memory in use");
+    leftClick(h, F614_X, STATUS_ROW); await tick();
+    expect(await snapshot(h)).not.toContain("Engines");
+    h.enter("go");
+    for (let i = 0; i < 60 && !h.plain().includes("⇌ 2 MCP ▴"); i++) await tick();
+    leftClick(h, F614_X, STATUS_ROW); await tick();
+    const second = await snapshot(h);
+    expect(second).toContain("1.8.6");
+    expect(second).toContain("not in use");
+    expect(reads).toBe(1);
+  } finally { await h.finish(); }
+});
+
+/**
+ * Esc with a panel open only closes the panel: it does not reach the writing box, so a menu that was open in it (here the command list) stays open, where Esc would have closed it. A second Esc is the box's again.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: Esc with a panel open closes only the panel and leaves the open menu alone", async () => {
+  const h = await claudeUi([], "en", undefined, 120, [mcpInit], undefined, undefined, async () => ({ engines: { state: "missing" }, engram: { state: "missing" } }), "1.13.0");
+  try {
+    const title = getCatalog("en").chat.commandsFallbackTitle;
+    h.enter("/f614:commands"); await tick();
+    expect(await snapshot(h)).toContain(title);
+    leftClick(h, F614_X, STATUS_ROW); await tick();
+    expect(await snapshot(h)).toContain("Engines");
+    h.terminal.input("\x1b"); await tick();
+    const afterFirst = await snapshot(h);
+    expect(afterFirst).not.toContain("Engines");
+    expect(afterFirst).toContain(title);
+    h.terminal.input("\x1b"); await tick();
+    expect(await snapshot(h)).not.toContain(title);
+  } finally { await h.finish(); }
 });

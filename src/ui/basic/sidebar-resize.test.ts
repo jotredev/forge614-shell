@@ -395,18 +395,19 @@ test("with no sidebar the footer shows model, reasoning and context right after 
   const snapshot: ShellSnapshot = { account: "connected", provider: "Claude Code", model: "Opus 5.5", reasoning: "high", context: { used: 68_000, window: 200_000 } };
   const bar = (visible: () => boolean, locale: "es" | "en" = "en", state: ShellSnapshot = snapshot) => new ShellStatusBar(() => state, "/Users/forge/project", () => ({ path: "/p", git: true, branch: "main", changedFiles: 0 }), "/Users/forge", undefined, locale, visible);
   const row = bar(() => false).render(100)[0]!;
-  expect(stripVTControlCharacters(row).trimEnd()).toBe("  F614 · Opus 5.5 · high · context 34% · ~/project · main · Clean");
+  expect(stripVTControlCharacters(row).trimEnd()).toBe("  F614 ▴ · Opus 5.5 · high · context 34% · ~/project · main · Clean");
   expect(row).toContain(foreground("Opus 5.5"));
   expect(row).toContain(warning("high"));
   expect(row).toContain(foreground("context 34%"));
-  expect(stripVTControlCharacters(bar(() => false, "es").render(100)[0]!).trimEnd()).toBe("  F614 · Opus 5.5 · high · contexto 34 % · ~/project · main · Limpio");
+  expect(stripVTControlCharacters(bar(() => false, "es").render(100)[0]!).trimEnd()).toBe("  F614 ▴ · Opus 5.5 · high · contexto 34 % · ~/project · main · Limpio");
   // What is not known is not represented.
-  expect(stripVTControlCharacters(bar(() => false, "en", { account: "connected", provider: "Claude Code", reasoning: "high" }).render(100)[0]!).trimEnd()).toBe("  F614 · high · ~/project · main · Clean");
-  expect(stripVTControlCharacters(bar(() => false, "en", { account: "connected", provider: "Claude Code" }).render(100)[0]!).trimEnd()).toBe("  F614 · ~/project · main · Clean");
-  expect(stripVTControlCharacters(bar(() => false, "en", { account: "disconnected", provider: "Claude Code", model: "Opus 5.5" }).render(100)[0]!).trimEnd()).toBe("  F614 · Disconnected · /login · ~/project · main · Clean");
+  expect(stripVTControlCharacters(bar(() => false, "en", { account: "connected", provider: "Claude Code", reasoning: "high" }).render(100)[0]!).trimEnd()).toBe("  F614 ▴ · high · ~/project · main · Clean");
+  expect(stripVTControlCharacters(bar(() => false, "en", { account: "connected", provider: "Claude Code" }).render(100)[0]!).trimEnd()).toBe("  F614 ▴ · ~/project · main · Clean");
+  expect(stripVTControlCharacters(bar(() => false, "en", { account: "disconnected", provider: "Claude Code", model: "Opus 5.5" }).render(100)[0]!).trimEnd()).toBe("  F614 ▴ · Disconnected · /login · ~/project · main · Clean");
   // Too narrow: cut with «…» like the rest of the row.
   const cut = bar(() => false).render(30)[0]!;
-  expect(stripVTControlCharacters(cut)).toBe("  F614 · Opus 5.5 · high · …");
+  // «F614 ▴» is two columns wider than «F614» was, so the same cut falls two columns earlier.
+  expect(stripVTControlCharacters(cut)).toBe("  F614 ▴ · Opus 5.5 · high …");
   expect(visibleWidth(cut)).toBeLessThanOrEqual(30);
   // With the sidebar on screen none of the three is repeated.
   for (const visible of [() => true, undefined]) {
@@ -424,9 +425,9 @@ test("the footer takes the data when the sidebar is hidden or the terminal is na
     const footer = new ShellStatusBar(snapshot, "/Users/forge/project", () => ({ path: "/p", git: true, branch: "main", changedFiles: 0 }), "/Users/forge", undefined, "en", () => layout.isVisible());
     const sidebar = new ShellSidebar(snapshot);
     const screen = new Screen(workspaceLayout(empty, empty, sidebar, footer, terminal, layout), columns, 40);
-    return screen.lines.find(line => line.includes("F614 ·"))!.trimEnd();
+    return screen.lines.find(line => line.includes("F614 ▴ ·"))!.trimEnd();
   };
-  expect(footerRow(120, false)).toBe("  F614 · ~/project · main · Clean");
-  expect(footerRow(120, true)).toBe("  F614 · Opus 5.5 · high · context 34% · ~/project · main · Clean");
-  expect(footerRow(99, false)).toBe("  F614 · Opus 5.5 · high · context 34% · ~/project · main · Clean");
+  expect(footerRow(120, false)).toBe("  F614 ▴ · ~/project · main · Clean");
+  expect(footerRow(120, true)).toBe("  F614 ▴ · Opus 5.5 · high · context 34% · ~/project · main · Clean");
+  expect(footerRow(99, false)).toBe("  F614 ▴ · Opus 5.5 · high · context 34% · ~/project · main · Clean");
 });
