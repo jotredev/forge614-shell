@@ -126,6 +126,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const session = new ClaudeSession({
     cwd, env, executable, getStartupContext: withStartupNotices(getStartupContext, showNotice, locale),
     memoryHookActive: createMemoryHookProbe("claude-code", { env }),
+    // The opening probe's answers redraw the bottom bar; `refresh` is declared below and only runs once an answer arrives, long after it exists.
+    onMcpStatus: () => { if (!closed) refresh(); },
   });
   // A click on a link or a path opens it; `writeWarning` is declared below and only runs when a click fails, long after it exists.
   enableTerminalLinks(process.env);
@@ -180,6 +182,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const loadCatalog = async (signal?: AbortSignal) => {
     try {
       await session.initialize(signal);
+      // The MCP servers' states for the bottom bar, learned in the background without any message (asked at most once per session; it delays nothing here).
+      void session.watchMcpServers();
       if (!preferenceApplied) {
         preferenceApplied = true;
         const saved = loadEnginePreference("claude", { env: process.env });

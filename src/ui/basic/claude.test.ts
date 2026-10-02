@@ -314,9 +314,10 @@ test.skipIf(process.platform === "win32")("Claude UI: the /logout question has i
  * (the turn still stays open), and with `events`, each prompt is also answered with those messages (an `init`, say). `account` is what the handshake
  * reports. `beforeStart` runs with the `$FORGE614_HOME` of the test before the screen opens (to install a stand-in for Engines, whose startup-hook check runs at
  * opening). No real account or network is involved. `versions` stands in for the reading of the two binaries' `--version` (without it the screen reads none) and `shellVersion` is
- * the version the bar shows. `finish` leaves the screen and cleans up.
+ * the version the bar shows. `mcpServers` is what the fake answers to the opening probe's `mcp_status` request (the SDK's `McpServerStatus` list; none: it answers with no list), and each such request is a
+ * line `mcp_status` in the marker file. `finish` leaves the screen and cleans up.
  */
-async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120, events: object[] = [], account: object = { email: "test@example.com" }, beforeStart?: (forgeHome: string) => void, versions?: () => Promise<EcosystemVersions>, shellVersion?: string) {
+async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120, events: object[] = [], account: object = { email: "test@example.com" }, beforeStart?: (forgeHome: string) => void, versions?: () => Promise<EcosystemVersions>, shellVersion?: string, mcpServers?: object[]) {
   const root = await mkdtemp(join(tmpdir(), "forge614-prefix-ui-"));
   const executable = join(root, "claude"); const marker = join(root, "calls");
   const terminal = new TestTerminal(); terminal.columns = columns;
@@ -331,7 +332,8 @@ if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claud
 else {
   require('readline').createInterface({input:process.stdin}).on('line',line=>{
     const msg=JSON.parse(line);
-    if(msg.type==='control_request') { fs.appendFileSync(${JSON.stringify(marker)},'control\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:${JSON.stringify(account)},commands:${JSON.stringify(commands)},agents:[],output_style:'default',available_output_styles:[]}}})); }
+    if(msg.type==='control_request' && msg.request.subtype==='mcp_status') { fs.appendFileSync(${JSON.stringify(marker)},'mcp_status\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{mcpServers:${JSON.stringify(mcpServers)}}}})); }
+    else if(msg.type==='control_request') { fs.appendFileSync(${JSON.stringify(marker)},'control\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:${JSON.stringify(account)},commands:${JSON.stringify(commands)},agents:[],output_style:'default',available_output_styles:[]}}})); }
     if(msg.type==='user') { fs.appendFileSync(${JSON.stringify(marker)},'prompt:'+JSON.stringify(msg.message.content)+'\\n'); for (const info of ${JSON.stringify(rateLimit ?? [])}) console.log(JSON.stringify({type:'rate_limit_event',rate_limit_info:info,uuid:'00000000-0000-4000-8000-000000000001',session_id:'s'})); for (const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event)); }
   });
 }`, { mode: 0o755 });
@@ -932,18 +934,31 @@ function leftClick(h: ClaudeHarness, x: number, y: number): void { h.terminal.in
 const STATUS_ROW = 48; const F614_X = 3; const MCP_X = 72;
 
 /**
- * The bottom bar learns the MCP servers from the `init` of each message, so before the first message it shows no MCP indicator; once the message is sent it shows «⇌ 2 MCP ▴» (two connected, one failed). A click on it
- * opens the panel with the three servers, each with its state, the Forge614 one marked; the same click closes it, and so does Esc.
+ * Runs `body` with the process in `/`, a short folder that is the same on every machine: the bottom bar draws the folder's path, and the MCP tests must not depend on where the repository (or its copy) lives.
+ * The original folder comes back afterwards.
  */
-test.skipIf(process.platform === "win32")("Claude UI: the bottom bar shows «⇌ 2 MCP ▴» after the first message and its click opens the servers' panel", async () => {
-  const h = await claudeUi([], "en", undefined, 120, [mcpInit]);
+async function inFixedFolder(body: () => Promise<void>): Promise<void> {
+  const previous = process.cwd();
+  process.chdir("/");
+  try { await body(); } finally { process.chdir(previous); }
+}
+/** What the opening probe's `mcp_status` request is answered with: two servers connected and one failed, as the SDK words them. */
+const probedServers = [{ name: "forge614-engram", status: "connected" }, { name: "context7", status: "connected" }, { name: "github", status: "failed" }];
+
+/**
+ * With Claude Code the bar knows the MCP servers from the moment the chat opens: Shell opens one query in the background that sends no message and asks the servers' states. So with NO message sent the bar already
+ * shows «⇌ 2 MCP ▴» (two connected, one failed), and nothing was sent to the model (no `prompt:` line reaches the fake `claude`). A click on it opens the panel with the three servers, each with its state, the
+ * Forge614 one marked; the same click closes it, and so does Esc.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: the bottom bar shows «⇌ 2 MCP ▴» with no message sent and its click opens the servers' panel", () => inFixedFolder(async () => {
+  const h = await claudeUi([], "en", undefined, 120, [mcpInit], undefined, undefined, undefined, undefined, probedServers);
   try {
+    for (let i = 0; i < 60 && !h.plain().includes("⇌ 2 MCP ▴"); i++) await tick();
     const before = await snapshot(h);
     expect(before).toContain("F614 ▴");
-    expect(before).not.toContain("MCP ▴");
-    h.enter("go");
-    for (let i = 0; i < 60 && !h.plain().includes("⇌ 2 MCP ▴"); i++) await tick();
-    expect(await snapshot(h)).toContain("⇌ 2 MCP ▴");
+    expect(before).toContain("⇌ 2 MCP ▴");
+    expect(h.calls()).toContain("mcp_status");
+    expect(h.calls().some(line => line.startsWith("prompt:"))).toBe(false);
     leftClick(h, MCP_X, STATUS_ROW); await tick();
     const opened = await snapshot(h);
     for (const text of ["MCP servers · 3", "forge614-engram", "Forge614 · Engram", "context7", "github", "connected", "failed", "⇌ 2 MCP ▾"]) expect(opened, text).toContain(text);
@@ -956,19 +971,45 @@ test.skipIf(process.platform === "win32")("Claude UI: the bottom bar shows «⇌
     h.terminal.input("\x1b"); await tick();
     expect(await snapshot(h)).not.toContain("MCP servers · 3");
   } finally { await h.finish(); }
-});
+}));
 
-/** `/new` forgets what the last `init` reported, and the bar with it: no MCP indicator until the first message of the new conversation. */
-test.skipIf(process.platform === "win32")("Claude UI: after /new the bar shows no MCP indicator until the next message", async () => {
-  const h = await claudeUi([], "en", undefined, 120, [mcpInit]);
+/**
+ * The probe's list is only the first word: when the person sends a message, that message's `init` rules (here it reports two connected where the probe knew one), and `/new` does not clear the list — it is Claude
+ * Code's configuration, not the conversation's — so the bar keeps the last known list before and after it.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: a message's init rules over the opening probe, and /new keeps the MCP indicator", () => inFixedFolder(async () => {
+  const h = await claudeUi([], "en", undefined, 120, [mcpInit], undefined, undefined, undefined, undefined, [{ name: "forge614-engram", status: "connected" }]);
   try {
+    for (let i = 0; i < 60 && !h.plain().includes("⇌ 1 MCP ▴"); i++) await tick();
+    expect(await snapshot(h)).toContain("⇌ 1 MCP ▴");
     h.enter("go");
     for (let i = 0; i < 60 && !h.plain().includes("⇌ 2 MCP ▴"); i++) await tick();
     expect(await snapshot(h)).toContain("⇌ 2 MCP ▴");
     h.enter("/f614:stop"); await tick(); await tick();
     h.enter("/new"); await tick();
-    expect(await snapshot(h)).not.toContain("MCP ▴");
+    expect(await snapshot(h)).toContain("⇌ 2 MCP ▴");
   } finally { await h.finish(); }
+}));
+
+/**
+ * A folder whose path is 150 characters long used to push the MCP indicator and the version off a wide bar. Here the real screen opens in such a folder at 120 columns: the folder is cut with «…» and «F614 ▴», «⇌ 2 MCP ▴» and the
+ * version are all on the line. The folder is made in the test's own temporary directory (a path of that length in a fixed place), not in the repository.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: with a 150-character folder the bar cuts the folder with «…» and keeps «F614 ▴», the MCP indicator and the version", async () => {
+  const previous = process.cwd();
+  const base = await mkdtemp(join(tmpdir(), "forge614-long-folder-"));
+  const folder = join(base, "a".repeat(Math.max(1, 150 - base.length - 1)));
+  mkdirSync(folder, { recursive: true });
+  process.chdir(folder);
+  const h = await claudeUi([], "en", undefined, 120, [mcpInit], undefined, undefined, undefined, "1.13.0", probedServers);
+  try {
+    for (let i = 0; i < 60 && !h.plain().includes("⇌ 2 MCP ▴"); i++) await tick();
+    const shown = await snapshot(h);
+    expect(process.cwd().length).toBeGreaterThanOrEqual(140);
+    expect(shown).toContain("F614 ▴");
+    expect(shown).toContain("…");
+    expect(shown).toContain("⇌ 2 MCP ▴   v1.13.0");
+  } finally { await h.finish(); process.chdir(previous); await rm(base, { recursive: true, force: true }); }
 });
 
 /**
