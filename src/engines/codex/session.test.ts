@@ -1733,8 +1733,8 @@ test("a startup notice of another conversation is ignored, one with no thread or
   expect(events).toHaveLength(2);
 });
 
-/** A notice that arrives before the first list (the app-server starts servers on its own) starts the list; the list that follows is the complete picture. */
-test("a startup notice before the list starts the list, and the list then replaces it", async () => {
+/** A notice that arrives before the first list (the app-server starts servers on its own) starts the list; the list that follows fills the other servers and the notice keeps its state (it is the newer one). */
+test("a startup notice before the list starts the list, and the list then fills the rest without replacing it", async () => {
   const rpc = turnFixture(null);
   const session = new CodexSession(rpc, "/project", () => {}, async () => false);
   await session.initialize();
@@ -1742,7 +1742,7 @@ test("a startup notice before the list starts the list, and the list then replac
   expect(session.mcpStatus()).toEqual([{ name: "github", state: "starting" }]);
   rpc.replies.set("mcpServerStatus/list", barReply);
   await session.loadMcpStatus();
-  expect(session.mcpStatus()).toHaveLength(3);
+  expect(session.mcpStatus()).toEqual([{ name: "forge614-engram", state: "connected" }, { name: "github", state: "starting" }, { name: "silent" }]);
 });
 
 /**
@@ -1768,4 +1768,156 @@ test("memoryInUse keeps whether Engram's startup context reached the conversatio
   const bare = new CodexSession(rpc, "/project", () => {}, async () => false);
   await bare.initialize(); await runTurn(rpc, bare, "hello");
   expect(bare.memoryInUse()).toBeUndefined();
+});
+
+/**
+ * The conversation opens as soon as the chat is ready (`openConversation`, the same path the first message takes: `thread/start`), so Codex starts its MCP servers and the bottom bar can list them with no
+ * message sent. Measured live with `codex app-server` 0.159.3: `thread/start` alone sends nothing to the model and leaves no saved conversation.
+ */
+test("openConversation opens the conversation with one thread/start and never starts a turn", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  await session.openConversation();
+  expect(rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(1);
+  expect(rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(0);
+  expect(session.sessionId).toBe("t");
+});
+
+/** The list that follows carries the conversation's id (the servers only run once a conversation is open), and a notice that arrives while the list is on its way wins over what the list says for that server. */
+test("the MCP list asked after opening carries the threadId, and a ready notice that came first wins over «starting» in the list", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  await session.openConversation();
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  rpc.handler = async (method) => {
+    if (method !== "mcpServerStatus/list") return rpc.replies.get(method);
+    await gate;
+    return { data: [{ name: "github", runtimeStatus: "starting" }, { name: "context7", runtimeStatus: "ready" }], nextCursor: null };
+  };
+  const listing = session.loadMcpStatus();
+  await new Promise(resolve => setImmediate(resolve));
+  rpc.onNotification("mcpServer/startupStatus/updated", { threadId: "t", name: "github", status: "ready", error: null, failureReason: null });
+  release();
+  await listing;
+  expect(rpc.calls.filter(call => call.method === "mcpServerStatus/list").map(call => call.params)).toEqual([{ detail: "toolsAndAuthOnly", threadId: "t" }]);
+  expect(session.mcpStatus()).toEqual([{ name: "github", state: "connected" }, { name: "context7", state: "connected" }]);
+});
+
+/** A notice-only server stays, and the list adds the ones the notices had not named. */
+test("the list keeps a server only a notice named and adds the rest", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  await session.openConversation();
+  rpc.onNotification("mcpServer/startupStatus/updated", { threadId: "t", name: "extra", status: "failed", error: null, failureReason: null });
+  rpc.replies.set("mcpServerStatus/list", { data: [{ name: "github", runtimeStatus: "connected" }], nextCursor: null });
+  await session.loadMcpStatus();
+  expect(session.mcpStatus()).toEqual([{ name: "github", state: "connected" }, { name: "extra", state: "failed" }]);
+});
+
+/** Opening ahead of time must never show anything: not connected, or Codex failing `thread/start`, leaves no error on screen and no second try; the first message opens the conversation as before. */
+test("when the account is not connected or thread/start fails, opening ahead is silent and the first message opens the conversation", async () => {
+  for (const failure of ["account", "thread"] as const) {
+    const rpc = turnFixture(null); const events: any[] = [];
+    const session = new CodexSession(rpc, "/project", event => events.push(event), async () => false);
+    await session.initialize();
+    const modes = session.workModes(); const chosen = modes[modes.length - 1]!;
+    await session.setWorkMode(chosen.id);
+    events.length = 0;
+    let failing = true;
+    if (failure === "account") rpc.replies.set("account/read", { account: { type: "apiKey" } });
+    else rpc.handler = async method => { if (method === "thread/start" && failing) throw new Error("boom"); return rpc.replies.get(method); };
+    await session.openConversation();
+    expect(events, failure).toEqual([]);
+    expect(rpc.calls.filter(call => call.method === "thread/start"), failure).toHaveLength(failure === "account" ? 0 : 1);
+    expect(session.sessionId, failure).toBeUndefined();
+    expect(session.workMode(), failure).toBe(chosen.id);
+    failing = false;
+    rpc.replies.set("account/read", { account: { type: "chatgpt", planType: "plus" }, requiresOpenaiAuth: true });
+    await runTurn(rpc, session, "hello");
+    expect(rpc.calls.filter(call => call.method === "thread/start"), failure).toHaveLength(failure === "account" ? 1 : 2);
+    expect(rpc.calls.filter(call => call.method === "turn/start"), failure).toHaveLength(1);
+    expect(rpc.calls.find(call => call.method === "turn/start")!.params.approvalPolicy, failure).toBe(chosen.id.split(":")[0]);
+  }
+});
+
+/** The conversation already open at startup is the one the first message uses (one `thread/start` in the whole session), and the memory of Engram still goes in front of that first message. */
+test("the first message after opening ahead opens nothing else and carries Engram's startup memory", async () => {
+  const rpc = turnFixture(null);
+  const memory = async () => ({ available: true, text: "REMEMBER-THIS", notices: [] }) as any;
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false, undefined, memory);
+  await session.initialize();
+  await session.openConversation();
+  await runTurn(rpc, session, "hello");
+  await runTurn(rpc, session, "again");
+  expect(rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(1);
+  const turns = rpc.calls.filter(call => call.method === "turn/start").map(call => call.params.input);
+  expect(turns).toHaveLength(2);
+  expect(turns[0]).toHaveLength(2);
+  expect(turns[0][0].text).toContain("REMEMBER-THIS");
+  expect(turns[0][0].text).toContain("<forge614-engram-memory");
+  expect(turns[0][1]).toEqual({ type: "text", text: "hello" });
+  expect(turns[1]).toEqual([{ type: "text", text: "again" }]);
+});
+
+/** What the person changes between opening and the first message (work mode, collaboration mode, model, reasoning) reaches Codex in that first `turn/start`, exactly as for a conversation opened by an earlier message. */
+test("a work mode, collaboration mode, model and reasoning change made before the first message arrive in its turn/start", async () => {
+  const rpc = turnFixture(null);
+  rpc.replies.set("model/list", { data: [
+    { model: "test-model", displayName: "Test model", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "high" }] },
+    { model: "other-model", displayName: "Other model", isDefault: false, defaultReasoningEffort: "low", supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }] },
+  ], nextCursor: null });
+  rpc.replies.set("collaborationMode/list", { data: [{ name: "Plan", mode: "plan", model: null, reasoning_effort: null }, { name: "Default", mode: "default", model: null, reasoning_effort: null }] });
+  rpc.replies.set("thread/settings/update", {});
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  await session.openConversation();
+  const modes = session.workModes(); const chosen = modes[modes.length - 1]!;
+  await session.setWorkMode(chosen.id);
+  await session.setCollaborationMode("plan");
+  await session.setModel("other-model");
+  await session.setEffort("high");
+  await runTurn(rpc, session, "hello");
+  expect(rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(1);
+  const turn = rpc.calls.find(call => call.method === "turn/start")!.params;
+  expect(turn.model).toBe("other-model");
+  expect(turn.effort).toBe("high");
+  const [approval, sandbox] = chosen.id.split(":");
+  expect(turn.approvalPolicy).toBe(approval);
+  expect(turn.sandboxPolicy.type).toBe(sandbox === "danger-full-access" ? "dangerFullAccess" : sandbox === "read-only" ? "readOnly" : "workspaceWrite");
+  expect(turn.collaborationMode).toEqual({ mode: "plan", settings: { model: "other-model", reasoning_effort: "high", developer_instructions: null } });
+});
+
+/** A Shell that starts resuming a conversation reopens that one (`thread/resume` with its id), never a new one. */
+test("opening ahead a session that starts resuming a conversation calls thread/resume with its id", async () => {
+  const rpc = turnFixture(null);
+  rpc.replies.set("thread/resume", { thread: { id: "saved" }, model: "test-model", modelProvider: "openai" });
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  session.sessionId = "saved";
+  await session.openConversation();
+  expect(rpc.calls.filter(call => call.method === "thread/resume").map(call => call.params.threadId)).toEqual(["saved"]);
+  expect(rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(0);
+});
+
+/** A first message sent while the conversation is still opening ahead waits for that opening: one `thread/start` in the whole session. */
+test("a message sent while the conversation is opening ahead joins that opening", async () => {
+  const rpc = turnFixture(null);
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  rpc.handler = async method => { if (method === "thread/start") await gate; return rpc.replies.get(method); };
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  const opening = session.openConversation();
+  await new Promise(resolve => setImmediate(resolve));
+  const sending = session.send("hello");
+  await new Promise(resolve => setImmediate(resolve));
+  release();
+  await opening;
+  await new Promise(resolve => setImmediate(resolve));
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await sending;
+  expect(rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(1);
+  expect(rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(1);
 });

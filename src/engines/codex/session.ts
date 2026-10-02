@@ -203,6 +203,8 @@ export class CodexSession implements NativeSession {
   private mcpStates?: McpServerState[];
   /** Whether `loadMcpStatus` has already asked Codex (it asks once, whatever the answer was). */
   private mcpListed = false;
+  /** The opening of the conversation in progress (`thread/start` or `thread/resume`), shared by whoever needs the conversation meanwhile; undefined when none is opening. */
+  private opening?: Promise<void>;
   /** The one answer of the run to «does the startup hook deliver the memory?» (see `memoryDeliveredByAssistant`), asked lazily and never again. */
   private hookDelivers?: Promise<boolean>;
   /** The skills Codex listed the last time (`skills/list`), used to recognize `$name` when a message is sent; undefined until it has been read. */
@@ -656,8 +658,32 @@ export class CodexSession implements NativeSession {
       ...(mode ? { approvalPolicy: mode.approvalPolicy, sandbox: mode.sandbox } : { approvalPolicy: "untrusted", sandbox: "workspace-write" }),
     };
   }
+  /**
+   * Opens (or resumes) the conversation once: a call made while another one is opening it waits for that one (so a first message sent during the opening ahead never starts a second `thread/start`),
+   * and tries again itself if that one failed.
+   */
   private async openThread(mode: CodexWorkMode | undefined): Promise<void> {
+    while (this.opening) await this.opening.catch(() => {});
     if (this.loaded) return;
+    const opening: Promise<void> = this.openThreadNow(mode).finally(() => { if (this.opening === opening) this.opening = undefined; });
+    this.opening = opening;
+    return opening;
+  }
+  /**
+   * Opens the conversation as soon as the chat is ready, in the background, through the same path the first message would take (`ensureThread`, with the chosen work mode and Plan/Default), so Codex starts its MCP
+   * servers and the bottom bar can list them before any message. It sends nothing to the model. It never throws and shows nothing: when it cannot (account not connected, Codex fails or does not answer) nothing
+   * is retried, the work mode the person chose stays, and the first message opens the conversation as before.
+   */
+  async openConversation(): Promise<void> {
+    if (this.loaded || this.disconnected) return;
+    const chosen = this.selectedMode;
+    try { await this.ensureThread(); }
+    catch {
+      // A rejected `thread/start` puts the previous accepted mode back (`requestWithMode`); an opening nobody asked for must not undo the person's choice, so the first message meets Codex's answer itself.
+      if (this.selectedMode !== chosen && this.selectedMode === this.acceptedMode) this.selectedMode = chosen;
+    }
+  }
+  private async openThreadNow(mode: CodexWorkMode | undefined): Promise<void> {
     const config = this.threadConfig(mode);
     const result = await this.requestWithMode(mode, this.sessionId ? "thread/resume" : "thread/start", { ...config, ...(this.sessionId ? { threadId: this.sessionId } : {}) });
     if (result.modelProvider !== "openai") throw new ShellError("codex-unexpected-provider");
@@ -842,17 +868,23 @@ export class CodexSession implements NativeSession {
     return servers;
   }
   /**
-   * Reads the MCP servers' states for the bottom bar: one `mcpServerStatus/list` (the short `toolsAndAuthOnly` detail, every page), asked once however often this is called and however many
+   * Reads the MCP servers' states for the bottom bar: one `mcpServerStatus/list` (the short `toolsAndAuthOnly` detail, every page; with the conversation open its id goes along), asked once however often this is called and however many
    * messages follow; from then on only `mcpServer/startupStatus/updated` changes the states. A list Codex cannot give leaves them unknown; this never throws. The screen is told to draw again.
    */
   async loadMcpStatus(): Promise<void> {
     if (this.mcpListed) return;
     this.mcpListed = true;
     try {
-      this.mcpStates = (await this.mcpServerPages("toolsAndAuthOnly")).map(server => {
+      const listed = (await this.mcpServerPages("toolsAndAuthOnly")).map((server): McpServerState => {
         const state = codexMcpState(server.runtimeStatus);
         return { name: String(server.name), ...(state ? { state } : {}) };
       });
+      // A notice that arrived first (or while the list was on its way) is newer than the list: its server keeps the notice's state, the list fills the others, and a server only a notice named stays.
+      const noticed = this.mcpStates ?? [];
+      this.mcpStates = [
+        ...listed.map(server => noticed.find(item => item.name === server.name && item.state) ?? server),
+        ...noticed.filter(item => !listed.some(server => server.name === item.name)),
+      ];
       this.emit({ type: "status", text: "" });
     } catch { /* the states stay unknown */ }
   }

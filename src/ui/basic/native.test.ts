@@ -649,7 +649,11 @@ test("/rename without a name shows its usage and without a conversation says the
     expect(h.plain()).toContain(getCatalog("en").codexCommands.renameUsage);
     expect(h.rpc.calls.some(call => call.method === "thread/name/set")).toBe(false);
   } finally { h.enter("/f614:quit"); await h.ui; }
-  const empty = codexUi("en", rpc => rpc.replies.set("thread/name/set", {}));
+  // The conversation opens when the chat is ready, so «no conversation» is what a Codex that cannot open it leaves.
+  const empty = codexUi("en", rpc => {
+    rpc.replies.set("thread/name/set", {});
+    rpc.handler = async method => { if (method === "thread/start") throw new Error("Codex cannot open it"); return rpc.replies.get(method); };
+  });
   try {
     await tick(); empty.enter("/rename Something"); await tick();
     expect(empty.plain()).toContain(describeError(new ShellError("codex-command-needs-conversation"), "en"));
@@ -1080,7 +1084,7 @@ test("/apps lists the apps with Codex's words and Enter opens the app page", asy
   ], nextCursor: null }));
   try {
     await tick(); h.enter("/apps"); await tick();
-    expect(h.rpc.calls.find(call => call.method === "app/list")?.params).toEqual({ forceRefetch: true });
+    expect(h.rpc.calls.find(call => call.method === "app/list")?.params).toEqual({ threadId: "t", forceRefetch: true });
     expect(h.plain()).toContain("Installed 1 of 2 available apps.");
     expect(h.plain()).toContain("1. GitHub");
     expect(h.plain()).toContain("Installed · Code hosting");
@@ -2394,7 +2398,7 @@ test("Codex UI: one MCP list at startup, then only startup notices change the ba
   try {
     await until(() => h.plain().includes("⇌ 2 MCP ▴"));
     expect(h.plain()).toContain("⇌ 2 MCP ▴");
-    expect(mcpCalls(h).map(call => call.params)).toEqual([{ detail: "toolsAndAuthOnly" }]);
+    expect(mcpCalls(h).map(call => call.params)).toEqual([{ detail: "toolsAndAuthOnly", threadId: "t" }]);
     for (const text of ["one", "two", "three"]) {
       h.enter(text); await tick();
       h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } }); await tick();
@@ -2416,6 +2420,28 @@ test("Codex UI: one MCP list at startup, then only startup notices change the ba
   } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
+/**
+ * The bottom bar shows the connected servers with no message sent: when the chat is ready Shell opens the conversation (`thread/start`, once, no `turn/start`), then asks for the list with that conversation's id,
+ * on the fixed folder «/project». The first message afterwards opens nothing else.
+ */
+test("Codex UI: the bar counts the connected MCP servers before any message, the conversation opened by the chat being ready", async () => {
+  const h = codexUi("en", rpc => rpc.replies.set("mcpServerStatus/list", barServers));
+  try {
+    await until(() => h.plain().includes("⇌ 2 MCP ▴"));
+    expect(h.plain()).toContain("⇌ 2 MCP ▴");
+    const methods = h.rpc.calls.map(call => call.method);
+    expect(methods.filter(method => method === "thread/start")).toHaveLength(1);
+    expect(methods.filter(method => method === "turn/start")).toHaveLength(0);
+    expect(methods.indexOf("thread/start")).toBeLessThan(methods.indexOf("mcpServerStatus/list"));
+    expect(h.rpc.calls.find(call => call.method === "thread/start")!.params).toMatchObject({ cwd: "/project" });
+    expect(mcpCalls(h).map(call => call.params)).toEqual([{ detail: "toolsAndAuthOnly", threadId: "t" }]);
+    h.enter("hello"); await tick();
+    expect(h.rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(1);
+    expect(h.rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(1);
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } }); await tick();
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
 /** When Codex cannot list its MCP servers there is no MCP indicator at all (what is not known is not drawn), and «F614 ▴» is still there. */
 test("Codex UI: no MCP indicator when the list is not available", async () => {
   const h = codexUi();
@@ -2428,10 +2454,10 @@ test("Codex UI: no MCP indicator when the list is not available", async () => {
 });
 
 /**
- * Codex's Forge614 panel: Shell's version, the two versions read once by the injected reader, and Engram's startup context — known once the conversation opened, here arrived, so «memory in use».
- * Before the conversation there is nothing about the memory.
+ * Codex's Forge614 panel: Shell's version, the two versions read once by the injected reader, and Engram's startup context — known once the conversation opened, which now happens when the chat is ready, so «memory in use»
+ * shows with no message sent. A Codex that cannot open the conversation leaves nothing about the memory until the first message opens it.
  */
-test("Codex UI: the Forge614 panel shows the versions and, once the conversation opened, the memory in use", async () => {
+test("Codex UI: the Forge614 panel shows the versions and the memory in use as soon as the conversation opened", async () => {
   let reads = 0;
   const versions = async (): Promise<EcosystemVersions> => { reads++; return { engines: { state: "version", version: "1.16.0" }, engram: { state: "version", version: "1.8.6" } }; };
   const h = codexUi("en", () => {}, localDouble(), 100, undefined, undefined, versions, "1.13.0", async () => ({ available: true, text: "Favorite color: black." }));
@@ -2440,11 +2466,20 @@ test("Codex UI: the Forge614 panel shows the versions and, once the conversation
     codexClick(h, CODEX_F614_X, CODEX_STATUS_ROW); await tick();
     const before = await codexSnapshot(h);
     for (const text of ["Forge614", "Shell", "1.13.0", "Engines", "1.16.0", "Engram", "1.8.6", "F614 ▾"]) expect(before, text).toContain(text);
-    expect(before).not.toContain("memory in use");
-    codexClick(h, CODEX_F614_X, CODEX_STATUS_ROW); await tick();
-    await withConversation(h);
-    codexClick(h, CODEX_F614_X, CODEX_STATUS_ROW); await tick();
-    expect(await codexSnapshot(h)).toContain("memory in use");
+    expect(before).toContain("memory in use");
     expect(reads).toBe(1);
   } finally { h.enter("/f614:quit"); await h.ui; }
+  const closed = codexUi("en", rpc => { rpc.handler = async method => { if (method === "thread/start") throw new Error("Codex cannot open it"); return rpc.replies.get(method); }; }, localDouble(), 100, undefined, undefined, versions, "1.13.0", async () => ({ available: true, text: "Favorite color: black." }));
+  try {
+    await tick(); await tick();
+    codexClick(closed, CODEX_F614_X, CODEX_STATUS_ROW); await tick();
+    const unopened = await codexSnapshot(closed);
+    expect(unopened).toContain("1.8.6");
+    expect(unopened).not.toContain("memory in use");
+    codexClick(closed, CODEX_F614_X, CODEX_STATUS_ROW); await tick();
+    closed.rpc.handler = undefined;
+    await withConversation(closed);
+    codexClick(closed, CODEX_F614_X, CODEX_STATUS_ROW); await tick();
+    expect(await codexSnapshot(closed)).toContain("memory in use");
+  } finally { closed.enter("/f614:quit"); await closed.ui; }
 });

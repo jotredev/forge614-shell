@@ -220,6 +220,8 @@ export interface NativeSession {
   /** Clears the goal; false when there was nothing to clear. */
   clearGoal?(): Promise<boolean>;
   mcpServers?(verbose: boolean): Promise<NativeMcpServer[]>;
+  /** Opens the conversation in the background as soon as the chat is ready, so the assistant starts its MCP servers before any message; never throws and shows nothing, and the first message opens it when this could not. Absent when the assistant needs no such step. */
+  openConversation?(): Promise<void>;
   /** Reads the MCP servers' states once, for the bottom bar (never again: from then on only the assistant's own notices change them); never throws. Absent when the assistant reports no such states. */
   loadMcpStatus?(): Promise<void>;
   /** The MCP servers and their states as the bottom bar shows them; undefined while nothing is known. */
