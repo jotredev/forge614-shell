@@ -15,6 +15,22 @@ export class IndependentScrollView extends ScrollView {
   private frame?: ReturnType<typeof setTimeout>;
   /** The rows the layout engine has assigned to this scrollable pane on its latest pass. */
   viewportRows = 0;
+  private laidOutWidth?: number;
+  private readonly widthListeners = new Set<() => void>();
+  /**
+   * Calls `listener` whenever a layout pass gives this pane a different width than the pass before (the first pass is not a change), while the layout is still being worked out, so what it
+   * does is in place before the screen is drawn. Returns the function that stops listening.
+   */
+  onWidthChange(listener: () => void): () => void {
+    this.widthListeners.add(listener);
+    return () => { this.widthListeners.delete(listener); };
+  }
+  override getContentWidth(width: number): number {
+    const previous = this.laidOutWidth;
+    this.laidOutWidth = width;
+    if (previous !== undefined && previous !== width) for (const listener of [...this.widthListeners]) listener();
+    return super.getContentWidth(width);
+  }
   override updateLayout(contentHeight: number, viewportHeight: number, render: () => void): void {
     const changedViewportRows = this.viewportRows !== viewportHeight;
     super.updateLayout(contentHeight, viewportHeight, render);
@@ -95,14 +111,81 @@ export function attachJumpToLatest(tui: TUI, scroll: IndependentScrollView, loca
   return tui.showOverlay(new JumpToLatestButton(() => scroll.scrollToEnd(), locale), options);
 }
 
+/** What `ChatScreen` reads and sets of pi-tui's private state. The names are those of pi-tui 0.85.1, which Shell pins exactly; the tests of the selection fail if a version renames any. */
+interface PiScreenState {
+  overlayStack?: { component: Component }[];
+  isOverlayVisible?(entry: { component: Component }): boolean;
+  selectionPressActive: boolean;
+  selectionAnchor?: { scrollView?: unknown };
+  pressedUrl?: string;
+  stopSelectionAutoScroll(): void;
+  clearTextSelection(): void;
+  handleViewportInput(data: string): { consume?: boolean } | undefined;
+}
+
+/** A left button's release as the terminal reports it (SGR): no motion, no wheel and the left button's code, with or without a modifier key held. */
+const LEFT_RELEASE = /^\x1b\[<(\d+);\d+;\d+m$/;
+
+/**
+ * The chat's alternate screen. It is pi-tui's own with three changes to how a selection made with the mouse behaves, all without touching pi-tui:
+ * - The «jump to latest» pill does not count as a window over the chat when pi-tui asks (`hasOverlay`). pi-tui pins a selection to the chat's content rows only while no window is over the
+ *   screen, and the pill is showing exactly when the person has scrolled up to read, so with it counted the selection was pinned to the screen's rows instead: turning the wheel left the highlight
+ *   in place over other text, and a selection over several rows took the sidebar's columns too. The panels of the bottom bar still count.
+ * - A selection ends, and what was selected in the chat is copied up to where it got, when the button is let go over something that answers the mouse itself (the sidebar, the writing box, the
+ *   header, the bottom bar): pi-tui never sees that release, so it copied nothing and kept the selection held, following the next movement.
+ * - A selection is removed when the chat's width changes (the terminal is resized, or the sidebar changes its width), because the text is laid out again and it would no longer be over the same words.
+ */
+class ChatScreen extends TuiAltScreen {
+  private readonly watched = new WeakSet<IndependentScrollView>();
+
+  constructor(...args: ConstructorParameters<typeof TuiAltScreen>) {
+    super(...args);
+    // pi-tui calls its input handler through the instance, so shadowing it here runs the extra step after pi-tui's own, on everything the screen is given.
+    const pi = this.pi();
+    const handle = pi.handleViewportInput.bind(this);
+    pi.handleViewportInput = data => { const result = handle(data); this.afterViewportInput(data); return result; };
+  }
+
+  private pi(): PiScreenState { return this as unknown as PiScreenState; }
+
+  /** Whether a window other than the pill is visible. If pi-tui no longer has the state this reads, it answers as pi-tui does, so a renamed field makes the selection fail the tests, not the screen. */
+  override hasOverlay(): boolean {
+    const pi = this.pi();
+    if (!Array.isArray(pi.overlayStack) || typeof pi.isOverlayVisible !== "function") return super.hasOverlay();
+    return pi.overlayStack.some(entry => !(entry.component instanceof JumpToLatestButton) && pi.isOverlayVisible!(entry));
+  }
+
+  /** Runs after pi-tui has dealt with `data`: it starts watching the pane a selection began in, and finishes a selection whose release pi-tui did not see. */
+  private afterViewportInput(data: string): void {
+    const pi = this.pi();
+    const scroll = pi.selectionAnchor?.scrollView;
+    if (scroll instanceof IndependentScrollView) this.watchWidth(scroll);
+    const release = LEFT_RELEASE.exec(data);
+    if (!release || (Number(release[1]) & 0x63) !== 0 || !pi.selectionPressActive || !pi.selectionAnchor) return;
+    // The release was answered by a component, so pi-tui is still waiting for it: end the selection where it got, copy it as pi-tui does at a release, and let go of the button.
+    pi.selectionPressActive = false;
+    pi.stopSelectionAutoScroll();
+    pi.pressedUrl = undefined;
+    if (this.getCopyOnSelect()) void this.copyActiveSelectionToClipboard();
+    this.requestRender();
+  }
+
+  /** Removes the selection when `scroll`, the pane it was made in, gets a different width. Once per pane. */
+  private watchWidth(scroll: IndependentScrollView): void {
+    if (this.watched.has(scroll)) return;
+    this.watched.add(scroll);
+    scroll.onWidthChange(() => { if (this.pi().selectionAnchor?.scrollView === scroll) this.pi().clearTextSelection(); });
+  }
+}
+
 /**
  * The alternate screen of the chat, the same for Codex and Claude Code: the session-local terminal (`workspaceTerminal`) with the mouse on, and the clicks on links sent to `links`,
  * which also draws the hover and asks for the hand pointer through that terminal. With `panels`, the bottom bar's panels are closed by Esc and by a click anywhere else before the screen sees
- * either (see `StatusPanels.intercept`). Returns the terminal to build the layout on and the screen.
+ * either (see `StatusPanels.intercept`). The screen keeps a mouse selection on its text while the chat scrolls (see `ChatScreen`). Returns the terminal to build the layout on and the screen.
  */
 export function chatScreen(terminal: Terminal, links: ChatLinks, panels?: StatusPanels): { surface: Terminal; tui: TuiAltScreen } {
   const surface = workspaceTerminal(terminal, links, panels);
-  const tui = new TuiAltScreen(surface, true, undefined, { mouse: true, openUrl: url => links.open(url) });
+  const tui = new ChatScreen(surface, true, undefined, { mouse: true, openUrl: url => links.open(url) });
   links.bind({ requestRender: () => tui.requestRender(), write: data => surface.write(data) });
   return { surface, tui };
 }
