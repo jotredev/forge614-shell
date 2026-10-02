@@ -173,7 +173,7 @@ export function classifyMemoryOutcome(
  * Offers Engram's full memory integration (the forge614-engram MCP server plus its universal
  * memory instructions) in every detected, MCP-capable assistant, using Engines' single
  * `plan memory-install` / `apply` / `verify memory-integration` contract end to end. Shell never
- * builds MCP entries or instructions content itself, and never reads Claude/Codex/Cursor config or
+ * builds MCP entries or instructions content itself, and never reads Claude or Codex config or
  * Engram's internal files directly — it only calls forge614-engines and reads its JSON stdout. Runs
  * only after Engram's own init has already succeeded; a detection failure here is reported but never
  * turns an already-successful Engram init into a command failure.

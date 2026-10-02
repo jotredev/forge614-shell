@@ -1730,7 +1730,7 @@ test("/feedback for a good result without logs says it was recorded and thanks",
   } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
-/** What Codex 0.159.0's `externalAgentConfig/detect` answers for Claude Code (`v2/ExternalAgentConfigMigrationItem.ts`), and nothing for Cursor. */
+/** What Codex 0.159.0's `externalAgentConfig/detect` answers for Claude Code (`v2/ExternalAgentConfigMigrationItem.ts`). */
 const importSettings = { itemType: "CONFIG", description: "Migrate /home/u/.claude/settings.json into /home/u/.codex/config.toml", cwd: null, details: null };
 const importMcp = { itemType: "MCP_SERVER_CONFIG", description: "Migrate MCP servers from /home/u/.claude.json into /home/u/.codex/config.toml", cwd: null,
   details: { plugins: [], skills: [], sessions: [], mcpServers: [{ name: "forge614-engram" }, { name: "github" }], hooks: [], subagents: [], commands: [] } };
@@ -1755,7 +1755,7 @@ test("/import lists what was found, names exactly what will be copied, warns abo
   try {
     await tick(); h.terminal.output = ""; h.enter("/import"); await tick();
     expect(h.rpc.calls.filter(call => call.method === "externalAgentConfig/detect").map(call => call.params)).toEqual([
-      { includeHome: true, cwds: ["/project"], migrationSource: "claude-code" }, { includeHome: true, cwds: ["/project"], migrationSource: "cursor" },
+      { includeHome: true, cwds: ["/project"], migrationSource: "claude-code" },
     ]);
     for (const row of ["Import from Claude Code", "1. Import selected (3)", "2. [x] Settings", "3. [x] MCP servers", "4. [x] Recent chat sessions", "5. Cancel"]) expect(h.plain()).toContain(row);
     h.terminal.output = ""; h.terminal.input("\r"); await tick();
@@ -1824,7 +1824,7 @@ test("/import says when there is nothing to import and when the check failed", a
   const failing = codexUi("es", rpc => { rpc.handler = async method => { if (method === "externalAgentConfig/detect") throw new Error("boom"); if (!rpc.replies.has(method)) throw new Error(`Unexpected ${method}`); return rpc.replies.get(method); }; }, undefined, 220);
   try {
     await tick(); failing.terminal.output = ""; failing.enter("/import"); await tick();
-    expect(failing.plain()).toContain("No se pudo revisar qué se puede importar: Claude Code: boom; Cursor: boom");
+    expect(failing.plain()).toContain("No se pudo revisar qué se puede importar: Claude Code: boom");
   } finally { failing.enter("/f614:quit"); await failing.ui; }
 });
 

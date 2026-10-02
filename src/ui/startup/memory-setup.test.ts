@@ -109,11 +109,11 @@ test("an unsupported instructions component explains why, and a blocked componen
   screen.start();
   const items: MemoryPreviewItem[] = [
     {
-      agentLabel: "Cursor", kind: "pending",
-      mcpPath: "/Users/tester/.cursor/mcp.json", instructionsPaths: [],
-      hookPath: "/Users/tester/.cursor/config.json",
+      agentLabel: "Example Agent", kind: "pending",
+      mcpPath: "/Users/tester/.example-agent/mcp.json", instructionsPaths: [],
+      hookPath: "/Users/tester/.example-agent/config.json",
       mcp: { kind: "write" },
-      instructions: { kind: "unsupported", reason: "Cursor has no officially supported mechanism to auto-load global instructions." },
+      instructions: { kind: "unsupported", reason: "Example Agent has no officially supported mechanism to auto-load global instructions." },
       hook: { kind: "noop" },
       overallStatus: "partial",
     },
@@ -121,10 +121,10 @@ test("an unsupported instructions component explains why, and a blocked componen
   ];
   const result = showMemoryPreviewConfirm(items, screen);
   await tick();
-  expect(terminal.output).toContain("Cursor — overall: partial");
+  expect(terminal.output).toContain("Example Agent — overall: partial");
   expect(terminal.output).toContain("MCP forge614-engram: will add · memory instructions: not supported by this assistant");
   // Engines' own explanation always gets a line of its own, so word wrap never splits it.
-  expect(terminal.output).toContain("Cursor has no officially supported mechanism to auto-load global instructions.");
+  expect(terminal.output).toContain("Example Agent has no officially supported mechanism to auto-load global instructions.");
   expect(terminal.output).toContain("Codex: blocked — A different MCP already uses this name.");
   expect(terminal.output).not.toContain("afterContent");
   expect(terminal.output).not.toContain("beforeHash");

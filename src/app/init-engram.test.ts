@@ -30,7 +30,7 @@ test("classifyMemoryOutcome: needs-user-trust is prepared, phrased as a future p
 });
 
 test("classifyMemoryOutcome: an assistant with no instructions mechanism is unsupported, not partial", () => {
-  const outcome = classifyMemoryOutcome("Cursor", undefined, baseVerification({ instructions: { supported: false, paths: [], present: false }, overallStatus: "complete" }));
+  const outcome = classifyMemoryOutcome("Example Agent", undefined, baseVerification({ instructions: { supported: false, paths: [], present: false }, overallStatus: "complete" }));
   expect(outcome.status).toBe("unsupported");
 });
 
@@ -532,9 +532,9 @@ function detectPayload(agents: { id: string; label: string; executable: string }
   return { schemaVersion: 1, agents: agents.map(a => ({ ...a, installed: true })) };
 }
 
-/** Real-shaped `capabilities --agent` payload of Engines 1.14.0: `fullySupported` is true for Claude Code and Codex and false for Cursor, which still reports `supportsMcp: true`. */
+/** Real-shaped `capabilities --agent` payload: Claude Code and Codex are fully supported; any other agent is not, even though it still reports `supportsMcp: true`. */
 function capabilitiesPayload(agentId: string) {
-  return { schemaVersion: 1, id: agentId, label: agentId, supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true, fullySupported: agentId !== "cursor" };
+  return { schemaVersion: 1, id: agentId, label: agentId, supportsMcp: true, supportsHooks: true, supportsHeadlessExec: true, fullySupported: agentId !== "example-agent" };
 }
 
 function planPayload(agentId: string, opts: {
@@ -670,10 +670,10 @@ test("Claude Code and Codex both plan, apply, and verify to a complete memory in
 });
 
 /**
- * With only Cursor installed, init offers no assistant and makes no plan, apply or verify call.
- * Exists because Cursor reports `supportsMcp: true` but Engines marks it `fullySupported: false`, and only fully supported assistants are listed.
+ * With only an agent Engines does not fully support installed, init offers no assistant and makes no plan, apply or verify call.
+ * Exists because that agent reports `supportsMcp: true` but Engines marks it `fullySupported: false`, and only fully supported assistants are listed.
  */
-test("Cursor is not offered by init: with only Cursor installed there is no assistant to configure", async () => {
+test("an agent Engines marks not fully supported is not offered by init: with only that agent installed there is no assistant to configure", async () => {
   const terminal = new TestTerminal();
   const enginesCalls: string[][] = [];
   const run = runInitCommand(["--product", "engram"], {
@@ -681,8 +681,8 @@ test("Cursor is not offered by init: with only Cursor installed there is no assi
     run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
     enginesRun: async (command, args) => {
       enginesCalls.push([command, ...args]);
-      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "cursor", label: "Cursor", executable: "/Applications/Cursor.app/Contents/MacOS/Cursor" }])), stderr: "" };
-      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("cursor")), stderr: "" };
+      if (args[0] === "detect") return { status: 0, stdout: JSON.stringify(detectPayload([{ id: "example-agent", label: "Example Agent", executable: "/usr/local/bin/example-agent" }])), stderr: "" };
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("example-agent")), stderr: "" };
       return { status: 0, stdout: "{}", stderr: "" };
     },
   });
@@ -690,10 +690,10 @@ test("Cursor is not offered by init: with only Cursor installed there is no assi
   await run;
   expect(enginesCalls).toEqual([
     ["/Users/tester/.forge614/engines/bin/forge614-engines", "detect"],
-    ["/Users/tester/.forge614/engines/bin/forge614-engines", "capabilities", "--agent", "cursor"],
+    ["/Users/tester/.forge614/engines/bin/forge614-engines", "capabilities", "--agent", "example-agent"],
   ]);
   expect(terminal.output).toContain("No compatible AI assistants were found to configure with memory integration.");
-  expect(terminal.output).not.toContain("Cursor");
+  expect(terminal.output).not.toContain("Example Agent");
 });
 
 test("a conflict on every component makes no apply call and reports the conflict", async () => {
@@ -916,11 +916,11 @@ test("an assistant whose plan is already complete and needs no writes is reporte
 });
 
 /**
- * With Claude Code and Cursor installed, only Claude Code is offered and only Claude Code is planned.
+ * With Claude Code and an agent that is not fully supported installed, only Claude Code is offered and only Claude Code is planned.
  * Exists because the picker must hide a non-fully-supported assistant even when a fully supported one sits next to it.
  * (The local defense for an unsupported-instructions plan claiming "complete" stays covered by the `classifyMemoryOutcome` unit test.)
  */
-test("init offers Claude Code and hides Cursor when both are installed", async () => {
+test("init offers Claude Code and hides an agent that is not fully supported when both are installed", async () => {
   const terminal = new TestTerminal();
   const enginesCalls: string[][] = [];
   const run = runInitCommand(["--product", "engram"], {
@@ -932,7 +932,7 @@ test("init offers Claude Code and hides Cursor when both are installed", async (
         return {
           status: 0,
           stdout: JSON.stringify(detectPayload([
-            { id: "cursor", label: "Cursor", executable: "/Applications/Cursor.app/Contents/MacOS/Cursor" },
+            { id: "example-agent", label: "Example Agent", executable: "/usr/local/bin/example-agent" },
             { id: "claude-code", label: "Claude Code", executable: "/usr/local/bin/claude" },
           ])),
           stderr: "",
@@ -948,10 +948,10 @@ test("init offers Claude Code and hides Cursor when both are installed", async (
   terminal.input(" "); terminal.input("\r"); await tick(); // check the only listed assistant, submit
   terminal.input("\r"); // preview: Confirm
   await run;
-  expect(enginesCalls.filter(c => c[1] === "plan" || c[1] === "apply" || c[1] === "verify").some(c => c.includes("cursor"))).toBe(false);
+  expect(enginesCalls.filter(c => c[1] === "plan" || c[1] === "apply" || c[1] === "verify").some(c => c.includes("example-agent"))).toBe(false);
   expect(enginesCalls.filter(c => c[2] === "memory-install").map(c => agentIdFrom(c))).toEqual(["claude-code"]);
   expect(terminal.output).toContain("Claude Code: configured");
-  expect(terminal.output).not.toContain("Cursor");
+  expect(terminal.output).not.toContain("Example Agent");
 });
 
 test("a PostgreSQL connection string never reaches the screen or the log through the whole memory-integration flow", async () => {
