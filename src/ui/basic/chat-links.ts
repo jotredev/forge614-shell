@@ -93,13 +93,14 @@ export class LinkView {
   constructor(private readonly links: ChatLinks) {}
 
   /**
-   * The rows to draw. Links that wrap are grouped by reading the rows in order: a link that ends its row and the next row's first link, with the same address and nothing but
+   * The rows to draw. First, a Markdown link to an existing local path becomes one of Shell's own path links (`adoptMarkdownPaths`). Links that wrap are grouped by reading the rows in order: a link that ends its row and the next row's first link, with the same address and nothing but
    * blanks before it, are one link. The hovered link (if it is this component's) gets every one of its columns in the hover style: bold, underlined, and the brighter cyan,
    * replacing the colors it had. The answer is the same array when nothing is lit, and is remembered while neither the rows nor the hover change.
    */
-  decorate(rows: string[]): string[] {
+  decorate(source: string[]): string[] {
     const hovered = this.links.hoveredGroup(this);
-    if (rows === this.lastRows && hovered === this.lastGroup) return this.lastOut;
+    if (source === this.lastRows && hovered === this.lastGroup) return this.lastOut;
+    const rows = source.map(row => this.links.adoptMarkdownPaths(row));
     this.spans = rows.map(spansOf);
     let next = 0;
     let carry: { url: string; group: number } | undefined;
@@ -119,7 +120,7 @@ export class LinkView {
       }
       return styled;
     });
-    this.lastRows = rows; this.lastGroup = hovered; this.lastOut = out;
+    this.lastRows = source; this.lastGroup = hovered; this.lastOut = out;
     return out;
   }
 
@@ -200,6 +201,23 @@ export class ChatLinks {
     }
     if (last === 0) return paint(text);
     return last < text.length ? out + paint(text.slice(last)) : out;
+  }
+
+  /**
+   * Turns the Markdown links of a drawn row whose destination is a local path into Shell's own path links. A destination counts when it has no scheme (`file:`, `javascript:`, `mailto:`
+   * and the rest are left alone; `:12` or `:12:3` after a path is a line, not a scheme) and is not an anchor or `//…`; it is read like a path written in the text — absolute, `~/`, `./`,
+   * `../` or relative to the session's folder — and becomes a link only if it exists right now. One that does not exist keeps pi-tui's link exactly as drawn and opens nothing.
+   */
+  adoptMarkdownPaths(row: string): string {
+    if (!row.includes("\x1b]8;")) return row;
+    return row.replace(OSC8, (sequence, parameters: string, url: string) => {
+      if (!url || /^[A-Za-z][A-Za-z0-9+.-]*:(?!\d+(?::\d+)?$)/.test(url) || url.startsWith("#") || url.startsWith("//")) return sequence;
+      let written = url;
+      try { written = decodeURIComponent(url); } catch { /* keep it as written */ }
+      const found = resolveLocalPath(written, { cwd: this.cwd, home: this.home });
+      if (!found) return sequence;
+      return `\x1b]8;${parameters};${this.pathUrl(found.path)}${sequence.endsWith("\x07") ? "\x07" : "\x1b\\"}`;
+    });
   }
 
   /** A new view for a component that draws links. */
