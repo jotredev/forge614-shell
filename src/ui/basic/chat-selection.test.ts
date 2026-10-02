@@ -10,7 +10,9 @@ import { IndependentScrollView, attachJumpToLatest, chatScreen, workspaceLayout 
 import { SidebarLayout } from "./sidebar-layout.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { StatusPanels, attachStatusPanels } from "./status-panel.ts";
+import { copySelectionText } from "../../infrastructure/clipboard.ts";
 import { getCatalog } from "../../i18n/index.ts";
+import type { Locale } from "../../i18n/index.ts";
 
 beforeAll(() => setCapabilityOverrides({ trueColor: true, hyperlinks: true }));
 afterAll(() => resetCapabilitiesCache());
@@ -56,14 +58,16 @@ const footer: Component = { invalidate() {}, render: width => [" ".repeat(width)
 /**
  * The whole chat screen as Codex and Claude Code assemble it — the real alternate screen, layout, «jump to latest» pill and bottom bar's panels — over a fake terminal that is given real
  * SGR mouse sequences (the same harness as `chat-links.test.ts`, plus the pill, the panels, a writing box that answers the mouse and a resizable terminal). `copies()` is what the screen
- * asked the terminal to copy (OSC 52, decoded); `selected()` copies the current selection and returns exactly its text.
+ * asked the terminal to copy (OSC 52, decoded); `selected()` copies the current selection and returns exactly its text. The screen is given a clipboard of the test's own (`options.copySelection`), so
+ * no test touches the real one; by default it is the real function with no clipboard program to find, so what it copies is written as OSC 52, which is what `copies()` reads. `options.locale` is Shell's language.
  */
-function chat(tools?: ChatLinkTools) {
+function chat(tools?: ChatLinkTools, options: { copySelection?: (text: string) => Promise<boolean>; locale?: Locale } = {}) {
   const terminal = new TestTerminal(COLUMNS, ROWS);
+  const copySelection = options.copySelection ?? ((text: string) => copySelectionText(text, { platform: "darwin", run: async () => null, write: data => terminal.write(data) }));
   const opened: string[] = [];
   const links = new ChatLinks({ cwd: process.cwd(), home: process.cwd(), tools: tools ?? { openWeb: async url => { opened.push(url); return true; }, openPath: async () => true }, onFailure: () => {}, nonce: "test-nonce" });
-  const panels = new StatusPanels({ mcp: () => [{ name: "forge614-engram", state: "connected" }], forge614: () => ({}) }, "en");
-  const { surface, tui } = chatScreen(terminal, links, panels);
+  const panels = new StatusPanels({ mcp: () => [{ name: "forge614-engram", state: "connected" }], forge614: () => ({}) }, options.locale ?? "en");
+  const { surface, tui } = chatScreen(terminal, links, panels, { copySelection, ...(options.locale ? { locale: options.locale } : {}) });
   const layout = new SidebarLayout({ terminal: surface });
   links.pointerHeldElsewhere = () => layout.holdsPointer();
   const rows = new Rows();
@@ -302,4 +306,49 @@ test("with the pill showing, a click on a link still opens it and a click on the
     expect(pillShowing(screen)).toBe(false);
     expect(screen.tui.hasActiveSelection()).toBe(false);
   } finally { screen.stop(); }
+});
+
+// ── Copying reaches the system's clipboard ───────────────────────────────────────────────────
+
+/**
+ * When the button is let go, the screen hands the exact selected text to the clipboard it was given and writes no OSC 52 itself. It exists because Shell gave pi-tui no clipboard, so pi-tui wrote
+ * OSC 52, which macOS Terminal does not understand: «Copied!» showed and the clipboard stayed empty.
+ */
+test("letting go of the button copies the exact selected text through the injected clipboard and writes no OSC 52", async () => {
+  const saved: string[] = [];
+  const screen = chat(undefined, { copySelection: async text => { saved.push(text); return true; } });
+  try {
+    await tick(); await screen.scrollUp();
+    const start = screen.rowY(42); const end = screen.rowY(44);
+    await screen.select({ x: 4, y: start }, { x: 9, y: end });
+    expect(saved).toEqual([between(42, 4, 44, 9)]);
+    expect(screen.copies()).toEqual([]);
+    expect(stripVTControlCharacters(screen.terminal.output)).not.toContain("\x1b]52");
+  } finally { screen.stop(); }
+});
+
+/** The notice that the copy is done, or did not work, is in Shell's language, not pi-tui's English «Copied!» / «Copy failed». */
+test("the copy notice is in Shell's language: «Copiado» and «No se pudo copiar» in Spanish, «Copied» in English", async () => {
+  const notice = async (locale: Locale, works: boolean) => {
+    const screen = chat(undefined, { locale, copySelection: async () => works });
+    try {
+      await tick(); await screen.scrollUp();
+      screen.terminal.output = "";
+      await screen.select({ x: 4, y: screen.rowY(42) }, { x: 9, y: screen.rowY(42) });
+      await tick();
+      return stripVTControlCharacters(screen.terminal.output);
+    } finally { screen.stop(); }
+  };
+  const copiedEs = await notice("es", true);
+  expect(copiedEs).toContain(getCatalog("es").chatSelection.copied);
+  expect(getCatalog("es").chatSelection.copied).toBe("Copiado");
+  expect(copiedEs).not.toContain("Copied!");
+  const failedEs = await notice("es", false);
+  expect(failedEs).toContain("No se pudo copiar");
+  expect(failedEs).not.toContain("Copy failed");
+  const copiedEn = await notice("en", true);
+  expect(copiedEn).toContain("Copied");
+  expect(copiedEn).not.toContain("Copied!");
+  const failedEn = await notice("en", false);
+  expect(failedEn).toContain("Copy failed");
 });

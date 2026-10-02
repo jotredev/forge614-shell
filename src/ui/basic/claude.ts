@@ -108,9 +108,9 @@ export function claudeMenuCommands(commands: SlashCommand[], t: ReturnType<typeo
 
 /**
  * The Claude Code chat screen. `readVersions` reads the Engines and Engram versions the Forge614 panel shows: it is called once, in the background, when the screen opens (the composition root gives the real
- * reader; without one the panel shows no versions for them).
+ * reader; without one the panel shows no versions for them). `startupContext` is how Engram's startup context is read (the real `getStartupContext` unless a test gives its own).
  */
-export async function startClaudeUI(args: string[], selectedExecutable?: string, terminal?: Terminal, version?: string, locale: Locale = "en", linkTools: ChatLinkTools = realChatLinkTools, readVersions?: () => Promise<EcosystemVersions>): Promise<void> {
+export async function startClaudeUI(args: string[], selectedExecutable?: string, terminal?: Terminal, version?: string, locale: Locale = "en", linkTools: ChatLinkTools = realChatLinkTools, readVersions?: () => Promise<EcosystemVersions>, startupContext: typeof getStartupContext = getStartupContext): Promise<void> {
   const t = getCatalog(locale).chat;
   const tc = getCatalog(locale).claudeChat;
   if (args.length) throw new Error(tc.cliOptionsUnsupported);
@@ -124,7 +124,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const showNotice = (text: string, isProblem: boolean) => { if (isProblem) writeError(text); else write(text); };
   // The startup hook Engines installs already delivers the memory to Claude Code; Shell only pastes its own block when that is not certain.
   const session = new ClaudeSession({
-    cwd, env, executable, getStartupContext: withStartupNotices(getStartupContext, showNotice, locale),
+    cwd, env, executable, getStartupContext: withStartupNotices(startupContext, showNotice, locale),
     memoryHookActive: createMemoryHookProbe("claude-code", { env }),
     // The opening probe's answers redraw the bottom bar; `refresh` is declared below and only runs once an answer arrives, long after it exists.
     onMcpStatus: () => { if (!closed) refresh(); },
@@ -139,7 +139,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     mcp: () => shellState.snapshot().mcpServers,
     forge614: () => ({ ...(version ? { shell: version } : {}), ...versions, ...(session.memoryInUse() === undefined ? {} : { memoryInUse: session.memoryInUse()! }) }),
   }, locale);
-  const { surface, tui } = chatScreen(terminal ?? new ProcessTerminal(), links, panels);
+  const { surface, tui } = chatScreen(terminal ?? new ProcessTerminal(), links, panels, { locale });
   const composer = createComposer(tui, locale);
   const transcript = new Container();
   let transcriptScroll!: IndependentScrollView;

@@ -409,6 +409,10 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
   jumpToLatest: {
     label: " ↓ Mensajes nuevos · ir al final ",
   },
+  chatSelection: {
+    copied: "Copiado",
+    copyFailed: "No se pudo copiar",
+  },
   sidebarControls: {
     hide: "ocultar ›",
     show: "‹ mostrar barra",

@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { EngramInitDecisions } from "../contracts/engram-init.ts";
@@ -20,10 +20,25 @@ interface EngramErrorPayload {
   error?: unknown;
 }
 
-const defaultRun: RunEngram = async (command, args) => {
-  const result = spawnSync(command, args, { encoding: "utf8", windowsHide: true });
-  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
-};
+/**
+ * Runs an Engram command without blocking the process: the screen keeps drawing while Engram works (`startup-context` takes about 650 ms; with `spawnSync` the chat froze for all of it).
+ * The result is what the synchronous version gave: the exit `status` (`null` when the binary could not run or was ended by a signal) and what it wrote to each stream. Never rejects, and
+ * never goes through a shell.
+ */
+export const defaultRun: RunEngram = (command, args) => new Promise(resolve => {
+  let stdout = "";
+  let stderr = "";
+  let settled = false;
+  const finish = (status: number | null) => { if (!settled) { settled = true; resolve({ status, stdout, stderr }); } };
+  try {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+    // A binary that is missing or cannot start reports no status and nothing on either stream, as `spawnSync` did.
+    child.once("error", () => finish(null));
+    child.once("close", code => finish(code));
+  } catch { finish(null); }
+});
 
 export function locateEngramBinary(home: string, env?: NodeJS.ProcessEnv): string {
   const forgeHome = env?.FORGE614_HOME ?? join(home, ".forge614");

@@ -317,7 +317,7 @@ test.skipIf(process.platform === "win32")("Claude UI: the /logout question has i
  * the version the bar shows. `mcpServers` is what the fake answers to the opening probe's `mcp_status` request (the SDK's `McpServerStatus` list; none: it answers with no list), and each such request is a
  * line `mcp_status` in the marker file. `finish` leaves the screen and cleans up.
  */
-async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120, events: object[] = [], account: object = { email: "test@example.com" }, beforeStart?: (forgeHome: string) => void, versions?: () => Promise<EcosystemVersions>, shellVersion?: string, mcpServers?: object[]) {
+async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120, events: object[] = [], account: object = { email: "test@example.com" }, beforeStart?: (forgeHome: string) => void, versions?: () => Promise<EcosystemVersions>, shellVersion?: string, mcpServers?: object[], startupContext?: Parameters<typeof startClaudeUI>[7]) {
   const root = await mkdtemp(join(tmpdir(), "forge614-prefix-ui-"));
   const executable = join(root, "claude"); const marker = join(root, "calls");
   const terminal = new TestTerminal(); terminal.columns = columns;
@@ -337,7 +337,7 @@ else {
     if(msg.type==='user') { fs.appendFileSync(${JSON.stringify(marker)},'prompt:'+JSON.stringify(msg.message.content)+'\\n'); for (const info of ${JSON.stringify(rateLimit ?? [])}) console.log(JSON.stringify({type:'rate_limit_event',rate_limit_info:info,uuid:'00000000-0000-4000-8000-000000000001',session_id:'s'})); for (const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event)); }
   });
 }`, { mode: 0o755 });
-  const ui = startClaudeUI([], executable, terminal, shellVersion, locale, undefined, versions);
+  const ui = startClaudeUI([], executable, terminal, shellVersion, locale, undefined, versions, startupContext);
   await tick();
   for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
   const calls = () => existsSync(marker) ? readFileSync(marker, "utf8").split("\n").filter(Boolean) : [];
@@ -1056,5 +1056,22 @@ test.skipIf(process.platform === "win32")("Claude UI: Esc with a panel open clos
     expect(afterFirst).toContain(title);
     h.terminal.input("\x1b"); await tick();
     expect(await snapshot(h)).not.toContain(title);
+  } finally { await h.finish(); }
+});
+
+/**
+ * The person's first message is on screen before Engram answers. `startup-context` takes about 650 ms and used to run inside `send()` with `spawnSync`, so the screen drew nothing — not even the message —
+ * until it was done. Here Engram's answer is slow (400 ms): while it is still being waited for, the message already has to be drawn, and the screen must have asked Engram for it.
+ */
+test.skipIf(process.platform === "win32")("Claude UI: the first message is drawn before Engram's startup context answers", async () => {
+  let asked = false; let answered = false;
+  const slow = async () => { asked = true; await new Promise(resolve => setTimeout(resolve, 400)); answered = true; return { available: false as const, reason: "slow" }; };
+  const h = await claudeUi([], "en", undefined, 120, [], undefined, undefined, undefined, undefined, undefined, slow);
+  try {
+    h.terminal.output = ""; h.enter("hola desde la prueba");
+    for (let i = 0; i < 4 && !screenRows(h.terminal.output).some(row => row.includes("hola desde la prueba")); i++) await tick();
+    expect(asked).toBe(true);
+    expect(answered).toBe(false);
+    expect(screenRows(h.terminal.output).some(row => row.includes("hola desde la prueba"))).toBe(true);
   } finally { await h.finish(); }
 });

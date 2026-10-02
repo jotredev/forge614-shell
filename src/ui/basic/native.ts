@@ -70,7 +70,7 @@ export async function runNativeUI(
       return { ...(version ? { shell: version } : {}), ...versions, ...(memoryInUse === undefined ? {} : { memoryInUse }) };
     },
   }, locale);
-  const { surface, tui } = chatScreen(terminal, links, panels);
+  const { surface, tui } = chatScreen(terminal, links, panels, { locale });
   const composer = createComposer(tui, locale);
   const transcript = new Container();
   let transcriptScroll!: IndependentScrollView;

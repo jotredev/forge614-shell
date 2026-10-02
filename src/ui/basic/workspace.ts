@@ -4,6 +4,7 @@ import { accent, elevated, fit, foreground, surface, warning, workspaceColors } 
 import { DEFAULT_POINTER, GRIP_WIDTH, LINK_POINTER, RESIZE_POINTER, SidebarLayout } from "./sidebar-layout.ts";
 import type { ChatLinks } from "./chat-links.ts";
 import type { StatusPanels } from "./status-panel.ts";
+import { copySelectionText } from "../../infrastructure/clipboard.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -127,19 +128,22 @@ interface PiScreenState {
 const LEFT_RELEASE = /^\x1b\[<(\d+);\d+;\d+m$/;
 
 /**
- * The chat's alternate screen. It is pi-tui's own with three changes to how a selection made with the mouse behaves, all without touching pi-tui:
+ * The chat's alternate screen. It is pi-tui's own with four changes to how a selection made with the mouse behaves, all without touching pi-tui:
  * - The «jump to latest» pill does not count as a window over the chat when pi-tui asks (`hasOverlay`). pi-tui pins a selection to the chat's content rows only while no window is over the
  *   screen, and the pill is showing exactly when the person has scrolled up to read, so with it counted the selection was pinned to the screen's rows instead: turning the wheel left the highlight
  *   in place over other text, and a selection over several rows took the sidebar's columns too. The panels of the bottom bar still count.
  * - A selection ends, and what was selected in the chat is copied up to where it got, when the button is let go over something that answers the mouse itself (the sidebar, the writing box, the
  *   header, the bottom bar): pi-tui never sees that release, so it copied nothing and kept the selection held, following the next movement.
  * - A selection is removed when the chat's width changes (the terminal is resized, or the sidebar changes its width), because the text is laid out again and it would no longer be over the same words.
+ * - The notice that the copy is done (pi-tui's «Copied!» / «Copy failed») is shown in Shell's language, with the catalog's text.
  */
 class ChatScreen extends TuiAltScreen {
   private readonly watched = new WeakSet<IndependentScrollView>();
+  private readonly notices: Record<string, string>;
 
-  constructor(...args: ConstructorParameters<typeof TuiAltScreen>) {
+  constructor(notices: { copied: string; copyFailed: string }, ...args: ConstructorParameters<typeof TuiAltScreen>) {
     super(...args);
+    this.notices = { "Copied!": notices.copied, "Copy failed": notices.copyFailed };
     // pi-tui calls its input handler through the instance, so shadowing it here runs the extra step after pi-tui's own, on everything the screen is given.
     const pi = this.pi();
     const handle = pi.handleViewportInput.bind(this);
@@ -147,6 +151,11 @@ class ChatScreen extends TuiAltScreen {
   }
 
   private pi(): PiScreenState { return this as unknown as PiScreenState; }
+
+  /** Shows a transient notice. pi-tui's two copy notices are swapped for the catalog's text; anything else is shown as it comes. */
+  override flash(message: string, durationMs?: number): void {
+    super.flash(this.notices[message] ?? message, durationMs);
+  }
 
   /** Whether a window other than the pill is visible. If pi-tui no longer has the state this reads, it answers as pi-tui does, so a renamed field makes the selection fail the tests, not the screen. */
   override hasOverlay(): boolean {
@@ -182,10 +191,15 @@ class ChatScreen extends TuiAltScreen {
  * The alternate screen of the chat, the same for Codex and Claude Code: the session-local terminal (`workspaceTerminal`) with the mouse on, and the clicks on links sent to `links`,
  * which also draws the hover and asks for the hand pointer through that terminal. With `panels`, the bottom bar's panels are closed by Esc and by a click anywhere else before the screen sees
  * either (see `StatusPanels.intercept`). The screen keeps a mouse selection on its text while the chat scrolls (see `ChatScreen`). Returns the terminal to build the layout on and the screen.
+ * What is selected is copied with `options.copySelection`, by default the system's clipboard (`copySelectionText`, with OSC 52 written to the terminal as a fallback): without a clipboard of its
+ * own pi-tui writes OSC 52, which macOS Terminal does not understand. `options.locale` is the language of the copy notice.
  */
-export function chatScreen(terminal: Terminal, links: ChatLinks, panels?: StatusPanels): { surface: Terminal; tui: TuiAltScreen } {
+export function chatScreen(
+  terminal: Terminal, links: ChatLinks, panels?: StatusPanels, options: { copySelection?: (text: string) => Promise<boolean>; locale?: Locale } = {},
+): { surface: Terminal; tui: TuiAltScreen } {
   const surface = workspaceTerminal(terminal, links, panels);
-  const tui = new ChatScreen(surface, true, undefined, { mouse: true, openUrl: url => links.open(url) });
+  const copySelection = options.copySelection ?? ((text: string) => copySelectionText(text, { write: data => surface.write(data) }));
+  const tui = new ChatScreen(getCatalog(options.locale ?? "en").chatSelection, surface, true, undefined, { mouse: true, openUrl: url => links.open(url), copySelection });
   links.bind({ requestRender: () => tui.requestRender(), write: data => surface.write(data) });
   return { surface, tui };
 }
