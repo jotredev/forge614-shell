@@ -346,6 +346,78 @@ test("a click through the real path opener opens a normal file and only shows an
   } finally { screen.stop(); }
 });
 
+/**
+ * A Markdown link whose destination is a local path with no scheme — `[open the app](./src/app.ts:12)` — is read as a path of the text: when it exists, a click opens exactly the full
+ * path without the `:line` suffix. It exists because an assistant often writes paths as Markdown links, and those used to be drawn as links that did nothing.
+ */
+test("a click on a Markdown link to an existing local path opens the full path without its suffix", async () => {
+  const file = join(cwd, "src", "app.ts"); writeFileSync(file, "x");
+  const screen = chat({ columns: 200 });
+  try {
+    await screen.add(new ChatText("See [open the app](./src/app.ts:12) now", undefined, screen.links));
+    const link = screen.at("open the app");
+    expect(screen.frame().flatMap(linksOf)).toEqual([{ url: screen.links.pathUrl(file), text: "open the app" }]);
+    await screen.click(link.x + 3, link.y);
+    expect(screen.opened.path).toEqual([file]);
+    expect(screen.opened.web).toEqual([]);
+    expect(screen.failures).toEqual([]);
+  } finally { screen.stop(); }
+});
+
+/**
+ * The same click through the real opener: a Markdown link to an executable file goes through the Finder rule (`open -R`) like any other path, and one to a normal file is opened. It proves
+ * the Markdown link reaches the safety rule and not only a fake.
+ */
+test("a click through the real path opener on a Markdown link only shows an executable one", async () => {
+  const notes = join(cwd, "notes.txt"); writeFileSync(notes, "x");
+  const program = join(cwd, "program"); writeFileSync(program, "x"); chmodSync(program, 0o755);
+  const calls: [string, string[]][] = [];
+  const tools: ChatLinkTools = { openWeb: async () => true, openPath: path => openLocalPath(path, { platform: "darwin", run: async (command, args) => { calls.push([command, args]); } }) };
+  const screen = chat({ columns: 200, tools });
+  try {
+    await screen.add(new ChatText("Open [the tool](./program) and [the notes](./notes.txt) now", undefined, screen.links));
+    const first = screen.at("the tool"); const second = screen.at("the notes");
+    await screen.click(first.x + 2, first.y); await screen.click(second.x + 2, second.y);
+    expect(calls).toEqual([["/usr/bin/open", ["-R", program]], ["/usr/bin/open", [notes]]]);
+  } finally { screen.stop(); }
+});
+
+/**
+ * A Markdown link to a path that is not on disk is drawn as it always was (pi-tui's own link, with its address as written) but is not one of Shell's: no Shell address in the row, and a
+ * click opens nothing and reports nothing. It exists so a made-up path from a model is never offered as something that opens.
+ */
+test("a Markdown link to a path that does not exist is not a Shell link and opens nothing", async () => {
+  const links = newLinks();
+  const rows = render("Open [the gone file](./missing.ts) now", links);
+  expect(rows.join("\n")).not.toContain("f614-path:");
+  expect(rows.flatMap(linksOf)).toEqual([{ url: "./missing.ts", text: "the gone file" }]);
+  const screen = chat({ columns: 200 });
+  try {
+    await screen.add(new ChatText("Open [the gone file](./missing.ts) now", undefined, screen.links));
+    const link = screen.at("the gone file");
+    await screen.click(link.x + 2, link.y);
+    expect(screen.opened.path).toEqual([]);
+    expect(screen.opened.web).toEqual([]);
+    expect(screen.failures).toEqual([]);
+  } finally { screen.stop(); }
+});
+
+/** A Markdown link to a path lights like any other link when the pointer is over it: every column of its text, also on a second row, in bold, underlined and the brighter cyan. */
+test("hovering a Markdown link to a path lights all of its text", async () => {
+  const file = join(cwd, "src", "app.ts"); writeFileSync(file, "x");
+  const screen = chat({ columns: 40 });
+  try {
+    await screen.add(new ChatText("Look at [the application entry file of the project](./src/app.ts) please.", undefined, screen.links));
+    const lit = (row: string) => cells(row).filter(cell => cell.fg === BRIGHT && cell.bold && cell.underline).map(cell => cell.char).join("");
+    expect(screen.frame().map(lit).join("")).toBe("");
+    const first = screen.at("the application");
+    await screen.send("move", first.x + 1, first.y);
+    const rows = screen.frame().map(lit).filter(Boolean);
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows.join("").replace(/ /g, "")).toBe("theapplicationentryfileoftheproject");
+  } finally { screen.stop(); }
+});
+
 /** When opening fails — the opener answers false or throws, or the file was deleted after it was drawn — the chat is told the path or address, once per click, and nothing else breaks. */
 test("a failed opening reports the path or address to the chat", async () => {
   const file = join(cwd, "src", "gone.ts"); writeFileSync(file, "x");
