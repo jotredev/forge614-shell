@@ -1,4 +1,5 @@
 import type { BackgroundActivity } from "../../engines/types.ts";
+import type { McpServerState } from "../../engines/mcp-status.ts";
 
 export type AccountState = "connected" | "disconnected" | "checking" | "unknown";
 
@@ -16,6 +17,8 @@ export type ConnectedDetails = {
   usage?: ProviderUsage[];
   backgroundActivity?: BackgroundActivity[];
   backgroundActivitySupported?: boolean;
+  /** The MCP servers the assistant reported and their states; absent while nothing is known (the bottom bar then draws no MCP indicator). */
+  mcpServers?: McpServerState[];
 };
 
 export type ShellSnapshot = {
@@ -35,6 +38,8 @@ export type ShellSnapshot = {
   usage?: ProviderUsage[];
   backgroundActivity?: BackgroundActivity[];
   backgroundActivitySupported?: boolean;
+  /** The MCP servers the assistant reported and their states; absent while nothing is known. */
+  mcpServers?: McpServerState[];
 };
 
 export class ShellState {

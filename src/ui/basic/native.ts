@@ -15,6 +15,8 @@ import { cycleWorkMode, restoreWorkMode } from "../../engines/work-mode.ts";
 import { memorySourceLine } from "../../engines/memory-source.ts";
 import type { WorkModeControl } from "../../engines/work-mode.ts";
 import { ShellStatusBar } from "./status-bar.ts";
+import { StatusPanels, attachStatusPanels } from "./status-panel.ts";
+import type { EcosystemVersions } from "../../infrastructure/ecosystem-versions.ts";
 import { ActivityCard, chatMessage } from "./transcript.ts";
 import { effortDescription, effortLabel } from "./metrics.ts";
 import { ChatText, danger, warning } from "./theme.ts";
@@ -50,13 +52,25 @@ export async function runNativeUI(
   locale: Locale = "en",
   local: CodexLocalTools = realLocalTools,
   linkTools: ChatLinkTools = realChatLinkTools,
+  /** Reads the Engines and Engram versions the Forge614 panel shows: called once, in the background, when the screen opens (the composition root gives the real reader; without one the panel shows none). */
+  readVersions?: () => Promise<EcosystemVersions>,
 ): Promise<void> {
   const t = getCatalog(locale).chat;
   const tc = getCatalog(locale).codexChat;
   // A click on a link or a path opens it; `writeWarning` is declared below and only runs when a click fails, long after it exists.
   enableTerminalLinks(process.env);
   const links = new ChatLinks({ cwd, home: process.env.HOME, tools: linkTools, onFailure: target => writeWarning(t.linkOpenFailed({ target })) });
-  const { surface, tui } = chatScreen(terminal, links);
+  // The two panels the bottom bar opens: the MCP servers' and Forge614's (Shell's version, the two read once in the background, and whether Engram's memory reached this session).
+  // The data is asked when a panel is drawn, so `shellState` and `session` need only exist by then.
+  let versions: EcosystemVersions | undefined;
+  const panels = new StatusPanels({
+    mcp: () => shellState.snapshot().mcpServers,
+    forge614: () => {
+      const memoryInUse = session?.memoryInUse?.();
+      return { ...(version ? { shell: version } : {}), ...versions, ...(memoryInUse === undefined ? {} : { memoryInUse }) };
+    },
+  }, locale);
+  const { surface, tui } = chatScreen(terminal, links, panels);
   const composer = createComposer(tui, locale);
   const transcript = new Container();
   let transcriptScroll!: IndependentScrollView;
@@ -71,9 +85,10 @@ export async function runNativeUI(
   // The sidebar's width and whether it is hidden come back from the preferences and are saved when the person lets go of the grip or clicks a button; the footer takes the sidebar's data while it is not drawn.
   const sidebarLayout = createSidebarLayout(surface, locale);
   links.pointerHeldElsewhere = () => sidebarLayout.holdsPointer();
-  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version, locale, () => sidebarLayout.isVisible());
+  const statusBar = new ShellStatusBar(() => shellState.snapshot(), cwd, () => sidebar.projectInfo(), process.env.HOME, version, locale, () => sidebarLayout.isVisible(), panels);
   tui.setLayoutRoot(workspaceLayout(transcriptScroll, composer.component, sidebar, statusBar, surface, sidebarLayout));
   attachJumpToLatest(tui, transcriptScroll, locale, sidebarLayout);
+  attachStatusPanels(tui, panels, { chatWidth: () => sidebarLayout.chatWidth() });
   tui.setFocus(input);
   // With Codex the menu is Codex's own list (names, descriptions and order as its terminal shows them on macOS);
   // what is Shell's own sits apart under FORGE614, every one of them with the `/f614:` prefix (a command without it is Codex's).
@@ -117,10 +132,12 @@ export async function runNativeUI(
   const refresh = () => {
     if (!session || closed) return;
     const visual = session.visual?.();
+    const mcpServers = session.mcpStatus?.();
     if (visual) {
       if (visual.account === "disconnected") shellState.disconnect();
       else shellState.connect({
         user: visual.user, sessionId: session.sessionId,
+        ...(mcpServers ? { mcpServers } : {}),
         model: session.models.find(model => model.id === visual.model)?.name ?? visual.model,
         reasoning: effortLabel(visual.reasoning, locale), context: visual.context, usage: visual.usage,
         backgroundActivity: session.backgroundActivity?.() ?? [],
@@ -130,6 +147,7 @@ export async function runNativeUI(
       const status = session.status().join(" ");
       if (/disconnected|login required|sign-in required|not logged in|not checked|could not be verified/i.test(status)) shellState.disconnect();
       else shellState.connect({
+        ...(mcpServers ? { mcpServers } : {}),
         backgroundActivity: session.backgroundActivity?.() ?? [],
         backgroundActivitySupported: typeof session.backgroundActivity === "function",
       });
@@ -490,6 +508,8 @@ export async function runNativeUI(
   };
   const clock = setInterval(() => { void updateProject(); }, 15_000);
   void updateProject();
+  // Engines' and Engram's versions are read once, in the background: the screen does not wait for them, and a failed reading leaves the panel without them.
+  if (readVersions) void readVersions().then(read => { versions = read; if (!closed) refresh(); }).catch(() => {});
   // While this screen is open no Node warning is written raw on it: the SDK's expected one is ignored, any other shows in the chat (see `takeNodeWarnings`).
   const giveBackNodeWarnings = takeNodeWarnings(writeNodeWarning);
   try {
@@ -519,6 +539,8 @@ export async function runNativeUI(
         if (collaboration) await restoreWorkMode(collaboration, saved?.collaborationMode);
       }
       ready = true; refresh(); loadSkillChoices();
+      // The MCP servers' states for the bottom bar are read once, now that the chat is ready; after that only the assistant's own notices change them (never after each message).
+      void session.loadMcpStatus?.();
     }).catch(error => writeError(tc.connectionFailed({ message: describeError(error, locale) })));
     await exited;
   } finally { clearInterval(clock); process.removeListener("SIGTERM", shutdown); session.close(); tui.stop({ preserveScreen: true }); giveBackNodeWarnings(); }

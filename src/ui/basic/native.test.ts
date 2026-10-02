@@ -13,6 +13,7 @@ import { ShellError, describeError } from "../../shell-error.ts";
 import type { CodexLocalTools } from "./codex-commands.ts";
 import type { ChatLinkTools } from "./chat-links.ts";
 import { CODEX_INIT_PROMPT } from "../../engines/codex/prompts.ts";
+import type { EcosystemVersions } from "../../infrastructure/ecosystem-versions.ts";
 
 // Shell persists /model and /effort picks to $FORGE614_HOME/shell/preferences.json (see
 // shell-preferences.ts). Without isolating this, a test run would read and write the real
@@ -108,7 +109,7 @@ function localDouble(overrides: Partial<CodexLocalTools> = {}) {
 }
 
 /** A Codex fixture with the native modes available, Codex's two collaboration modes, and a turn that stays open until the test completes it. */
-function codexUi(locale: "en" | "es" = "en", configure: (rpc: FixtureRpc) => void = () => {}, local = localDouble(), columns = 100, memoryHook?: () => Promise<boolean>, linkTools?: ChatLinkTools) {
+function codexUi(locale: "en" | "es" = "en", configure: (rpc: FixtureRpc) => void = () => {}, local = localDouble(), columns = 100, memoryHook?: () => Promise<boolean>, linkTools?: ChatLinkTools, versions?: () => Promise<EcosystemVersions>, shellVersion?: string, startupContext?: () => Promise<any>) {
   const terminal = new TestTerminal(); const rpc = new FixtureRpc();
   terminal.columns = columns;
   rpc.replies.set("initialize", {});
@@ -122,7 +123,7 @@ function codexUi(locale: "en" | "es" = "en", configure: (rpc: FixtureRpc) => voi
   rpc.replies.set("thread/settings/update", {});
   configure(rpc);
   let session!: CodexSession;
-  const ui = runNativeUI("codex", "/project", (emit, approve) => session = new CodexSession(rpc, "/project", emit, approve, undefined, undefined, locale, memoryHook), terminal, undefined, locale, local.tools, linkTools);
+  const ui = runNativeUI("codex", "/project", (emit, approve) => session = new CodexSession(rpc, "/project", emit, approve, undefined, startupContext, locale, memoryHook), terminal, shellVersion, locale, local.tools, linkTools, versions);
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
   const plain = () => stripVTControlCharacters(terminal.output);
   return { terminal, rpc, ui, enter, plain, session: () => session, local };
@@ -2363,3 +2364,87 @@ for (const locale of ["en", "es"] as const) {
     } finally { h.enter("/f614:quit"); await h.ui; }
   });
 }
+
+/** What `mcpServerStatus/list` answers at startup for the bottom bar: Engram and context7 connected, github failed. */
+const barServers = { data: [
+  { name: "forge614-engram", runtimeStatus: "connected", tools: {}, resources: [], authStatus: "unsupported" },
+  { name: "context7", runtimeStatus: "connected", tools: {}, resources: [], authStatus: "unsupported" },
+  { name: "github", runtimeStatus: "failed", tools: {}, resources: [], authStatus: "unsupported" },
+], nextCursor: null };
+/** On the 100×40 stand-in terminal the chat is 62 wide and the status line is row 38; «F614 ▴» starts in column 2 and, with no version, «⇌ N MCP ▴» ends in column 60. */
+const CODEX_STATUS_ROW = 38; const CODEX_F614_X = 3; const CODEX_MCP_X = 52;
+type CodexHarness = ReturnType<typeof codexUi>;
+/** What is on the screen now, drawn again from scratch, as plain text. */
+async function codexSnapshot(h: CodexHarness): Promise<string> {
+  // The width changes by one column (which is what makes the screen write every row) and comes back, so the clicks that follow land where they were measured.
+  h.terminal.columns = 101; h.terminal.output = ""; h.terminal.resize(); await tick();
+  const shown = h.plain();
+  h.terminal.columns = 100; h.terminal.resize(); await tick();
+  return shown;
+}
+function codexClick(h: CodexHarness, x: number, y: number): void { h.terminal.input(`\x1b[<0;${x + 1};${y + 1}M`); h.terminal.input(`\x1b[<0;${x + 1};${y + 1}m`); }
+const mcpCalls = (h: CodexHarness) => h.rpc.calls.filter(call => call.method === "mcpServerStatus/list");
+
+/**
+ * Codex is asked for its MCP servers once, when the chat is ready (`mcpServerStatus/list`, the short detail), and the bar shows «⇌ 2 MCP ▴» from the start. Messages sent afterwards never ask again — the count of
+ * calls stays one — and only `mcpServer/startupStatus/updated` changes it: a server turning ready, a new one appearing, and a notice of another conversation changing nothing.
+ */
+test("Codex UI: one MCP list at startup, then only startup notices change the bar", async () => {
+  const h = codexUi("en", rpc => rpc.replies.set("mcpServerStatus/list", barServers));
+  try {
+    await until(() => h.plain().includes("⇌ 2 MCP ▴"));
+    expect(h.plain()).toContain("⇌ 2 MCP ▴");
+    expect(mcpCalls(h).map(call => call.params)).toEqual([{ detail: "toolsAndAuthOnly" }]);
+    for (const text of ["one", "two", "three"]) {
+      h.enter(text); await tick();
+      h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } }); await tick();
+    }
+    expect(h.rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(3);
+    expect(mcpCalls(h)).toHaveLength(1);
+    const notice = (name: string, status: string, threadId: string | null = null) => h.rpc.onNotification("mcpServer/startupStatus/updated", { threadId, name, status, error: null, failureReason: null });
+    notice("github", "ready"); await tick();
+    expect(await codexSnapshot(h)).toContain("⇌ 3 MCP ▴");
+    notice("intruder", "ready", "another-thread"); await tick();
+    expect(await codexSnapshot(h)).toContain("⇌ 3 MCP ▴");
+    notice("brand-new", "ready", "t"); await tick();
+    expect(await codexSnapshot(h)).toContain("⇌ 4 MCP ▴");
+    codexClick(h, CODEX_MCP_X, CODEX_STATUS_ROW); await tick();
+    const panel = await codexSnapshot(h);
+    for (const text of ["MCP servers · 4", "forge614-engram", "Forge614 · Engram", "context7", "github", "brand-new", "⇌ 4 MCP ▾"]) expect(panel, text).toContain(text);
+    expect(panel).not.toContain("intruder");
+    expect(mcpCalls(h)).toHaveLength(1);
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/** When Codex cannot list its MCP servers there is no MCP indicator at all (what is not known is not drawn), and «F614 ▴» is still there. */
+test("Codex UI: no MCP indicator when the list is not available", async () => {
+  const h = codexUi();
+  try {
+    await tick(); await tick();
+    const shown = await codexSnapshot(h);
+    expect(shown).toContain("F614 ▴");
+    expect(shown).not.toContain("MCP ▴");
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
+/**
+ * Codex's Forge614 panel: Shell's version, the two versions read once by the injected reader, and Engram's startup context — known once the conversation opened, here arrived, so «memory in use».
+ * Before the conversation there is nothing about the memory.
+ */
+test("Codex UI: the Forge614 panel shows the versions and, once the conversation opened, the memory in use", async () => {
+  let reads = 0;
+  const versions = async (): Promise<EcosystemVersions> => { reads++; return { engines: { state: "version", version: "1.16.0" }, engram: { state: "version", version: "1.8.6" } }; };
+  const h = codexUi("en", () => {}, localDouble(), 100, undefined, undefined, versions, "1.13.0", async () => ({ available: true, text: "Favorite color: black." }));
+  try {
+    await tick(); await tick();
+    codexClick(h, CODEX_F614_X, CODEX_STATUS_ROW); await tick();
+    const before = await codexSnapshot(h);
+    for (const text of ["Forge614", "Shell", "1.13.0", "Engines", "1.16.0", "Engram", "1.8.6", "F614 ▾"]) expect(before, text).toContain(text);
+    expect(before).not.toContain("memory in use");
+    codexClick(h, CODEX_F614_X, CODEX_STATUS_ROW); await tick();
+    await withConversation(h);
+    codexClick(h, CODEX_F614_X, CODEX_STATUS_ROW); await tick();
+    expect(await codexSnapshot(h)).toContain("memory in use");
+    expect(reads).toBe(1);
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});

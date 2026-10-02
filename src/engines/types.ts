@@ -1,3 +1,5 @@
+import type { McpServerState } from "./mcp-status.ts";
+
 export type NativeId = "codex";
 export interface NativeModel { id: string; name: string; efforts?: string[]; defaultEffort?: string }
 /**
@@ -218,6 +220,12 @@ export interface NativeSession {
   /** Clears the goal; false when there was nothing to clear. */
   clearGoal?(): Promise<boolean>;
   mcpServers?(verbose: boolean): Promise<NativeMcpServer[]>;
+  /** Reads the MCP servers' states once, for the bottom bar (never again: from then on only the assistant's own notices change them); never throws. Absent when the assistant reports no such states. */
+  loadMcpStatus?(): Promise<void>;
+  /** The MCP servers and their states as the bottom bar shows them; undefined while nothing is known. */
+  mcpStatus?(): McpServerState[] | undefined;
+  /** Whether Engram's startup context reached this session (the memory is in use); undefined while that is not known. */
+  memoryInUse?(): boolean | undefined;
   hooks?(): Promise<NativeHook[]>;
   accountUsage?(): Promise<NativeAccountUsage>;
   backgroundTerminals?(): Promise<NativeBackgroundTerminal[]>;

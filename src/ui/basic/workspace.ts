@@ -3,6 +3,7 @@ import type { Component, OverlayHandle, OverlayOptions, TUI, Terminal, TuiMouseE
 import { accent, elevated, fit, foreground, surface, warning, workspaceColors } from "./theme.ts";
 import { DEFAULT_POINTER, GRIP_WIDTH, LINK_POINTER, RESIZE_POINTER, SidebarLayout } from "./sidebar-layout.ts";
 import type { ChatLinks } from "./chat-links.ts";
+import type { StatusPanels } from "./status-panel.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -96,10 +97,11 @@ export function attachJumpToLatest(tui: TUI, scroll: IndependentScrollView, loca
 
 /**
  * The alternate screen of the chat, the same for Codex and Claude Code: the session-local terminal (`workspaceTerminal`) with the mouse on, and the clicks on links sent to `links`,
- * which also draws the hover and asks for the hand pointer through that terminal. Returns the terminal to build the layout on and the screen.
+ * which also draws the hover and asks for the hand pointer through that terminal. With `panels`, the bottom bar's panels are closed by Esc and by a click anywhere else before the screen sees
+ * either (see `StatusPanels.intercept`). Returns the terminal to build the layout on and the screen.
  */
-export function chatScreen(terminal: Terminal, links: ChatLinks): { surface: Terminal; tui: TuiAltScreen } {
-  const surface = workspaceTerminal(terminal, links);
+export function chatScreen(terminal: Terminal, links: ChatLinks, panels?: StatusPanels): { surface: Terminal; tui: TuiAltScreen } {
+  const surface = workspaceTerminal(terminal, links, panels);
   const tui = new TuiAltScreen(surface, true, undefined, { mouse: true, openUrl: url => links.open(url) });
   links.bind({ requestRender: () => tui.requestRender(), write: data => surface.write(data) });
   return { surface, tui };
@@ -108,13 +110,18 @@ export function chatScreen(terminal: Terminal, links: ChatLinks): { surface: Ter
 /**
  * Apply a session-local background, restoring the terminal on leaving alternate screen. It also notes whether a pointer was asked for (OSC 22, by the sidebar's grip or by a link under
  * the mouse) and not yet given back, so that leaving the alternate screen gives the pointer back first: closing the screen with the pointer over either never leaves the terminal stuck on it.
- * With `links`, everything the terminal sends is shown to them first, which is how they know the mouse moved.
+ * With `links`, everything the terminal sends is shown to them first, which is how they know the mouse moved. With `panels`, it is then offered to the bottom bar's open panel, which spends the Esc that
+ * closes it and the click that closes it: what it spends never reaches the screen, the writing box or anything else.
  */
-export function workspaceTerminal(terminal: Terminal, links?: ChatLinks): Terminal {
+export function workspaceTerminal(terminal: Terminal, links?: ChatLinks, panels?: StatusPanels): Terminal {
   let active = false;
   let pointerRaised = false;
   return new Proxy(terminal, { get(target, key) {
-    if (key === "start" && links) return (onInput: (data: string) => void, onResize: () => void) => target.start(data => { links.observe(data); onInput(data); }, onResize);
+    if (key === "start" && (links || panels)) return (onInput: (data: string) => void, onResize: () => void) => target.start(data => {
+      links?.observe(data);
+      if (panels?.intercept(data, target.rows)) return;
+      onInput(data);
+    }, onResize);
     if (key === "write") return (data: string) => {
       if (data.includes(RESIZE_POINTER) || data.includes(LINK_POINTER)) pointerRaised = true;
       if (data.includes(DEFAULT_POINTER)) pointerRaised = false;

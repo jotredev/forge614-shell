@@ -7,6 +7,7 @@ import { openLoginBrowser } from "../infrastructure/browser.ts";
 import { getStartupContext } from "../infrastructure/forge614-engram.ts";
 import { withStartupNotices } from "../infrastructure/engram-notices.ts";
 import { createMemoryHookProbe } from "../infrastructure/memory-hook.ts";
+import type { EcosystemVersions } from "../infrastructure/ecosystem-versions.ts";
 import { getCatalog } from "../i18n/index.ts";
 import type { Locale } from "../i18n/index.ts";
 
@@ -45,10 +46,10 @@ export function createCodexSession(
 }
 
 // Composition root: views render sessions; they do not construct transports.
-export async function startNativeUI(id: NativeId, executable: string, args: string[], version?: string, locale: Locale = "en"): Promise<void> {
+export async function startNativeUI(id: NativeId, executable: string, args: string[], version?: string, locale: Locale = "en", readVersions?: () => Promise<EcosystemVersions>): Promise<void> {
   const t = getCatalog(locale).chat;
   if (args.length) throw new Error(t.nativeCliOptionsUnsupported({ id }));
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error(t.nativeRequiresInteractiveTerminal);
   const cwd = process.cwd();
-  await runNativeUI(id, cwd, (emit, approve) => createCodexSession(id, executable, cwd, emit, approve, locale), undefined, version, locale);
+  await runNativeUI(id, cwd, (emit, approve) => createCodexSession(id, executable, cwd, emit, approve, locale), undefined, version, locale, undefined, undefined, readVersions);
 }

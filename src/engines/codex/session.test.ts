@@ -1631,3 +1631,141 @@ test("a message sent while Shell is reconnecting waits and goes through the new 
   next.onNotification("turn/completed", { threadId: "t", turn: { id: "u2", status: "completed" } });
   await second;
 });
+
+/** What `mcpServerStatus/list` answers for the bottom bar: three servers, one of them with no `runtimeStatus`. */
+const barReply = { data: [
+  { name: "forge614-engram", runtimeStatus: "connected", tools: {}, resources: [], authStatus: "unsupported" },
+  { name: "github", runtimeStatus: "authenticationRequired", tools: {}, resources: [], authStatus: "notLoggedIn" },
+  { name: "silent", runtimeStatus: null, tools: {}, resources: [], authStatus: "unsupported" },
+], nextCursor: null };
+
+/**
+ * The MCP states of the bottom bar: Codex is asked once (`mcpServerStatus/list`, `toolsAndAuthOnly`, every page) and each server's `runtimeStatus` becomes one of Shell's states (null: none).
+ * Nothing is known before that answer; a failure leaves it unknown instead of throwing.
+ */
+test("loadMcpStatus reads the servers once, with the short detail, and maps each runtime status", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  expect(session.mcpStatus()).toBeUndefined();
+  rpc.replies.set("mcpServerStatus/list", barReply);
+  await session.loadMcpStatus();
+  expect(rpc.calls.filter(call => call.method === "mcpServerStatus/list").map(call => call.params)).toEqual([{ detail: "toolsAndAuthOnly" }]);
+  expect(session.mcpStatus()).toEqual([{ name: "forge614-engram", state: "connected" }, { name: "github", state: "needs-sign-in" }, { name: "silent" }]);
+});
+
+/** Pages are all read, and a second `loadMcpStatus` does not ask again: the once-only rule, however many times it is called and however many messages are sent. */
+test("loadMcpStatus reads every page and asks Codex only once, whatever happens after", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.handler = async (method, params) => {
+    if (method !== "mcpServerStatus/list") return rpc.replies.get(method);
+    return params.cursor ? { data: [{ name: "second", runtimeStatus: "failed" }], nextCursor: null } : { data: [{ name: "first", runtimeStatus: "ready" }], nextCursor: "next" };
+  };
+  await session.loadMcpStatus();
+  await session.loadMcpStatus();
+  expect(session.mcpStatus()).toEqual([{ name: "first", state: "connected" }, { name: "second", state: "failed" }]);
+  const asked = () => rpc.calls.filter(call => call.method === "mcpServerStatus/list").length;
+  expect(asked()).toBe(2);
+  for (const text of ["one", "two", "three"]) await runTurn(rpc, session, text);
+  await session.loadMcpStatus();
+  expect(asked()).toBe(2);
+});
+
+/** A list Codex cannot give leaves the states unknown and never throws into the screen. */
+test("a failed MCP list leaves the states unknown", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  await session.loadMcpStatus();
+  expect(rpc.calls.some(call => call.method === "mcpServerStatus/list")).toBe(true);
+  expect(session.mcpStatus()).toBeUndefined();
+});
+
+/**
+ * `mcpServer/startupStatus/updated` (`{ threadId, name, status: "starting" | "ready" | "failed" | "cancelled", error, failureReason }`, `codex app-server generate-ts` 0.159.3) is the only thing that changes the
+ * states after the first list: it updates the row of that name, or adds it when it was not there, and the screen is told (a `status` event) to draw again.
+ */
+test("a startup notice updates a row, adds a new one and tells the screen", async () => {
+  const rpc = turnFixture(null); const events: any[] = [];
+  const session = new CodexSession(rpc, "/project", event => events.push(event), async () => false);
+  await session.initialize();
+  rpc.replies.set("mcpServerStatus/list", barReply);
+  await session.loadMcpStatus();
+  const notice = (name: string, status: string, threadId: string | null = null) => rpc.onNotification("mcpServer/startupStatus/updated", { threadId, name, status, error: null, failureReason: null });
+  events.length = 0;
+  notice("github", "starting");
+  expect(session.mcpStatus()!.find(server => server.name === "github")).toEqual({ name: "github", state: "starting" });
+  notice("github", "ready");
+  expect(session.mcpStatus()!.find(server => server.name === "github")).toEqual({ name: "github", state: "connected" });
+  notice("silent", "failed");
+  expect(session.mcpStatus()!.find(server => server.name === "silent")).toEqual({ name: "silent", state: "failed" });
+  notice("brand-new", "cancelled");
+  expect(session.mcpStatus()).toEqual([
+    { name: "forge614-engram", state: "connected" }, { name: "github", state: "connected" }, { name: "silent", state: "failed" }, { name: "brand-new", state: "cancelled" },
+  ]);
+  expect(events).toEqual(Array.from({ length: 4 }, () => ({ type: "status", text: "" })));
+});
+
+/**
+ * A notice belongs to this conversation when its `threadId` is null (the app-server's own) or the open conversation's; one of any other thread (a side conversation, a watched subagent,
+ * the temporary thread of `/recap`) changes nothing.
+ */
+test("a startup notice of another conversation is ignored, one with no thread or this one is applied", async () => {
+  const rpc = turnFixture(null); const events: any[] = [];
+  const session = new CodexSession(rpc, "/project", event => events.push(event), async () => false);
+  await session.initialize();
+  rpc.replies.set("mcpServerStatus/list", barReply);
+  await session.loadMcpStatus();
+  await runTurn(rpc, session, "hello");
+  expect(session.sessionId).toBe("t");
+  events.length = 0;
+  const notice = (name: string, status: string, threadId: string | null) => rpc.onNotification("mcpServer/startupStatus/updated", { threadId, name, status, error: null, failureReason: null });
+  notice("github", "failed", "other-thread");
+  notice("intruder", "ready", "other-thread");
+  expect(session.mcpStatus()).toEqual([{ name: "forge614-engram", state: "connected" }, { name: "github", state: "needs-sign-in" }, { name: "silent" }]);
+  expect(events).toEqual([]);
+  notice("github", "failed", "t");
+  expect(session.mcpStatus()!.find(server => server.name === "github")?.state).toBe("failed");
+  notice("silent", "ready", null);
+  expect(session.mcpStatus()!.find(server => server.name === "silent")?.state).toBe("connected");
+  expect(events).toHaveLength(2);
+});
+
+/** A notice that arrives before the first list (the app-server starts servers on its own) starts the list; the list that follows is the complete picture. */
+test("a startup notice before the list starts the list, and the list then replaces it", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await session.initialize();
+  rpc.onNotification("mcpServer/startupStatus/updated", { threadId: null, name: "github", status: "starting", error: null, failureReason: null });
+  expect(session.mcpStatus()).toEqual([{ name: "github", state: "starting" }]);
+  rpc.replies.set("mcpServerStatus/list", barReply);
+  await session.loadMcpStatus();
+  expect(session.mcpStatus()).toHaveLength(3);
+});
+
+/**
+ * Whether Engram's startup context reached this session, kept for the Forge614 panel: nothing is known until the context was asked for (when the conversation opens); `available: true` is «in use»,
+ * `available: false` (not installed, unreadable) is «not in use», and a call that throws leaves it unknown.
+ */
+test("memoryInUse keeps whether Engram's startup context reached the conversation", async () => {
+  const outcomes: [string, () => Promise<any>, boolean | undefined][] = [
+    ["arrived", async () => ({ available: true, text: "Favorite color: black." }), true],
+    ["did not arrive", async () => ({ available: false, reason: "Forge614 Engram is not installed." }), false],
+    ["failed", async () => { throw new Error("boom"); }, undefined],
+  ];
+  for (const [label, context, expected] of outcomes) {
+    const rpc = turnFixture(null);
+    const session = new CodexSession(rpc, "/project", () => {}, async () => false, undefined, context);
+    await session.initialize();
+    expect(session.memoryInUse(), label).toBeUndefined();
+    await runTurn(rpc, session, "hello");
+    expect(session.memoryInUse(), label).toBe(expected);
+  }
+  // Without the injected check no call is made and nothing is known.
+  const rpc = turnFixture(null);
+  const bare = new CodexSession(rpc, "/project", () => {}, async () => false);
+  await bare.initialize(); await runTurn(rpc, bare, "hello");
+  expect(bare.memoryInUse()).toBeUndefined();
+});
