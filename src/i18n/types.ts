@@ -416,6 +416,11 @@ export interface Catalog {
   jumpToLatest: {
     label: string;
   };
+  /** The short notices the chat shows when what was selected with the mouse is copied. */
+  chatSelection: {
+    copied: string;
+    copyFailed: string;
+  };
   sidebarControls: {
     hide: string;
     show: string;

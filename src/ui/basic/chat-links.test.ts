@@ -90,7 +90,7 @@ function chat(options: { columns?: number; rows?: number; tools?: ChatLinkTools;
   const failures: string[] = [];
   const recorded = fakeTools();
   const links = options.links ?? newLinks(options.tools ?? recorded.tools, target => failures.push(target));
-  const { surface, tui } = chatScreen(terminal, links);
+  const { surface, tui } = chatScreen(terminal, links, undefined, { copySelection: async () => true });
   const layout = new SidebarLayout({ terminal: surface });
   links.pointerHeldElsewhere = () => layout.holdsPointer();
   const transcript = new Container();

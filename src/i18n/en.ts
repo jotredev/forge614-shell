@@ -409,6 +409,10 @@ The selected engine's project settings and permissions apply. This is not a sand
   jumpToLatest: {
     label: " ↓ New messages · jump to latest ",
   },
+  chatSelection: {
+    copied: "Copied",
+    copyFailed: "Copy failed",
+  },
   sidebarControls: {
     hide: "hide ›",
     show: "‹ show sidebar",
