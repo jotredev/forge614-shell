@@ -50,6 +50,7 @@ jobs:
         run: |
           Set-MpPreference -DisableRealtimeMonitoring $true
       - run: bun test tests/integration/windows-installer-defenses.test.ts src/infrastructure/forge614-engines.test.ts src/infrastructure/forge614-engram.test.ts src/infrastructure/updater.test.ts src/infrastructure/clipboard.test.ts src/app/update-command.test.ts src/infrastructure/git-local.test.ts tests/integration/windows-s2-native.test.ts
+      - run: bun test src/app/init-engram.test.ts src/app/init-engram.groups.test.ts src/infrastructure/forge614-engram.ecosystem.test.ts src/ui/startup/memory-setup.test.ts src/infrastructure/memory-hook.test.ts src/engines/claude/memory-delivery.test.ts src/engines/codex/memory-delivery.test.ts
 
       - name: PowerShell syntax check
         shell: pwsh

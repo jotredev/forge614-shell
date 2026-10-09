@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { DetectRun } from "../../src/infrastructure/forge614-engines.ts";
 
 /** A real-shaped `forge614-engines verify memory-integration --agent <id> --json` answer, with the hook part the test wants (none = an Engines older than the hook). */
@@ -27,11 +28,12 @@ export function enginesDouble(stdout: string, status = 0) {
 
 /** The `hooks/list` answer of a Codex app-server (`v2/HooksListResponse.ts`) with Engines' startup hook as the given trust and enabled state. */
 export function hooksListWithEngramHook(overrides: Record<string, unknown> = {}) {
+  const enginesCmd = join("/Users/tester", ".forge614", "engines", "bin", process.platform === "win32" ? "forge614-engines.exe" : "forge614-engines");
   return { data: [{ cwd: "/project", warnings: [], errors: [], hooks: [
     { key: "k0", eventName: "preToolUse", matcher: "Bash", handlerType: "command", command: "echo hi", async: false, enabled: true, trustStatus: "trusted", source: "user", isManaged: false },
     {
       key: "k1", eventName: "sessionStart", matcher: "^(startup|resume|clear|compact)$", handlerType: "command",
-      command: "/Users/tester/.forge614/engines/bin/forge614-engines memory-hook-run --agent codex", async: false, enabled: true,
+      command: `${enginesCmd} memory-hook-run --agent codex`, async: false, enabled: true,
       trustStatus: "trusted", source: "user", isManaged: false, ...overrides,
     },
   ] }] };

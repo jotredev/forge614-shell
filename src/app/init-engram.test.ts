@@ -100,6 +100,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInitCommand } from "./init-engram.ts";
 
+/** Construye la ruta esperada al binario de Engram respetando la semántica de la plataforma (.exe en Windows). */
+const expectedEngramBinary = (home: string) =>
+  join(home, ".forge614", "engram", "bin", process.platform === "win32" ? "forge614-engram.exe" : "forge614-engram");
+
+/** Construye la ruta esperada al binario de Engines respetando la semántica de la plataforma (.exe en Windows). */
+const expectedEnginesBinary = (home: string) =>
+  join(home, ".forge614", "engines", "bin", process.platform === "win32" ? "forge614-engines.exe" : "forge614-engines");
+
+/** Construye la ruta esperada cuando se utiliza un FORGE614_HOME personalizado. */
+const expectedCustomBinary = (forgeHome: string, sub: "engram" | "engines") =>
+  join(forgeHome, sub, "bin", process.platform === "win32" ? `forge614-${sub}.exe` : `forge614-${sub}`);
+
 class TestTerminal implements Terminal {
   // Wide enough that none of the flow's long result sentences word-wrap: these tests assert on
   // exact outcome text, not on the Text component's line-wrapping behavior (covered elsewhere).
@@ -461,7 +473,7 @@ test("confirming with local storage only runs exactly init --json", async () => 
   });
   await driveEngramScreens(terminal);
   await run;
-  expect(calls).toEqual([["/Users/tester/.forge614/engram/bin/forge614-engram", "init", "--json"]]);
+  expect(calls).toEqual([[expectedEngramBinary("/Users/tester"), "init", "--json"]]);
 });
 
 test("confirming with PostgreSQL sends the connection string only to Engram, never to the screen", async () => {
@@ -485,8 +497,8 @@ test("confirming with PostgreSQL sends the connection string only to Engram, nev
   terminal.input("\r"); // Summary: Confirm
   await run;
   expect(calls).toEqual([
-    ["/Users/tester/.forge614/engram/bin/forge614-engram", "init", "--json", "--postgres-url", "postgres://user:pw@host/db"],
-    ["/Users/tester/.forge614/engram/bin/forge614-engram", "reinforcement-enable"],
+    [expectedEngramBinary("/Users/tester"), "init", "--json", "--postgres-url", "postgres://user:pw@host/db"],
+    [expectedEngramBinary("/Users/tester"), "reinforcement-enable"],
   ]);
   expect(terminal.output).not.toContain("postgres://user:pw@host/db");
 });
@@ -546,8 +558,8 @@ test("runInitCommand resolves both Engram and Engines binaries under a custom FO
   });
   await driveEngramScreens(terminal);
   await run;
-  expect(engramCalls[0]?.[0]).toBe("/private/custom-forge-home/engram/bin/forge614-engram");
-  expect(enginesCalls[0]?.[0]).toBe("/private/custom-forge-home/engines/bin/forge614-engines");
+  expect(engramCalls[0]?.[0]).toBe(expectedCustomBinary("/private/custom-forge-home", "engram"));
+  expect(enginesCalls[0]?.[0]).toBe(expectedCustomBinary("/private/custom-forge-home", "engines"));
   expect(terminal.output).not.toContain("/private/custom-forge-home");
   expect(terminal.output).not.toContain("FORGE614_HOME");
 });
@@ -562,7 +574,7 @@ test("runInitCommand falls back to the standard ~/.forge614 path when no FORGE61
   });
   await driveEngramScreens(terminal);
   await run;
-  expect(engramCalls[0]?.[0]).toBe("/Users/tester/.forge614/engram/bin/forge614-engram");
+  expect(engramCalls[0]?.[0]).toBe(expectedEngramBinary("/Users/tester"));
 });
 
 test("the init command never imports Shell's normal chat startup modules", async () => {
@@ -686,8 +698,8 @@ test("selecting no assistants initializes Engram without configuring any memory 
   await submitPicker(terminal, []); // memory picker: submit with nothing checked
   await run;
   expect(enginesCalls).toEqual([
-    ["/Users/tester/.forge614/engines/bin/forge614-engines", "detect"],
-    ["/Users/tester/.forge614/engines/bin/forge614-engines", "capabilities", "--agent", "claude-code"],
+    [expectedEnginesBinary("/Users/tester"), "detect"],
+    [expectedEnginesBinary("/Users/tester"), "capabilities", "--agent", "claude-code"],
   ]);
   expect(terminal.output).toContain("No assistant was selected. No memory integration was configured.");
 });
@@ -748,8 +760,8 @@ test("an agent Engines marks not fully supported is not offered by init: with on
   await driveEngramScreens(terminal);
   await run;
   expect(enginesCalls).toEqual([
-    ["/Users/tester/.forge614/engines/bin/forge614-engines", "detect"],
-    ["/Users/tester/.forge614/engines/bin/forge614-engines", "capabilities", "--agent", "example-agent"],
+    [expectedEnginesBinary("/Users/tester"), "detect"],
+    [expectedEnginesBinary("/Users/tester"), "capabilities", "--agent", "example-agent"],
   ]);
   expect(terminal.output).toContain("No compatible AI assistants were found to configure with memory integration.");
   expect(terminal.output).not.toContain("Example Agent");

@@ -67,6 +67,14 @@ function engramStub(scenario: Scenario = {}) {
 }
 const enginesRun: RunEngram = async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, agents: [] }), stderr: "" });
 const groupCalls = (calls: string[][]) => calls.filter(args => args[0]?.startsWith("group-") || (args[0] === "init" && args.includes("--directory")));
+/** Git puede devolver la ruta de --directory con barras distintas en Windows; los demás argumentos quedan literales. */
+const normalizeDirectoryArg = (calls: string[][]) => calls.map(args => {
+  const directoryIndex = args.indexOf("--directory");
+  if (directoryIndex < 0) return args;
+  const normalized = [...args];
+  normalized[directoryIndex + 1] = normalized[directoryIndex + 1]?.replaceAll("\\", "/") ?? "";
+  return normalized;
+});
 
 const existingGroup = { id: "g-1", name: "mi-tienda", projects: [{ projectId: "p9", name: "frontend" }] };
 
@@ -98,11 +106,11 @@ test("an existing group: init, then group-list, then folder bound and put in tha
   terminal.input(ENTER); // first group
   await done;
   expect(engram.calls[0]).toEqual(["init", "--json"]);
-  expect(groupCalls(engram.calls)).toEqual([
+  expect(normalizeDirectoryArg(groupCalls(engram.calls))).toEqual(normalizeDirectoryArg([
     ["group-list"],
     ["init", "--json", "--directory", cwd],
     ["group-bind", "--project-id", "proj-1", "--group", "g-1"],
-  ]);
+  ]));
   expect(visible(terminal)).toContain('Grupo: este proyecto quedó en el grupo "mi-tienda".');
 });
 
@@ -116,12 +124,12 @@ test("no groups yet: the first section is absent; creating one runs group-create
   await until(() => visible(terminal).includes("Nombre del grupo nuevo"), "name prompt");
   terminal.input("nueva-tienda"); terminal.input(ENTER);
   await done;
-  expect(groupCalls(engram.calls)).toEqual([
+  expect(normalizeDirectoryArg(groupCalls(engram.calls))).toEqual(normalizeDirectoryArg([
     ["group-list"],
     ["group-create", "--name", "nueva-tienda"],
     ["init", "--json", "--directory", cwd],
     ["group-bind", "--project-id", "proj-1", "--group", "g-new"],
-  ]);
+  ]));
   expect(visible(terminal)).toContain('Grupo: se creó "nueva-tienda" y este proyecto quedó dentro.');
 });
 
@@ -133,7 +141,7 @@ test("choosing 'standalone project' writes the identity through Engram only", as
   terminal.input(DOWN); terminal.input(DOWN); terminal.input(ENTER);
   await done;
   // The list is [group, create, loose]: the first Down reaches "create", the second reaches "loose".
-  expect(groupCalls(engram.calls)).toEqual([["group-list"], ["init", "--json", "--directory", cwd]]);
+  expect(normalizeDirectoryArg(groupCalls(engram.calls))).toEqual(normalizeDirectoryArg([["group-list"], ["init", "--json", "--directory", cwd]]));
   expect(visible(terminal)).toContain("Grupo: este proyecto quedó como proyecto suelto (sin grupo).");
 });
 
