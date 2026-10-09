@@ -21,12 +21,13 @@ const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 const clip = (text: string, max: number): string => text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 /**
  * A folder path within `max` characters: as it is when it fits; otherwise «…» and its last folders, whole (the end is what tells
- * projects apart), or the last characters of a single name longer than that.
+ * projects apart), or the last characters of a single name longer than that. Soporta separadores POSIX (/) y Windows (\\).
  */
 const clipFolder = (path: string, max: number = FOLDER_LIMIT): string => {
   if (path.length <= max) return path;
   const tail = path.slice(-(max - 1));
-  const boundary = tail.startsWith("/") ? 0 : tail.indexOf("/");
+  const first = tail[0];
+  const boundary = (first === "/" || first === "\\") ? 0 : tail.search(/[/\\]/);
   return `…${boundary >= 0 ? tail.slice(boundary) : tail}`;
 };
 /** A non-empty string, or nothing: request fields arrive as `string | null | undefined` (or anything, for an open tool input). */

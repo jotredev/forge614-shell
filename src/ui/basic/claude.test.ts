@@ -1,14 +1,91 @@
-import { expect, test } from "bun:test";
+import { expect, test, beforeAll, afterAll } from "bun:test";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { stripVTControlCharacters } from "node:util";
-import { join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { claudeMenuCommands, startClaudeUI } from "./claude.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import { emptyTelemetry, telemetryLines } from "../../engines/claude/telemetry.ts";
 import type { EcosystemVersions } from "../../infrastructure/ecosystem-versions.ts";
+
+let sharedLauncherExe: string | undefined;
+let sharedLauncherDir: string | undefined;
+
+beforeAll(async () => {
+  if (process.platform === "win32") {
+    sharedLauncherDir = await mkdtemp(join(tmpdir(), "forge614-claude-launcher-"));
+    const srcFile = join(sharedLauncherDir, "launcher.js");
+    sharedLauncherExe = join(sharedLauncherDir, "launcher.exe");
+    writeFileSync(srcFile, `
+const { spawn } = require("node:child_process");
+const { join, dirname, basename, extname } = require("node:path");
+const script = join(dirname(process.execPath), basename(process.execPath, extname(process.execPath)) + ".worker.js");
+const bunBin = process.env.FORGE614_BUN_BIN || ${JSON.stringify(process.execPath)} || "bun";
+const child = spawn(bunBin, [script, ...process.argv.slice(2)], {
+  stdio: "inherit",
+  windowsHide: true,
+});
+child.on("exit", (code, signal) => {
+  if (signal) {
+    try { process.kill(process.pid, signal); } catch { process.exit(1); }
+  } else {
+    process.exit(code ?? 0);
+  }
+});
+child.on("error", (err) => {
+  console.error("Launcher error:", err);
+  process.exit(1);
+});
+`);
+    execFileSync("bun", ["build", srcFile, "--compile", "--outfile", sharedLauncherExe]);
+  }
+});
+
+afterAll(async () => {
+  if (sharedLauncherDir) {
+    await rm(sharedLauncherDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
+const testExecutablePath = (dir: string, name = "claude") => join(dir, process.platform === "win32" ? `${name}.exe` : name);
+
+/**
+ * Escribe un ejecutable de prueba para Claude Code o Engines.
+ * En Unix escribe el script con shebang `#!${process.execPath}` y modo 0o755.
+ * En Windows copia el lanzador nativo compilado `.exe` y escribe el script JS adyacente (`<nombre>.worker.js`).
+ */
+async function writeTestExecutable(targetPath: string, scriptContent: string): Promise<string> {
+  if (process.platform === "win32") {
+    const exePath = targetPath.toLowerCase().endsWith(".exe") ? targetPath : `${targetPath}.exe`;
+    const dir = dirname(exePath);
+    mkdirSync(dir, { recursive: true });
+    const base = basename(exePath, extname(exePath));
+    const workerFile = join(dir, `${base}.worker.js`);
+    await writeFile(workerFile, scriptContent, "utf8");
+    copyFileSync(sharedLauncherExe!, exePath);
+    return exePath;
+  }
+  await writeFile(targetPath, `#!${process.execPath}\n${scriptContent}`, { mode: 0o755 });
+  return targetPath;
+}
+
+function writeTestExecutableSync(targetPath: string, scriptContent: string): string {
+  if (process.platform === "win32") {
+    const exePath = targetPath.toLowerCase().endsWith(".exe") ? targetPath : `${targetPath}.exe`;
+    const dir = dirname(exePath);
+    mkdirSync(dir, { recursive: true });
+    const base = basename(exePath, extname(exePath));
+    const workerFile = join(dir, `${base}.worker.js`);
+    writeFileSync(workerFile, scriptContent, "utf8");
+    copyFileSync(sharedLauncherExe!, exePath);
+    return exePath;
+  }
+  writeFileSync(targetPath, `#!${process.execPath}\n${scriptContent}`, { mode: 0o755 });
+  return targetPath;
+}
 
 class TestTerminal implements Terminal {
   columns = 120; rows = 50; kittyProtocolActive = false;
@@ -21,19 +98,24 @@ class TestTerminal implements Terminal {
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 35));
 
-test.skipIf(process.platform === "win32")("Claude UI accepts logout consent and stop while auth is pending, without sending a model message", async () => {
+test("Claude UI accepts logout consent and stop while auth is pending, without sending a model message", async () => {
   const root = await mkdtemp(join(tmpdir(), "forge614-logout-ui-"));
-  const executable = join(root, "claude"); const marker = join(root, "calls");
+  const executable = testExecutablePath(root); const marker = join(root, "calls");
   const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
   // Shell persists /model and /effort picks to $FORGE614_HOME/shell/preferences.json (see
   // shell-preferences.ts) — isolate it so this test never reads or writes the real developer's
   // ~/.forge614 preferences file.
   const previousForgeHome = process.env.FORGE614_HOME;
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
   process.env.FORGE614_HOME = join(root, "forge614-home");
+  process.env.HOME = join(root, "home");
+  process.env.USERPROFILE = join(root, "home");
+  process.env.CLAUDE_CONFIG_DIR = join(root, "claude-config");
   try {
-    await writeFile(executable, `#!${process.execPath}
-const fs=require('fs');
+    await writeTestExecutable(executable, `const fs=require('fs');
 if(process.argv[2]==='auth') {
   fs.appendFileSync(${JSON.stringify(marker)},process.argv.slice(2).join(' ')+'\\n');
   console.log('{"loggedIn":true,"authMethod":"claude.ai"}');
@@ -43,7 +125,7 @@ if(process.argv[2]==='auth') {
     if(msg.type==='user') fs.appendFileSync(${JSON.stringify(marker)},'UNEXPECTED PROMPT\\n');
     if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[{value:'default',displayName:'Default',description:'Native default',supportedEffortLevels:['low','high']}],account:{email:'test@example.com'},commands:[{name:'model',description:'Select model',argumentHint:''},{name:'effort',description:'Select reasoning',argumentHint:''}],agents:[],output_style:'default',available_output_styles:[]}}}));
   });
-}`, { mode: 0o755 });
+}`);
     ui = startClaudeUI([], executable, terminal); await tick();
     for (let i = 0; i < 60 && !terminal.output.includes("Connected"); i++) await tick();
     expect(terminal.output).toContain("Connected");
@@ -84,8 +166,11 @@ if(process.argv[2]==='auth') {
     expect(await readFile(marker, "utf8")).toBe("auth status --json\nauth status --json\n");
     expect(terminal.output).toContain("Connected to Claude in Shell");
   } finally {
-    enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true });
+    enter("/f614:quit"); await ui; await tick(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
+    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
   }
 });
 
@@ -95,25 +180,30 @@ if(process.argv[2]==='auth') {
  * error, and every change is written to Shell's preferences. Uses a fake `claude` executable, so no
  * real account or network is involved.
  */
-test.skipIf(process.platform === "win32")("Claude UI restores the saved work mode on opening and saves every Shift+Tab change", async () => {
+test("Claude UI restores the saved work mode on opening and saves every Shift+Tab change", async () => {
   const root = await mkdtemp(join(tmpdir(), "forge614-mode-ui-"));
-  const executable = join(root, "claude");
+  const executable = testExecutablePath(root);
   const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
   const previousForgeHome = process.env.FORGE614_HOME;
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
   process.env.FORGE614_HOME = join(root, "forge614-home");
+  process.env.HOME = join(root, "home");
+  process.env.USERPROFILE = join(root, "home");
+  process.env.CLAUDE_CONFIG_DIR = join(root, "claude-config");
   const preferences = () => JSON.parse(readFileSync(join(root, "forge614-home", "shell", "preferences.json"), "utf8"));
   try {
     mkdirSync(join(root, "forge614-home", "shell"), { recursive: true });
     writeFileSync(join(root, "forge614-home", "shell", "preferences.json"), JSON.stringify({ claude: { mode: "plan" } }));
-    await writeFile(executable, `#!${process.execPath}
-if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
+    await writeTestExecutable(executable, `if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
 else {
   require('readline').createInterface({input:process.stdin}).on('line',line=>{
     const msg=JSON.parse(line);
     if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
   });
-}`, { mode: 0o755 });
+}`);
     ui = startClaudeUI([], executable, terminal); await tick();
     for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
     // «Plan» is the name Claude Code itself gives the mode; the restored mode is on screen before any key is pressed.
@@ -126,8 +216,11 @@ else {
     expect(stripVTControlCharacters(terminal.output)).toContain(getCatalog("en").workMode.shiftTabToCycle);
     expect(stripVTControlCharacters(terminal.output)).not.toContain("Shift+Tab: Plan");
   } finally {
-    enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true });
+    enter("/f614:quit"); await ui; await tick(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
+    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
   }
 });
 
@@ -136,18 +229,23 @@ else {
  * it does not cancel anything. Uses a fake `claude` that accepts the prompt and never answers, so the turn
  * stays open until it is cancelled; no real account or network is involved.
  */
-test.skipIf(process.platform === "win32")("Claude UI: /f614:stop cancels the running turn and a plain /stop does not", async () => {
+test("Claude UI: /f614:stop cancels the running turn and a plain /stop does not", async () => {
   const root = await mkdtemp(join(tmpdir(), "forge614-stop-ui-"));
-  const executable = join(root, "claude");
+  const executable = testExecutablePath(root);
   const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
   const plain = () => stripVTControlCharacters(terminal.output);
   const previousForgeHome = process.env.FORGE614_HOME;
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
   process.env.FORGE614_HOME = join(root, "forge614-home");
+  process.env.HOME = join(root, "home");
+  process.env.USERPROFILE = join(root, "home");
+  process.env.CLAUDE_CONFIG_DIR = join(root, "claude-config");
   try {
     // The fake keeps every message unanswered until it is interrupted, then ends them with the error result Claude Code gives (measured), so the turn closes with the stop and the process stays open.
-    await writeFile(executable, `#!${process.execPath}
-const open=[];
+    await writeTestExecutable(executable, `const open=[];
 if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
 else {
   require('readline').createInterface({input:process.stdin}).on('line',line=>{
@@ -156,7 +254,7 @@ else {
     if(msg.type==='control_request' && msg.request.subtype==='interrupt') { console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{still_queued:[]}}})); const uuids=open.splice(0); if(uuids.length) console.log(JSON.stringify({type:'result',subtype:'error_during_execution',is_error:true,duration_ms:1,duration_api_ms:1,num_turns:1,errors:[],session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],user_message_uuids:uuids,uuid:'result-'+Date.now()})); }
     else if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
   });
-}`, { mode: 0o755 });
+}`);
     ui = startClaudeUI([], executable, terminal); await tick();
     for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
     enter("work please"); await tick();
@@ -170,8 +268,11 @@ else {
     for (let i = 0; i < 60 && !plain().includes(getCatalog("en").chat.statusReady); i++) await tick();
     expect(plain()).toContain(getCatalog("en").chat.statusReady);
   } finally {
-    enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true });
+    enter("/f614:quit"); await ui; await tick(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
+    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
   }
 });
 
@@ -183,19 +284,25 @@ else {
  * with «/no» marked first. The session works in `/tmp` (a short, fixed folder) so the screen never depends on how long the
  * path of the machine running the test is: in a copy under a long path the folder line used to wrap and the test failed.
  */
-test.skipIf(process.platform === "win32")("Claude UI: a Bash permission reads in plain words, Enter alone approves it and Esc denies it", async () => {
+test("Claude UI: a Bash permission reads in plain words, Enter alone approves it and Esc denies it", async () => {
   const root = await mkdtemp(join(tmpdir(), "forge614-permission-ui-"));
-  const executable = join(root, "claude"); const marker = join(root, "decisions");
+  const executable = testExecutablePath(root); const marker = join(root, "decisions");
   const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
   const plain = () => stripVTControlCharacters(terminal.output);
   const previousForgeHome = process.env.FORGE614_HOME;
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
   process.env.FORGE614_HOME = join(root, "forge614-home");
+  process.env.HOME = join(root, "home");
+  process.env.USERPROFILE = join(root, "home");
+  process.env.CLAUDE_CONFIG_DIR = join(root, "claude-config");
   const previousCwd = process.cwd();
-  process.chdir("/tmp");
+  const workDir = process.platform === "win32" ? tmpdir() : "/tmp";
+  process.chdir(workDir);
   try {
-    await writeFile(executable, `#!${process.execPath}
-const fs=require('fs'); let last;
+    await writeTestExecutable(executable, `const fs=require('fs'); let last;
 if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
 else {
   require('readline').createInterface({input:process.stdin}).on('line',line=>{
@@ -208,7 +315,7 @@ else {
       console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,duration_ms:1,duration_api_ms:1,num_turns:1,result:'ok',session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],user_message_uuids:[last],uuid:'result-'+Date.now()}));
     }
   });
-}`, { mode: 0o755 });
+}`);
     ui = startClaudeUI([], executable, terminal, undefined, "es"); await tick();
     for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
     enter("run it"); await tick();
@@ -232,8 +339,11 @@ else {
     for (let i = 0; i < 60 && readFileSync(marker, "utf8") === "allow\n"; i++) await tick();
     expect(readFileSync(marker, "utf8")).toBe("allow\ndeny\n");
   } finally {
-    enter("/f614:quit"); await ui; process.chdir(previousCwd); await rm(root, { recursive: true, force: true });
+    enter("/f614:quit"); await ui; await tick(); process.chdir(previousCwd); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
+    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
   }
 });
 
@@ -242,40 +352,51 @@ else {
  * The session works in a deep folder of the test's own making, so the screen must show the last folders whole behind «…»
  * (manual 05: long paths are cut with «…») — the same on every machine, whatever the path above it.
  */
-test.skipIf(process.platform === "win32")("Claude UI: a long working folder is cut with «…» keeping its last whole folders", async () => {
+test("Claude UI: a long working folder is cut with «…» keeping its last whole folders", async () => {
   const root = await mkdtemp(join(tmpdir(), "forge614-long-folder-ui-"));
-  const executable = join(root, "claude");
+  const executable = testExecutablePath(root);
   const deep = join(root, "a-long-folder-name-for-the-permission-card", "another-long-folder-name-here", "project");
   mkdirSync(deep, { recursive: true });
   const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
   const plain = () => stripVTControlCharacters(terminal.output);
   const previousForgeHome = process.env.FORGE614_HOME;
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
   process.env.FORGE614_HOME = join(root, "forge614-home");
+  process.env.HOME = join(root, "home");
+  process.env.USERPROFILE = join(root, "home");
+  process.env.CLAUDE_CONFIG_DIR = join(root, "claude-config");
   const previousCwd = process.cwd();
   process.chdir(deep);
   try {
-    await writeFile(executable, `#!${process.execPath}
-if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
+    await writeTestExecutable(executable, `if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
 else {
   require('readline').createInterface({input:process.stdin}).on('line',line=>{
     const msg=JSON.parse(line);
     if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
     if(msg.type==='user') console.log(JSON.stringify({type:'control_request',request_id:'permission-'+Date.now(),request:{subtype:'can_use_tool',tool_name:'Bash',input:{command:'ls',description:'List the folder'},tool_use_id:'tool-1'}}));
   });
-}`, { mode: 0o755 });
+}`);
     ui = startClaudeUI([], executable, terminal, undefined, "es"); await tick();
     for (let i = 0; i < 60 && !terminal.output.includes("test@example.com"); i++) await tick();
     enter("run it"); await tick();
     for (let i = 0; i < 60 && !plain().includes("▎ Sí"); i++) await tick();
-    expect(plain()).toContain("Carpeta: …/another-long-folder-name-here/project");
+    const expectedCut = process.platform === "win32"
+      ? "Carpeta: …\\another-long-folder-name-here\\project"
+      : "Carpeta: …/another-long-folder-name-here/project";
+    expect(plain()).toContain(expectedCut);
     expect(plain()).not.toContain("a-long-folder-name-for-the-permission-card");
     terminal.input("\x1b");
     await tick();
   } finally {
     enter("/f614:quit"); await tick(); terminal.input("\x1b[B"); terminal.input("\r"); // the turn is still open: «¿Salir de todos modos?» → «Sí»
-    await ui; process.chdir(previousCwd); await rm(root, { recursive: true, force: true });
+    await ui; await tick(); process.chdir(previousCwd); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
+    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
   }
 });
 
@@ -285,7 +406,7 @@ else {
  * («Permission requested», «Allow?») nor the turn footer. Enter alone and Esc keep the connection; only picking «Yes» disconnects. It exists because the question used to
  * go through the tool-permission path, with «Yes» marked. Runs in English and in Spanish.
  */
-test.skipIf(process.platform === "win32")("Claude UI: the /logout question has its own words and «No» marked; Enter alone and Esc keep the connection, only «Yes» disconnects", async () => {
+test("Claude UI: the /logout question has its own words and «No» marked; Enter alone and Esc keep the connection, only «Yes» disconnects", async () => {
   for (const locale of ["en", "es"] as const) {
     const t = getCatalog(locale);
     const h = await claudeUi([], locale);
@@ -326,21 +447,28 @@ test.skipIf(process.platform === "win32")("Claude UI: the /logout question has i
 async function claudeUi(commands: { name: string; description: string; argumentHint: string }[] = [], locale: "en" | "es" = "en", rateLimit?: object[], columns = 120, events: object[] = [], account: object = { email: "test@example.com" }, beforeStart?: (forgeHome: string) => void, versions?: () => Promise<EcosystemVersions>, shellVersion?: string, mcpServers?: object[], startupContext?: Parameters<typeof startClaudeUI>[7], options: { waitFor?: string; answer?: boolean; sessions?: Parameters<typeof startClaudeUI>[8] } = {}) {
   const waitFor = options.waitFor ?? "test@example.com";
   const root = await mkdtemp(join(tmpdir(), "forge614-prefix-ui-"));
-  const executable = join(root, "claude"); const marker = join(root, "calls");
+  const executable = testExecutablePath(root); const marker = join(root, "calls");
   const terminal = new TestTerminal(); terminal.columns = columns;
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
   const plain = () => stripVTControlCharacters(terminal.output);
   const previousForgeHome = process.env.FORGE614_HOME;
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
   process.env.FORGE614_HOME = join(root, "forge614-home");
+  process.env.HOME = join(root, "home");
+  process.env.USERPROFILE = join(root, "home");
+  process.env.CLAUDE_CONFIG_DIR = join(root, "claude-config");
   beforeStart?.(process.env.FORGE614_HOME);
-  await writeFile(executable, `#!${process.execPath}
-const fs=require('fs'); const open=[];
+  await writeTestExecutable(executable, `const fs=require('fs'); const open=[];
+let closedWritten=false;
+const markClosed=()=>{ if(!closedWritten){ closedWritten=true; fs.appendFileSync(${JSON.stringify(marker)},'closed\\n'); } };
 if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
 else {
   const inbox=${JSON.stringify(marker + ".inbox")};
   setInterval(()=>{ try { if(!fs.existsSync(inbox)) return; const text=fs.readFileSync(inbox,'utf8'); fs.unlinkSync(inbox); for(const l of text.split('\\n').filter(Boolean)) { const e=JSON.parse(l); if(e.__exit!==undefined) process.exit(e.__exit); console.log(l); } } catch {} },15);
-  process.on('SIGTERM',()=>{ fs.appendFileSync(${JSON.stringify(marker)},'closed\\n'); process.exit(0); });
-  const rl=require('readline').createInterface({input:process.stdin}); rl.on('close',()=>fs.appendFileSync(${JSON.stringify(marker)},'closed\\n'));
+  process.on('SIGTERM',()=>{ markClosed(); process.exit(0); });
+  const rl=require('readline').createInterface({input:process.stdin}); rl.on('close',()=>markClosed());
   rl.on('line',line=>{
     const msg=JSON.parse(line);
     if(msg.type==='control_request' && msg.request.subtype==='interrupt') { fs.appendFileSync(${JSON.stringify(marker)},'interrupt\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{still_queued:[]}}})); const uuids=open.splice(0); if(uuids.length) console.log(JSON.stringify({type:'result',subtype:'error_during_execution',is_error:true,duration_ms:1,duration_api_ms:1,num_turns:1,errors:[],session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],user_message_uuids:uuids,uuid:'result-'+Date.now()})); }
@@ -348,7 +476,7 @@ else {
     else if(msg.type==='control_request') { fs.appendFileSync(${JSON.stringify(marker)},'control\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:${JSON.stringify(account)},commands:${JSON.stringify(commands)},agents:[],output_style:'default',available_output_styles:[]}}})); }
     if(msg.type==='user') { open.push(msg.uuid); fs.appendFileSync(${JSON.stringify(marker)},'pid:'+process.pid+'\\n'+'prompt:'+JSON.stringify(msg.message.content)+'\\n'); for (const info of ${JSON.stringify(rateLimit ?? [])}) console.log(JSON.stringify({type:'rate_limit_event',rate_limit_info:info,uuid:'00000000-0000-4000-8000-000000000001',session_id:'s'})); for (const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event)); if (${JSON.stringify(Boolean(options.answer))}) open.splice(open.indexOf(msg.uuid),1); if (${JSON.stringify(Boolean(options.answer))}) console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,duration_ms:1,duration_api_ms:1,num_turns:1,result:'ok',session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],user_message_uuids:[msg.uuid],uuid:'result-'+Date.now()})); }
   });
-}`, { mode: 0o755 });
+}`);
   const ui = startClaudeUI([], executable, terminal, shellVersion, locale, undefined, versions, startupContext, options.sessions);
   await tick();
   for (let i = 0; i < 120 && !terminal.output.includes(waitFor); i++) await tick();
@@ -362,16 +490,20 @@ else {
     if (byCtrlC) { terminal.input("\x1b"); terminal.input("\x03"); } else enter("/f614:quit");
     await tick();
     if (plain().includes("▎ No") || plain().includes("▎ 1. No")) { terminal.input("\x1b[B"); terminal.input("\r"); }
-    await ui; await rm(root, { recursive: true, force: true });
+    await ui; await tick(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
+    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
   };
   /** Hands events to the fake `claude`, which writes them out of turn (no message of the person asked for them). */
   const emit = (...events: object[]) => { writeFileSync(`${marker}.inbox.tmp`, events.map(event => JSON.stringify(event)).join("\n") + "\n"); renameSync(`${marker}.inbox.tmp`, `${marker}.inbox`); };
   return { terminal, enter, plain, ui, calls, finish, emit };
 }
 
+
 /** Claude's opening transcript owns the sign too: it vanishes after the first person message and never returns after `/new`. */
-test.skipIf(process.platform === "win32")("a new Claude chat removes the FORGE614 sign after its first person message and never restores it on new", async () => {
+test("a new Claude chat removes the FORGE614 sign after its first person message and never restores it on new", async () => {
   const h = await claudeUi();
   try {
     expect(h.plain()).toContain("████████");
@@ -386,7 +518,7 @@ test.skipIf(process.platform === "win32")("a new Claude chat removes the FORGE61
  * A native Claude Code command that is sent as a turn (`/init` here, one of the assistant's own commands) is the first turn of the chat, exactly like a normal message,
  * so it removes the opening sign and the sign does not come back. Before this only a normal message removed it and the sign stayed on top of the command and its answer.
  */
-test.skipIf(process.platform === "win32")("a native Claude command sent as a turn removes the FORGE614 sign and it does not come back", async () => {
+test("a native Claude command sent as a turn removes the FORGE614 sign and it does not come back", async () => {
   const h = await claudeUi([{ name: "init", description: "Initialize", argumentHint: "" }]);
   try {
     expect(h.plain()).toContain("████████");
@@ -411,7 +543,7 @@ test.skipIf(process.platform === "win32")("a native Claude command sent as a tur
  * `canUseTool` on purpose (so the mode can leave «Bypass Permissions» live), so that warning is expected and says nothing; any other warning shows once in the chat as a muted
  * line with the catalog's prefix and without «(node:<pid>)»; nothing reaches stderr while the screen is open. Both languages, with the exact words of each.
  */
-test.skipIf(process.platform === "win32")("while the Claude screen is open Node warnings do not reach stderr: the expected one is silent, another shows once in the chat", async () => {
+test("while the Claude screen is open Node warnings do not reach stderr: the expected one is silent, another shows once in the chat", async () => {
   for (const [locale, shown] of [["en", "Node warning: Something odd happened"], ["es", "Aviso de Node: Something odd happened"]] as const) {
     const h = await claudeUi([], locale); const stderr: string[] = []; const realWrite = process.stderr.write;
     try {
@@ -435,7 +567,7 @@ test.skipIf(process.platform === "win32")("while the Claude screen is open Node 
  * Shell only borrows the process's `warning` listeners while its screen is open: Node's own printer (the listener named `onWarning`) is taken out while it is open
  * and, on leaving, the listeners are exactly the ones there were before opening (same number, same functions, same order), with nothing of Shell's left hanging.
  */
-test.skipIf(process.platform === "win32")("the Claude screen takes Node's warning printer while it is open and gives back the very same warning listeners on leaving", async () => {
+test("the Claude screen takes Node's warning printer while it is open and gives back the very same warning listeners on leaving", async () => {
   const before = process.listeners("warning");
   expect(before.some(listener => listener.name === "onWarning")).toBe(true);
   const h = await claudeUi();
@@ -454,7 +586,7 @@ test.skipIf(process.platform === "win32")("the Claude screen takes Node's warnin
  * Claude Code for the plan usage again, `/f614:help` and `/f614:commands` open Shell's command menu, and `/f614:yes` and
  * `/f614:no` answer a pending permission (here none is pending, so they say so).
  */
-test.skipIf(process.platform === "win32")("Claude UI: each Shell command answers to /f614:<name> and does what the old name did", async () => {
+test("Claude UI: each Shell command answers to /f614:<name> and does what the old name did", async () => {
   const h = await claudeUi();
   try {
     h.terminal.output = ""; h.enter("/f614:status"); await tick();
@@ -480,7 +612,7 @@ test.skipIf(process.platform === "win32")("Claude UI: each Shell command answers
  * (`/refresh`, `/yes`, `/no`, `/commands`, `/forge614-status`, `/quit!`, `/exit!`) and `/thinking` (Claude Code has `/effort`
  * only) are unknown commands, and none of them becomes a chat prompt. It exists so that no silent alias survives the move.
  */
-test.skipIf(process.platform === "win32")("Claude UI: the old unprefixed Shell names are unknown commands and send nothing", async () => {
+test("Claude UI: the old unprefixed Shell names are unknown commands and send nothing", async () => {
   const h = await claudeUi();
   try {
     for (const name of ["/refresh", "/yes", "/no", "/commands", "/forge614-status", "/quit!", "/exit!", "/thinking"]) {
@@ -496,7 +628,7 @@ test.skipIf(process.platform === "win32")("Claude UI: the old unprefixed Shell n
  * they used to say «Claude Code doesn't allow /x from Shell yet». Neither is unknown, neither is sent to the model as a chat prompt, and when Claude Code itself
  * reports one of them in its command list, it is forwarded as Claude Code's own instead.
  */
-test.skipIf(process.platform === "win32")("Claude UI: /status and /help answer with what Shell has, send nothing, and are forwarded when Claude Code lists them", async () => {
+test("Claude UI: /status and /help answer with what Shell has, send nothing, and are forwarded when Claude Code lists them", async () => {
   const bare = await claudeUi();
   try {
     for (const name of ["/status", "/help"]) {
@@ -518,7 +650,7 @@ test.skipIf(process.platform === "win32")("Claude UI: /status and /help answer w
  * Before any message Claude Code's `/status` in Shell shows what Shell has without a turn: the folder, the account of the handshake, the permission mode, the memory
  * and the setting sources — and says that version, session and MCP servers appear after the first message. Spanish and English; the lines are Claude Code's Status panel's.
  */
-test.skipIf(process.platform === "win32")("Claude UI: /status before any message shows the account, folder and mode, and says what appears later", async () => {
+test("Claude UI: /status before any message shows the account, folder and mode, and says what appears later", async () => {
   for (const locale of ["en", "es"] as const) {
     const h = await claudeUi([], locale, undefined, 200, [], { email: "test@example.com", organization: "Acme", subscriptionType: "max", apiProvider: "firstParty" });
     try {
@@ -539,7 +671,7 @@ test.skipIf(process.platform === "win32")("Claude UI: /status before any message
  * After a turn has started, the SDK's `init` message gives Shell the Claude Code version, the session, where the API key comes from and the MCP servers with their
  * state; `/status` shows them — also while the turn is still open, as Claude Code's own does. The exact values come from the stand-in's message.
  */
-test.skipIf(process.platform === "win32")("Claude UI: /status shows the version, session, API key and MCP servers from the init message, also mid-turn", async () => {
+test("Claude UI: /status shows the version, session, API key and MCP servers from the init message, also mid-turn", async () => {
   const init = { type: "system", subtype: "init", session_id: "s-status-1", claude_code_version: "2.1.274", apiKeySource: "none", model: "claude-test", permissionMode: "default", cwd: process.cwd(),
     mcp_servers: [{ name: "forge614-engram", status: "connected", source: "user" }, { name: "github", status: "failed", source: "project" }], slash_commands: [], tools: [], output_style: "default", skills: [], plugins: [],
     uuid: "00000000-0000-4000-8000-000000000002" };
@@ -561,7 +693,7 @@ test.skipIf(process.platform === "win32")("Claude UI: /status shows the version,
  * After a confirmed `/logout` the account is gone from the session, so `/status` no longer shows the email, the organization or the plan of the account that was
  * disconnected (it kept them, because `reset()` only forgot the conversation). It still answers, with the folder and the mode.
  */
-test.skipIf(process.platform === "win32")("Claude UI: /status after a confirmed /logout shows no account data", async () => {
+test("Claude UI: /status after a confirmed /logout shows no account data", async () => {
   const h = await claudeUi([], "en", undefined, 200, [], { email: "test@example.com", organization: "Acme", subscriptionType: "max", apiProvider: "firstParty" });
   try {
     const t = getCatalog("en").claudePanels;
@@ -583,7 +715,7 @@ test.skipIf(process.platform === "win32")("Claude UI: /status after a confirmed 
  * `/new` forgets what the newest turn's `init` message reported, as it forgets the session: `/status` shows no Version and no MCP servers until the first message
  * of the new conversation brings them again (it kept the previous turn's). The values are the stand-in's own.
  */
-test.skipIf(process.platform === "win32")("Claude UI: /status after /new drops the version and MCP servers until the first message", async () => {
+test("Claude UI: /status after /new drops the version and MCP servers until the first message", async () => {
   const init = { type: "system", subtype: "init", session_id: "s-new-1", claude_code_version: "2.1.274", apiKeySource: "none", model: "claude-test", permissionMode: "default", cwd: process.cwd(),
     mcp_servers: [{ name: "forge614-engram", status: "connected", source: "user" }], slash_commands: [], tools: [], output_style: "default", skills: [], plugins: [],
     uuid: "00000000-0000-4000-8000-000000000003" };
@@ -618,7 +750,7 @@ test.skipIf(process.platform === "win32")("Claude UI: /status after /new drops t
  * `/help` lists the commands of the `/` menu with their description — Claude Code's own (from its list), the ones Shell carries out with Claude Code's meaning
  * (`/status` and `/help` among them now) — and the shortcuts Shell respects. It sends nothing to the model.
  */
-test.skipIf(process.platform === "win32")("Claude UI: /help lists the menu's commands with their description and the shortcuts, in both languages", async () => {
+test("Claude UI: /help lists the menu's commands with their description and the shortcuts, in both languages", async () => {
   const commands = [{ name: "compact", description: "Clear conversation history but keep a summary in context", argumentHint: "<instructions>" }];
   for (const locale of ["en", "es"] as const) {
     const h = await claudeUi(commands, locale, undefined, 200);
@@ -640,7 +772,7 @@ test.skipIf(process.platform === "win32")("Claude UI: /help lists the menu's com
  * and `/status` shows the MCP servers one group per line, the long group continuing under its first name. It runs the real screen at 60 columns, so the width the panels
  * are wrapped to is the width the chat has, not a guess.
  */
-test.skipIf(process.platform === "win32")("Claude UI: /help and /status wrap to the real width, under their own columns", async () => {
+test("Claude UI: /help and /status wrap to the real width, under their own columns", async () => {
   const commands = [{ name: "compact", description: "Clear conversation history but keep a summary in context", argumentHint: "" }];
   const names = Array.from({ length: 12 }, (_, index) => `server-${String(index + 1).padStart(2, "0")}`);
   const init = { type: "system", subtype: "init", session_id: "s-wrap-1", claude_code_version: "2.1.274", apiKeySource: "none", model: "claude-test", permissionMode: "default", cwd: process.cwd(),
@@ -682,7 +814,7 @@ test("the menu's Claude Code commands come from one function: Claude Code's own 
  * `/exit` and its alias `/quit` are Claude Code's own: they leave when idle and refuse while a turn runs, naming `/f614:quit`,
  * which asks before stopping anything. The old `/quit!` is gone (see the unknown-names test).
  */
-test.skipIf(process.platform === "win32")("Claude UI: /exit and /quit refuse while a turn runs and name /f614:quit, which asks first", async () => {
+test("Claude UI: /exit and /quit refuse while a turn runs and name /f614:quit, which asks first", async () => {
   const h = await claudeUi();
   h.enter("work please"); await tick();
   for (let i = 0; i < 30 && !h.plain().includes(getCatalog("en").chat.statusWorking); i++) await tick();
@@ -705,7 +837,7 @@ test.skipIf(process.platform === "win32")("Claude UI: /exit and /quit refuse whi
  * the real-account test of 1.12.0 showed that with Claude Code the owner typed `/quit`, which its menu does not list, and could not
  * see what leaving did. The `/` menu offers `/f614:quit` under FORGE614 with Claude Code.
  */
-test.skipIf(process.platform === "win32")("Claude UI: /f614:quit, Ctrl+C and Ctrl+D leave when idle and ask first while a turn runs, with No marked", async () => {
+test("Claude UI: /f614:quit, Ctrl+C and Ctrl+D leave when idle and ask first while a turn runs, with No marked", async () => {
   const question = { en: "Quit anyway? What is running will be stopped.", es: "¿Salir de todos modos? Se detendrá lo que está en curso." };
   const words = { en: { yes: "Yes", no: "No", yesKey: "y" }, es: { yes: "Sí", no: "No", yesKey: "s" } };
   const ways: [string, string[]][] = [["/f614:quit", ["/f614:quit", "\r"]], ["Ctrl+C", ["\x03"]], ["Ctrl+D", ["\x04"]]];
@@ -756,7 +888,7 @@ test.skipIf(process.platform === "win32")("Claude UI: /f614:quit, Ctrl+C and Ctr
  * test of 1.12.0 showed «five_hour (último reporte): no reportado | allowed | se reinicia: …» to the owner. The fake `claude` answers the
  * prompt with two rate-limit events, so the screen shows real reported values, not only the «not reported» defaults.
  */
-test.skipIf(process.platform === "win32")("Claude UI: /f614:status shows plain limit names, a translated status and a readable reset, in es and en", async () => {
+test("Claude UI: /f614:status shows plain limit names, a translated status and a readable reset, in es and en", async () => {
   const reset = Math.floor(new Date(2026, 9, 3, 17, 22, 0).getTime() / 1000);
   const events = [
     { status: "allowed", rateLimitType: "five_hour", utilization: 0.31, resetsAt: reset },
@@ -785,7 +917,7 @@ test.skipIf(process.platform === "win32")("Claude UI: /f614:status shows plain l
  * `/logout`, `/effort`, `/exit`, `/resume` stay as they are), and the FORGE614 group has only `/f614:` commands. It exists so
  * the menu keeps telling apart the assistant's commands from Shell's after the prefix.
  */
-test.skipIf(process.platform === "win32")("Claude UI: the / menu keeps the assistant's own names and lists only /f614: commands under FORGE614", async () => {
+test("Claude UI: the / menu keeps the assistant's own names and lists only /f614: commands under FORGE614", async () => {
   const h = await claudeUi();
   try {
     h.terminal.output = ""; h.terminal.input("/f614:"); await tick();
@@ -811,7 +943,7 @@ test.skipIf(process.platform === "win32")("Claude UI: the / menu keeps the assis
  * startup hook delivers, so it says «Shell pastes it»; with an Engines that reports the hook active, it says the assistant delivers it (the exact words in both languages are checked in `memory-source.test.ts`).
  * The check runs when the session opens (not at the first message), once for the whole run: an Engines installed after opening is not noticed until the next run.
  */
-test.skipIf(process.platform === "win32")("Claude UI: /f614:status says who delivers the memory, from the one detection of the run", async () => {
+test("Claude UI: /f614:status says who delivers the memory, from the one detection of the run", async () => {
   const h = await claudeUi();
   try {
     h.terminal.output = ""; h.enter("/f614:status"); await tick(); await tick();
@@ -821,7 +953,7 @@ test.skipIf(process.platform === "win32")("Claude UI: /f614:status says who deli
   const verification = { agentId: "claude-code", mcp: { path: "/x", present: true }, instructions: { supported: true, paths: [], present: true }, hook: { supported: true, path: "/x", present: true, dryRunOk: true, runtimeStatus: { kind: "runtime-observed" } }, overallStatus: "complete" };
   const installEngines = (forgeHome: string) => {
     const bin = join(forgeHome, "engines", "bin"); mkdirSync(bin, { recursive: true });
-    writeFileSync(join(bin, "forge614-engines"), `#!${process.execPath}\nconsole.log(JSON.stringify({schemaVersion:1,verification:${JSON.stringify(verification)}}));\n`, { mode: 0o755 });
+    writeTestExecutableSync(join(bin, "forge614-engines"), `console.log(JSON.stringify({schemaVersion:1,verification:${JSON.stringify(verification)}}));\n`);
   };
   const late = await claudeUi();
   try {
@@ -842,20 +974,25 @@ test.skipIf(process.platform === "win32")("Claude UI: /f614:status says who deli
  * The sidebar on the Claude Code screen, with real SGR mouse sequences and a fake `claude`: the width saved in Shell's preferences (50) is what the screen opens with (the grip is at
  * columns 68–69 of 120, so the resize pointer is asked for there), clicking «hide ›» in the sidebar's first row hides it and saves `sidebarHidden`, and the header then offers «‹ show sidebar».
  */
-test.skipIf(process.platform === "win32")("Claude UI opens with the saved sidebar width and hides it with the hide button, saving the choice", async () => {
+test("Claude UI opens with the saved sidebar width and hides it with the hide button, saving the choice", async () => {
   const root = await mkdtemp(join(tmpdir(), "forge614-sidebar-ui-"));
-  const executable = join(root, "claude");
+  const executable = testExecutablePath(root);
   const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
   const previousForgeHome = process.env.FORGE614_HOME;
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
   process.env.FORGE614_HOME = join(root, "forge614-home");
+  process.env.HOME = join(root, "home");
+  process.env.USERPROFILE = join(root, "home");
+  process.env.CLAUDE_CONFIG_DIR = join(root, "claude-config");
   const preferences = () => JSON.parse(readFileSync(join(root, "forge614-home", "shell", "preferences.json"), "utf8"));
   try {
     mkdirSync(join(root, "forge614-home", "shell"), { recursive: true });
     writeFileSync(join(root, "forge614-home", "shell", "preferences.json"), JSON.stringify({ sidebarWidth: 50 }));
-    await writeFile(executable, `#!${process.execPath}
-if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
-else { require('readline').createInterface({input:process.stdin}).on('line',line=>{ const msg=JSON.parse(line); if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}})); }); }`, { mode: 0o755 });
+    await writeTestExecutable(executable, `if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
+else { require('readline').createInterface({input:process.stdin}).on('line',line=>{ const msg=JSON.parse(line); if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}})); }); }`);
     ui = startClaudeUI([], executable, terminal); await tick();
     for (let i = 0; i < 60 && !terminal.output.includes("Connected"); i++) await tick();
     const ew = "\x1b]22;ew-resize\x07";
@@ -867,8 +1004,11 @@ else { require('readline').createInterface({input:process.stdin}).on('line',line
     expect(preferences()).toMatchObject({ sidebarWidth: 50, sidebarHidden: true });
     expect(stripVTControlCharacters(terminal.output)).toContain(getCatalog("en").sidebarControls.show);
   } finally {
-    enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true });
+    enter("/f614:quit"); await ui; await tick(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
+    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
   }
 });
 
@@ -887,27 +1027,32 @@ function screenRows(output: string): string[] {
  * opener exactly that address, clicking the path gives the path opener the file, and when the openers fail the chat gets one warning line with the catalog's text and the address or path.
  * It exists because the unit tests build the screen by hand; this one proves Claude Code's screen wires the links, the clicks and the warning, as Codex's does.
  */
-test.skipIf(process.platform === "win32")("links in a Claude Code answer open with a click and a failure is a warning line", async () => {
+test("links in a Claude Code answer open with a click and a failure is a warning line", async () => {
   const root = await mkdtemp(join(tmpdir(), "forge614-links-ui-"));
-  const executable = join(root, "claude");
+  const executable = testExecutablePath(root);
   const file = join(root, "notes.txt"); writeFileSync(file, "x");
   const terminal = new TestTerminal(); terminal.columns = 200; let ui: Promise<void> | undefined;
   const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
   const previousForgeHome = process.env.FORGE614_HOME;
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
   process.env.FORGE614_HOME = join(root, "forge614-home");
+  process.env.HOME = join(root, "home");
+  process.env.USERPROFILE = join(root, "home");
+  process.env.CLAUDE_CONFIG_DIR = join(root, "claude-config");
   const opened = { web: [] as string[], path: [] as string[] };
   let works = true;
   const tools = { openWeb: async (url: string) => { opened.web.push(url); return works; }, openPath: async (path: string) => { opened.path.push(path); return works; } };
   const answer = `Docs: https://example.com/docs and the notes ${file}:3`;
   try {
-    await writeFile(executable, `#!${process.execPath}
-if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
+    await writeTestExecutable(executable, `if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
 else { require('readline').createInterface({input:process.stdin}).on('line',line=>{ const msg=JSON.parse(line);
   if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
   if(msg.type==='user') {
     console.log(JSON.stringify({type:'assistant',message:{role:'assistant',content:[{type:'text',text:${JSON.stringify(answer)}}]},parent_tool_use_id:null,session_id:'s1',uuid:'a-'+Date.now()}));
     console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,duration_ms:1,duration_api_ms:1,num_turns:1,result:'ok',session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],user_message_uuids:[msg.uuid],uuid:'result-'+Date.now()}));
-  } }); }`, { mode: 0o755 });
+  } }); }`);
     ui = startClaudeUI([], executable, terminal, undefined, "en", tools); await tick();
     for (let i = 0; i < 60 && !screenRows(terminal.output).join("\n").includes(getCatalog("en").chat.statusReady); i++) await tick();
     enter("hello"); await tick();
@@ -924,8 +1069,11 @@ else { require('readline').createInterface({input:process.stdin}).on('line',line
     expect(text).toContain(getCatalog("en").chat.linkOpenFailed({ target: "https://example.com/docs" }));
     expect(text).toContain(getCatalog("en").chat.linkOpenFailed({ target: file }));
   } finally {
-    enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true });
+    enter("/f614:quit"); await ui; await tick(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
+    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
   }
 });
 
@@ -964,7 +1112,7 @@ const probedServers = [{ name: "forge614-engram", status: "connected" }, { name:
  * shows «⇌ 2 MCP ▴» (two connected, one failed), and nothing was sent to the model (no `prompt:` line reaches the fake `claude`). A click on it opens the panel with the three servers, each with its state, the
  * Forge614 one marked; the same click closes it, and so does Esc.
  */
-test.skipIf(process.platform === "win32")("Claude UI: the bottom bar shows «⇌ 2 MCP ▴» with no message sent and its click opens the servers' panel", () => inFixedFolder(async () => {
+test("Claude UI: the bottom bar shows «⇌ 2 MCP ▴» with no message sent and its click opens the servers' panel", () => inFixedFolder(async () => {
   const h = await claudeUi([], "en", undefined, 120, [mcpInit], undefined, undefined, undefined, undefined, probedServers);
   try {
     for (let i = 0; i < 60 && !h.plain().includes("⇌ 2 MCP ▴"); i++) await tick();
@@ -991,7 +1139,7 @@ test.skipIf(process.platform === "win32")("Claude UI: the bottom bar shows «⇌
  * The open query's first answer is only the first word: when the person sends a message, that message's `init` rules (here it reports two connected where the query's answer knew one), and `/new` does not clear the list — it is
  * Claude Code's configuration, not the conversation's — so the bar keeps showing an MCP indicator through it, until the query opened again for the new conversation answers (the fake answers its one server every time it opens).
  */
-test.skipIf(process.platform === "win32")("Claude UI: a message's init rules over the opening answer, and /new keeps the MCP indicator", () => inFixedFolder(async () => {
+test("Claude UI: a message's init rules over the opening answer, and /new keeps the MCP indicator", () => inFixedFolder(async () => {
   const h = await claudeUi([], "en", undefined, 120, [mcpInit], undefined, undefined, undefined, undefined, [{ name: "forge614-engram", status: "connected" }]);
   try {
     for (let i = 0; i < 60 && !h.plain().includes("⇌ 1 MCP ▴"); i++) await tick();
@@ -1013,7 +1161,7 @@ test.skipIf(process.platform === "win32")("Claude UI: a message's init rules ove
  * A folder whose path is 150 characters long used to push the MCP indicator and the version off a wide bar. Here the real screen opens in such a folder at 120 columns: the folder is cut with «…» and «F614 ▴», «⇌ 2 MCP ▴» and the
  * version are all on the line. The folder is made in the test's own temporary directory (a path of that length in a fixed place), not in the repository.
  */
-test.skipIf(process.platform === "win32")("Claude UI: with a 150-character folder the bar cuts the folder with «…» and keeps «F614 ▴», the MCP indicator and the version", async () => {
+test("Claude UI: with a 150-character folder the bar cuts the folder with «…» and keeps «F614 ▴», the MCP indicator and the version", async () => {
   const previous = process.cwd();
   const base = await mkdtemp(join(tmpdir(), "forge614-long-folder-"));
   const folder = join(base, "a".repeat(Math.max(1, 150 - base.length - 1)));
@@ -1035,7 +1183,7 @@ test.skipIf(process.platform === "win32")("Claude UI: with a 150-character folde
  * asks Engram for its startup context then, before any message) — here there is no Engram under the test's own $FORGE614_HOME, so the context does not arrive and the row says «not in use». The reader is called once
  * however often the panel is opened.
  */
-test.skipIf(process.platform === "win32")("Claude UI: the Forge614 panel shows the three versions and the memory state, reading the versions once", async () => {
+test("Claude UI: the Forge614 panel shows the three versions and the memory state, reading the versions once", async () => {
   let reads = 0;
   const versions = async (): Promise<EcosystemVersions> => { reads++; return { engines: { state: "version", version: "1.16.0" }, engram: { state: "version", version: "1.8.6" } }; };
   const h = await claudeUi([], "en", undefined, 120, [mcpInit], undefined, undefined, versions, "1.13.0");
@@ -1062,7 +1210,7 @@ test.skipIf(process.platform === "win32")("Claude UI: the Forge614 panel shows t
 /**
  * Esc with a panel open only closes the panel: it does not reach the writing box, so a menu that was open in it (here the command list) stays open, where Esc would have closed it. A second Esc is the box's again.
  */
-test.skipIf(process.platform === "win32")("Claude UI: Esc with a panel open closes only the panel and leaves the open menu alone", async () => {
+test("Claude UI: Esc with a panel open closes only the panel and leaves the open menu alone", async () => {
   const h = await claudeUi([], "en", undefined, 120, [mcpInit], undefined, undefined, async () => ({ engines: { state: "missing" }, engram: { state: "missing" } }), "1.13.0");
   try {
     const title = getCatalog("en").chat.commandsFallbackTitle;
@@ -1083,7 +1231,7 @@ test.skipIf(process.platform === "win32")("Claude UI: Esc with a panel open clos
  * Claude Code is one open conversation: a message typed while it is still answering is drawn at once and handed to Claude Code (which takes it at its next tool boundary), not refused with «a turn is already
  * running». Both messages reach the same process, in order, and the box keeps saying «Working» until the turn ends; `/f614:stop` then ends it with an `interrupt` and no new process starts.
  */
-test.skipIf(process.platform === "win32")("Claude UI: a message typed mid-answer is drawn and sent to the same open Claude Code; /f614:stop interrupts it without closing it", async () => {
+test("Claude UI: a message typed mid-answer is drawn and sent to the same open Claude Code; /f614:stop interrupts it without closing it", async () => {
   const h = await claudeUi();
   try {
     const prompts = () => h.calls().filter(line => line.startsWith("prompt:"));
@@ -1094,7 +1242,7 @@ test.skipIf(process.platform === "win32")("Claude UI: a message typed mid-answer
     expect(prompts()).toEqual(['prompt:"first message"', 'prompt:"second message, while the first is answered"']);
     expect(h.plain()).toContain("second message, while the first is answered");
     expect(h.plain()).not.toContain(getCatalog("en").chat.waitForCurrentOperation);
-    expect(h.plain()).toContain(getCatalog("en").chat.statusWorking);
+    expect(await snapshot(h)).toContain(getCatalog("en").chat.statusWorking);
     // One process got both messages.
     const pids = h.calls().filter(line => line.startsWith("pid:"));
     expect(pids).toHaveLength(2);
@@ -1117,7 +1265,7 @@ test.skipIf(process.platform === "win32")("Claude UI: a message typed mid-answer
  * Leaving Shell closes Claude Code: the process the SDK started for the conversation ends with the screen, instead of staying behind with its MCP servers (it used to be left to the SDK to notice that Shell was gone).
  * The fake `claude` writes `closed` when its input closes or it is terminated.
  */
-test.skipIf(process.platform === "win32")("Claude UI: leaving Shell closes the Claude Code that was kept open", async () => {
+test("Claude UI: leaving Shell closes the Claude Code that was kept open", async () => {
   const h = await claudeUi();
   try {
     expect(h.calls()).not.toContain("closed");
@@ -1133,7 +1281,7 @@ test.skipIf(process.platform === "win32")("Claude UI: leaving Shell closes the C
  * until it was done. Claude Code now opens in the background when the account is connected and asks Engram then: here Engram's answer waits for the test and the message is typed as soon as Engram was asked,
  * while it is still being waited for — the message must already be drawn.
  */
-test.skipIf(process.platform === "win32")("Claude UI: the first message is drawn before Engram's startup context answers", async () => {
+test("Claude UI: the first message is drawn before Engram's startup context answers", async () => {
   let asked = false; let answered = false; let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const slow = async () => { asked = true; await gate; answered = true; return { available: false as const, reason: "slow" }; };
@@ -1168,7 +1316,7 @@ async function withBackgroundTask(locale: "en" | "es" = "en", sessions?: Paramet
 }
 const pidsOf = (h: ClaudeHarness) => h.calls().filter(line => line.startsWith("pid:"));
 
-test.skipIf(process.platform === "win32")("Claude UI: a background task stays after the turn's result — the box says «Ready · 1 in the background», the panel and the bottom bar's count keep it", async () => {
+test("Claude UI: a background task stays after the turn's result — the box says «Ready · 1 in the background», the panel and the bottom bar's count keep it", async () => {
   for (const locale of ["en", "es"] as const) {
     const h = await withBackgroundTask(locale);
     try {
@@ -1182,7 +1330,7 @@ test.skipIf(process.platform === "win32")("Claude UI: a background task stays af
   }
 });
 
-test.skipIf(process.platform === "win32")("Claude UI: a finished background task draws a card with its summary and state, and the automatic turn that follows is drawn and keeps the box on «Working» until its result", async () => {
+test("Claude UI: a finished background task draws a card with its summary and state, and the automatic turn that follows is drawn and keeps the box on «Working» until its result", async () => {
   const h = await withBackgroundTask();
   try {
     const t = getCatalog("en");
@@ -1208,7 +1356,7 @@ test.skipIf(process.platform === "win32")("Claude UI: a finished background task
   } finally { await h.finish(); }
 });
 
-test.skipIf(process.platform === "win32")("Claude UI: a task launched by a subagent draws no card, one of the top level does, in the words of each state", async () => {
+test("Claude UI: a task launched by a subagent draws no card, one of the top level does, in the words of each state", async () => {
   const h = await withBackgroundTask();
   try {
     const t = getCatalog("en").backgroundActivity;
@@ -1237,7 +1385,7 @@ test.skipIf(process.platform === "win32")("Claude UI: a task launched by a subag
   } finally { await h.finish(); }
 });
 
-test.skipIf(process.platform === "win32")("Claude UI: when Claude Code dies the tasks that were running read «interrupted» and the box no longer says there are tasks", async () => {
+test("Claude UI: when Claude Code dies the tasks that were running read «interrupted» and the box no longer says there are tasks", async () => {
   const h = await withBackgroundTask();
   try {
     const t = getCatalog("en");
@@ -1253,7 +1401,7 @@ test.skipIf(process.platform === "win32")("Claude UI: when Claude Code dies the 
   } finally { await h.finish(); }
 });
 
-test.skipIf(process.platform === "win32")("Claude UI: the notice Claude Code gives on resuming («N background agents didn't finish…») is a notice card, not a message of the person", async () => {
+test("Claude UI: the notice Claude Code gives on resuming («N background agents didn't finish…») is a notice card, not a message of the person", async () => {
   const h = await claudeUi();
   try {
     const t = getCatalog("en");
@@ -1278,7 +1426,7 @@ const cutActions: { name: string; run: (h: ClaudeHarness) => void; question: (t:
   { name: "/f614:stop", run: h => h.enter("/f614:stop"), question: t => t.claudeChat.backgroundStopQuestion({ count: 1 }) },
 ];
 
-test.skipIf(process.platform === "win32")("Claude UI: leaving, /new, /logout, a new effort and /f614:stop ask first when tasks run in the background, with «No» marked, and «No» (Enter or Esc) cuts nothing", async () => {
+test("Claude UI: leaving, /new, /logout, a new effort and /f614:stop ask first when tasks run in the background, with «No» marked, and «No» (Enter or Esc) cuts nothing", async () => {
   for (const action of cutActions) {
     const h = await withBackgroundTask();
     try {
@@ -1300,7 +1448,7 @@ test.skipIf(process.platform === "win32")("Claude UI: leaving, /new, /logout, a 
   }
 });
 
-test.skipIf(process.platform === "win32")("Claude UI: answering «Yes» cuts the tasks: /new closes Claude Code and opens another with no resume; /f614:stop interrupts", async () => {
+test("Claude UI: answering «Yes» cuts the tasks: /new closes Claude Code and opens another with no resume; /f614:stop interrupts", async () => {
   const t = getCatalog("en");
   const yes = (h: ClaudeHarness) => { h.terminal.input("\x1b[B"); h.terminal.input("\r"); };
   const stopped = await withBackgroundTask();
@@ -1325,7 +1473,7 @@ test.skipIf(process.platform === "win32")("Claude UI: answering «Yes» cuts the
   } finally { await fresh.finish(); }
 });
 
-test.skipIf(process.platform === "win32")("Claude UI: /resume asks before cutting tasks, after a conversation was chosen; «No» keeps everything", async () => {
+test("Claude UI: /resume asks before cutting tasks, after a conversation was chosen; «No» keeps everything", async () => {
   const t = getCatalog("en");
   const sessions = { listSessions: async () => [{ sessionId: "saved-1", summary: "Una conversación guardada", lastModified: 1_700_000_000_000, cwd: process.cwd(), firstPrompt: "hola" }], getSessionMessages: async () => [] } as unknown as Parameters<typeof startClaudeUI>[8];
   const h = await withBackgroundTask("en", sessions);
@@ -1344,7 +1492,7 @@ test.skipIf(process.platform === "win32")("Claude UI: /resume asks before cuttin
   } finally { await h.finish(); }
 });
 
-test.skipIf(process.platform === "win32")("Claude UI: with no task running nothing is asked: leaving, /new and /f614:stop go ahead as before", async () => {
+test("Claude UI: with no task running nothing is asked: leaving, /new and /f614:stop go ahead as before", async () => {
   const h = await claudeUi();
   try {
     const t = getCatalog("en");
@@ -1362,7 +1510,7 @@ test.skipIf(process.platform === "win32")("Claude UI: with no task running nothi
 // --- Round 2: the text of a stop, the inner steps of a helper and the up-arrow history ---
 
 /** When the person stopped the turn, Claude Code answers with an error result whose name is technical; the chat says «You stopped the turn.» instead, in the person's language. */
-test.skipIf(process.platform === "win32")("Claude UI: stopping a turn says «Detuviste el turno.» (es) or «You stopped the turn.» (en), never the technical name of Claude Code's result", async () => {
+test("Claude UI: stopping a turn says «Detuviste el turno.» (es) or «You stopped the turn.» (en), never the technical name of Claude Code's result", async () => {
   const words = { es: "Detuviste el turno.", en: "You stopped the turn." } as const;
   for (const locale of ["es", "en"] as const) {
     const h = await claudeUi([], locale);
@@ -1379,7 +1527,7 @@ test.skipIf(process.platform === "win32")("Claude UI: stopping a turn says «Det
   }
 });
 
-test.skipIf(process.platform === "win32")("Claude UI: a turn that ends for another reason (Claude Code dies) still says «Turn stopped: …» with its message, not «You stopped the turn.»", async () => {
+test("Claude UI: a turn that ends for another reason (Claude Code dies) still says «Turn stopped: …» with its message, not «You stopped the turn.»", async () => {
   const h = await claudeUi();
   try {
     const t = getCatalog("en");
@@ -1396,7 +1544,7 @@ test.skipIf(process.platform === "win32")("Claude UI: a turn that ends for anoth
  * In Claude Code itself the main chat does not draw what a subagent does inside: its tool calls and their results (events with a `parent_tool_use_id`), nor its progress notices. The helper's own line
  * («Agent») is the main assistant's tool call and stays; the same events with no parent are the main assistant's and are drawn.
  */
-test.skipIf(process.platform === "win32")("Claude UI: the tools of a subagent (events with a parent_tool_use_id) draw nothing in the main chat, the same events of the main assistant do", async () => {
+test("Claude UI: the tools of a subagent (events with a parent_tool_use_id) draw nothing in the main chat, the same events of the main assistant do", async () => {
   const h = await claudeUi();
   try {
     const t = getCatalog("en");
@@ -1437,7 +1585,7 @@ const promptsOf = (h: ClaudeHarness) => h.calls().filter(line => line.startsWith
 const waitForPrompts = async (h: ClaudeHarness, count: number) => { for (let i = 0; i < 60 && promptsOf(h).length < count; i++) await tick(); };
 const UP = "\x1b[A"; const DOWN = "\x1b[B";
 
-test.skipIf(process.platform === "win32")("Claude UI: ↑ with the box empty brings the last message, ↑ again the one before, ↓ goes forward and past the newest returns what was being written", async () => {
+test("Claude UI: ↑ with the box empty brings the last message, ↑ again the one before, ↓ goes forward and past the newest returns what was being written", async () => {
   const h = await claudeUi();
   try {
     h.enter("uno"); await waitForPrompts(h, 1);
@@ -1455,7 +1603,7 @@ test.skipIf(process.platform === "win32")("Claude UI: ↑ with the box empty bri
   } finally { await h.finish(); }
 });
 
-test.skipIf(process.platform === "win32")("Claude UI: what answers a question (/f614:yes, /f614:no) does not enter the history, a command does", async () => {
+test("Claude UI: what answers a question (/f614:yes, /f614:no) does not enter the history, a command does", async () => {
   const h = await claudeUi();
   try {
     h.enter("uno"); await waitForPrompts(h, 1);
@@ -1475,7 +1623,7 @@ test.skipIf(process.platform === "win32")("Claude UI: what answers a question (/
 });
 
 /** The history is kept between runs, per project folder: the file is `$FORGE614_HOME/shell/history.jsonl` with permissions 600 and a line {cwd,text,at} per entry. */
-test.skipIf(process.platform === "win32")("Claude UI: the history is saved per folder (history.jsonl, 600) and comes back on opening the chat again in the same folder, not in another", async () => {
+test("Claude UI: the history is saved per folder (history.jsonl, 600) and comes back on opening the chat again in the same folder, not in another", async () => {
   const here = process.cwd();
   const elsewhere = await mkdtemp(join(tmpdir(), "forge614-history-elsewhere-"));
   let saved = "";
@@ -1484,7 +1632,12 @@ test.skipIf(process.platform === "win32")("Claude UI: the history is saved per f
     first.enter("mensaje que se guarda"); await waitForPrompts(first, 1);
     const file = join(process.env.FORGE614_HOME!, "shell", "history.jsonl");
     saved = readFileSync(file, "utf8");
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+    } else {
+      expect(file.startsWith(process.env.FORGE614_HOME!)).toBe(true);
+      expect(existsSync(file)).toBe(true);
+    }
   } finally { await first.finish(); }
   const entries = saved.split("\n").filter(Boolean).map(line => JSON.parse(line));
   expect(entries).toHaveLength(1);
@@ -1506,10 +1659,10 @@ test.skipIf(process.platform === "win32")("Claude UI: the history is saved per f
       for (let i = 0; i < 8; i++) await tick();
       expect(promptsOf(other)).toEqual([]);
     } finally { await other.finish(); }
-  } finally { process.chdir(here); await rm(elsewhere, { recursive: true, force: true }); }
+  } finally { process.chdir(here); await rm(elsewhere, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 
-test.skipIf(process.platform === "win32")("Claude UI: a history file that cannot be used never breaks the chat or shows an error", async () => {
+test("Claude UI: a history file that cannot be used never breaks the chat or shows an error", async () => {
   // The history path is a folder: it can be neither read nor written as a file.
   const h = await claudeUi([], "en", undefined, 120, [], undefined, forgeHome => { mkdirSync(join(forgeHome, "shell", "history.jsonl"), { recursive: true }); });
   try {

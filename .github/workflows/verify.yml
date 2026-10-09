@@ -80,6 +80,8 @@ jobs:
           src/ui/basic/codex-thread-commands.test.ts
           src/ui/basic/codex-commands.test.ts
         timeout-minutes: 3
+      - run: bun test src/ui/basic/claude.test.ts
+        timeout-minutes: 5
 
       - name: PowerShell syntax check
         shell: pwsh

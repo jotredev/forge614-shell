@@ -319,4 +319,9 @@ test("a folder longer than 48 characters keeps its last whole folders behind an 
   expect(formatClaudePermission("Bash", { command: "ls" }, { locale: "en", cwd: exact })).toBe(`Run a command\n\nFolder: ${exact}\n\n    ls`);
   const oneName = `/${"y".repeat(60)}`;
   expect(formatClaudePermission("Bash", { command: "ls" }, { locale: "en", cwd: oneName })).toBe(`Run a command\n\nFolder: …${"y".repeat(47)}\n\n    ls`);
+  // En Windows con contrabarras (\), conserva las carpetas completas detrás de «…» sin cortarlas a la mitad.
+  const winLong = `C:\\${[segment, segment, segment, segment, segment, segment, "last"].join("\\")}`;
+  const winCut = `…\\${[segment, segment, segment, "last"].join("\\")}`;
+  expect(formatClaudePermission("Bash", { command: "ls" }, { locale: "en", cwd: winLong })).toBe(`Run a command\n\nFolder: ${winCut}\n\n    ls`);
+  expect(formatClaudePermission("Bash", { command: "ls" }, { locale: "es", cwd: winLong })).toBe(`Ejecutar un comando\n\nCarpeta: ${winCut}\n\n    ls`);
 });
