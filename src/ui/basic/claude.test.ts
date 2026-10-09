@@ -468,7 +468,7 @@ else {
   const inbox=${JSON.stringify(marker + ".inbox")};
   setInterval(()=>{ try { if(!fs.existsSync(inbox)) return; const text=fs.readFileSync(inbox,'utf8'); fs.unlinkSync(inbox); for(const l of text.split('\\n').filter(Boolean)) { const e=JSON.parse(l); if(e.__exit!==undefined) process.exit(e.__exit); console.log(l); } } catch {} },15);
   process.on('SIGTERM',()=>{ markClosed(); process.exit(0); });
-  const rl=require('readline').createInterface({input:process.stdin}); rl.on('close',()=>markClosed());
+  const rl=require('readline').createInterface({input:process.stdin}); rl.on('close',()=>{ markClosed(); process.exit(0); });
   rl.on('line',line=>{
     const msg=JSON.parse(line);
     if(msg.type==='control_request' && msg.request.subtype==='interrupt') { fs.appendFileSync(${JSON.stringify(marker)},'interrupt\\n'); console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{still_queued:[]}}})); const uuids=open.splice(0); if(uuids.length) console.log(JSON.stringify({type:'result',subtype:'error_during_execution',is_error:true,duration_ms:1,duration_api_ms:1,num_turns:1,errors:[],session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],user_message_uuids:uuids,uuid:'result-'+Date.now()})); }
@@ -490,11 +490,14 @@ else {
     if (byCtrlC) { terminal.input("\x1b"); terminal.input("\x03"); } else enter("/f614:quit");
     await tick();
     if (plain().includes("▎ No") || plain().includes("▎ 1. No")) { terminal.input("\x1b[B"); terminal.input("\r"); }
-    await ui; await tick(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
-    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
-    if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
-    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+    try {
+      await ui; await tick(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    } finally {
+      if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+      if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+      if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
+      if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+    }
   };
   /** Hands events to the fake `claude`, which writes them out of turn (no message of the person asked for them). */
   const emit = (...events: object[]) => { writeFileSync(`${marker}.inbox.tmp`, events.map(event => JSON.stringify(event)).join("\n") + "\n"); renameSync(`${marker}.inbox.tmp`, `${marker}.inbox`); };
