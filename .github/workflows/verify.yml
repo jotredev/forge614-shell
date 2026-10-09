@@ -101,6 +101,22 @@ jobs:
           src/ui/startup/multi-select.test.ts
           src/ui/startup/masked-input.test.ts
         timeout-minutes: 3
+      - run: >-
+          bun test
+          src/engines/logout.test.ts
+          src/engines/mcp-labels.test.ts
+          src/engines/mcp-status.test.ts
+          src/engines/memory-source.test.ts
+          src/engines/permission-text.test.ts
+          src/engines/pi/launcher.test.ts
+          src/engines/process.test.ts
+          src/engines/work-mode.test.ts
+          src/engines/codex/commands.test.ts
+          src/engines/codex/recap.test.ts
+          src/engines/codex/side.test.ts
+          src/engines/codex/subagents.test.ts
+          src/engines/codex/transcript.test.ts
+        timeout-minutes: 3
 
       - name: PowerShell syntax check
         shell: pwsh
