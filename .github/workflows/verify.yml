@@ -82,6 +82,25 @@ jobs:
         timeout-minutes: 3
       - run: bun test src/ui/basic/claude.test.ts
         timeout-minutes: 5
+      - run: >-
+          bun test
+          src/app/language-gate.test.ts
+          src/app/options.test.ts
+          src/app/language-command.test.ts
+          src/app/startup-spinner.test.ts
+          src/app/native-chat.test.ts
+          src/i18n/status-text.test.ts
+          src/i18n/command-prefix.test.ts
+          src/i18n/index.test.ts
+          src/ui/startup/engram-init.test.ts
+          src/ui/startup/engine-picker.test.ts
+          src/ui/startup/visual-picker.test.ts
+          src/ui/startup/frame.test.ts
+          src/ui/startup/group-picker.test.ts
+          src/ui/startup/language-picker.test.ts
+          src/ui/startup/multi-select.test.ts
+          src/ui/startup/masked-input.test.ts
+        timeout-minutes: 3
 
       - name: PowerShell syntax check
         shell: pwsh

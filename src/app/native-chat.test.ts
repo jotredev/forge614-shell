@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { join } from "node:path";
 import { codexStartupContext, createCodexSession } from "./native-chat.ts";
 import { FixtureRpc } from "../../tests/support/rpc-fixture.ts";
 import { ShellError } from "../shell-error.ts";
@@ -19,13 +20,22 @@ const unboundPayload = JSON.stringify({
   project: { status: "unbound" },
 });
 
+// En Windows el ejecutable resuelto por locateEngramBinary lleva extensión .exe y separadores nativos; en Unix va sin sufijo.
+const expectedEngramBinaryName = process.platform === "win32" ? "forge614-engram.exe" : "forge614-engram";
+
 test("codexStartupContext resolves the Engram binary under a custom FORGE614_HOME from the real process env", async () => {
   await withEnvVar("FORGE614_HOME", "/custom/forge-for-codex-test", async () => {
     const calls: string[] = [];
     const result = await codexStartupContext("/some/project", {
       run: async (command, args) => { calls.push(command); void args; return { status: 0, stdout: unboundPayload, stderr: "" }; },
     });
-    expect(calls).toEqual(["/custom/forge-for-codex-test/engram/bin/forge614-engram"]);
+    const expectedBinary = join("/custom/forge-for-codex-test", "engram", "bin", expectedEngramBinaryName);
+    expect(calls).toEqual([expectedBinary]);
+    if (process.platform === "win32") {
+      expect(calls[0]?.endsWith(".exe")).toBe(true);
+    } else {
+      expect(calls[0]?.endsWith(".exe")).toBe(false);
+    }
     expect(result.available).toBe(true);
   });
 });
@@ -37,7 +47,13 @@ test("codexStartupContext falls back to the standard ~/.forge614 path with no FO
       home: "/Users/tester",
       run: async (command, args) => { calls.push(command); void args; return { status: 0, stdout: unboundPayload, stderr: "" }; },
     });
-    expect(calls).toEqual(["/Users/tester/.forge614/engram/bin/forge614-engram"]);
+    const expectedBinary = join("/Users/tester", ".forge614", "engram", "bin", expectedEngramBinaryName);
+    expect(calls).toEqual([expectedBinary]);
+    if (process.platform === "win32") {
+      expect(calls[0]?.endsWith(".exe")).toBe(true);
+    } else {
+      expect(calls[0]?.endsWith(".exe")).toBe(false);
+    }
     expect(result.available).toBe(true);
   });
 });
@@ -49,7 +65,13 @@ test("codexStartupContext always uses Shell's real process env, even overriding 
       env: { FORGE614_HOME: "/should-be-ignored" } as NodeJS.ProcessEnv,
       run: async (command, args) => { calls.push(command); void args; return { status: 0, stdout: unboundPayload, stderr: "" }; },
     });
-    expect(calls).toEqual(["/real-shell-forge-home/engram/bin/forge614-engram"]);
+    const expectedBinary = join("/real-shell-forge-home", "engram", "bin", expectedEngramBinaryName);
+    expect(calls).toEqual([expectedBinary]);
+    if (process.platform === "win32") {
+      expect(calls[0]?.endsWith(".exe")).toBe(true);
+    } else {
+      expect(calls[0]?.endsWith(".exe")).toBe(false);
+    }
   });
 });
 
