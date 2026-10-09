@@ -13,6 +13,16 @@ test("copyToClipboard() hands the text to pbcopy on macOS", async () => {
   expect(calls).toEqual([["/usr/bin/pbcopy", [], "line one\nline 'two' & $three"]]);
 });
 
+test("copyToClipboard() hands the text to powershell.exe on Windows", async () => {
+  const calls: [string, string[], string][] = [];
+  await copyToClipboard("line one\nline 'two' & $three", "win32", async (command, args, input) => { calls.push([command, args, input]); });
+  expect(calls).toEqual([[
+    "powershell.exe",
+    ["-NoProfile", "-Command", "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"],
+    "line one\nline 'two' & $three",
+  ]]);
+});
+
 /** Elsewhere Shell has no built-in way to copy without installing something, so it says so instead of pretending. */
 test("copyToClipboard() on another system reports that there is no clipboard", async () => {
   let ran = false;
@@ -60,8 +70,8 @@ test("copySelectionText() copies with pbcopy on macOS and writes no OSC 52 when 
   expect(double.written).toEqual([]);
 });
 
-/** On Linux `wl-copy` goes first and `xclip -selection clipboard` only when `wl-copy` is not there; on Windows it is `clip`. */
-test("copySelectionText() tries wl-copy then xclip on Linux, and clip on Windows", async () => {
+/** En Linux se intenta wl-copy y después xclip; en Windows PowerShell lee UTF-8 desde stdin. */
+test("copySelectionText() tries wl-copy then xclip on Linux, and powershell.exe on Windows", async () => {
   const both = clipboardDouble({ "wl-copy": null, xclip: 0 });
   expect(await copySelectionText("hola", both.options("linux"))).toBe(true);
   expect(both.calls).toEqual([["wl-copy", [], "hola"], ["xclip", ["-selection", "clipboard"], "hola"]]);
@@ -69,10 +79,26 @@ test("copySelectionText() tries wl-copy then xclip on Linux, and clip on Windows
   const wayland = clipboardDouble({ "wl-copy": 0 });
   expect(await copySelectionText("hola", wayland.options("linux"))).toBe(true);
   expect(wayland.calls).toEqual([["wl-copy", [], "hola"]]);
-  const windows = clipboardDouble({ clip: 0 });
-  expect(await copySelectionText("hola", windows.options("win32"))).toBe(true);
-  expect(windows.calls).toEqual([["clip", [], "hola"]]);
-  expect(windows.written).toEqual([]);
+
+  const windowsPs = clipboardDouble({ "powershell.exe": 0 });
+  expect(await copySelectionText("hola", windowsPs.options("win32"))).toBe(true);
+  expect(windowsPs.calls).toEqual([[
+    "powershell.exe",
+    ["-NoProfile", "-Command", "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"],
+    "hola",
+  ]]);
+  expect(windowsPs.written).toEqual([]);
+
+  const windowsFallback = clipboardDouble({ "powershell.exe": null });
+  expect(await copySelectionText("ñandú → 日本", windowsFallback.options("win32"))).toBe(true);
+  expect(windowsFallback.calls).toEqual([
+    [
+      "powershell.exe",
+      ["-NoProfile", "-Command", "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"],
+      "ñandú → 日本",
+    ],
+  ]);
+  expect(windowsFallback.written).toEqual([osc52("ñandú → 日本")]);
 });
 
 /**
@@ -110,8 +136,8 @@ test("copySelectionText() never uses a shell", async () => {
     const double = clipboardDouble({});
     await copySelectionText(text, double.options(platform));
     for (const [command, args, input] of double.calls) {
-      expect(command).toMatch(/^[a-z-]+$/);
-      expect(args.every(arg => /^-?[a-z]+$/.test(arg))).toBe(true);
+      expect(command).toMatch(/^[a-z.-]+$/);
+      expect(args.some(arg => arg.includes(text))).toBe(false);
       expect(input).toBe(text);
     }
   }

@@ -25,18 +25,27 @@ export interface RunUpdateOptions {
   readonly locale?: Locale;
 }
 
-type UpdateOutcomeStatus = "updated" | "already-up-to-date" | "not-installed" | "failed";
+type UpdateOutcomeStatus = "updated" | "already-up-to-date" | "pending" | "not-installed" | "failed";
 
 interface UpdateOutcome {
   readonly label: string;
   readonly status: UpdateOutcomeStatus;
   readonly detail?: string;
+  readonly installedVersion?: string;
+  readonly pendingVersion?: string;
 }
 
 function outcomeLine(outcome: UpdateOutcome, locale: Locale): string {
   const t = getCatalog(locale).update;
   if (outcome.status === "updated") return t.updated({ label: outcome.label, detail: outcome.detail });
   if (outcome.status === "already-up-to-date") return t.alreadyUpToDate({ label: outcome.label, detail: outcome.detail });
+  if (outcome.status === "pending") {
+    return t.pending({
+      label: outcome.label,
+      pendingVersion: outcome.pendingVersion ?? "",
+      installedVersion: outcome.installedVersion,
+    });
+  }
   if (outcome.status === "not-installed") return t.notInstalled({ label: outcome.label });
   return t.failed({ label: outcome.label, detail: outcome.detail || t.noDetailsReported });
 }
@@ -55,6 +64,14 @@ function enginesOutcome(result: EnginesUpdateResult): UpdateOutcome {
 }
 
 function engramOutcome(result: EngramUpdateResult): UpdateOutcome {
+  if (result.pendingVersion !== undefined) {
+    return {
+      label: "Forge614 Engram",
+      status: "pending",
+      installedVersion: result.installedVersion,
+      pendingVersion: result.pendingVersion,
+    };
+  }
   if (!result.updated) return { label: "Forge614 Engram", status: "already-up-to-date", detail: result.installedVersion };
   return { label: "Forge614 Engram", status: "updated", detail: `${result.previousVersion} → ${result.installedVersion}` };
 }

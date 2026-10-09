@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { join } from "node:path";
 import { applyEngramInit, locateEngramBinary } from "./forge614-engram.ts";
 import { ShellError, describeError } from "../shell-error.ts";
 
@@ -162,6 +163,20 @@ test("locateEngramBinary honors FORGE614_HOME over the given home", () => {
   );
 });
 
+test("locateEngramBinary resolves without .exe on Unix platforms", () => {
+  expect(locateEngramBinary("/Users/tester", undefined, "darwin")).toBe(join("/Users/tester", ".forge614", "engram", "bin", "forge614-engram"));
+  expect(locateEngramBinary("/Users/tester", undefined, "linux")).toBe(join("/Users/tester", ".forge614", "engram", "bin", "forge614-engram"));
+});
+
+test("locateEngramBinary resolves with .exe on win32", () => {
+  expect(locateEngramBinary("C:\\Users\\tester", undefined, "win32")).toBe(
+    join("C:\\Users\\tester", ".forge614", "engram", "bin", "forge614-engram.exe"),
+  );
+  expect(locateEngramBinary("/Users/tester", { FORGE614_HOME: "/custom/forge" }, "win32")).toBe(
+    join("/custom/forge", "engram", "bin", "forge614-engram.exe"),
+  );
+});
+
 import { updateEngram } from "./forge614-engram.ts";
 
 test("updateEngram sends update --json and reads the result", async () => {
@@ -183,6 +198,37 @@ test("updateEngram reports already up to date when previous and installed versio
     run: async () => ({ status: 0, stdout: JSON.stringify({ updated: false, previousVersion: "1.4.0", installedVersion: "1.4.0" }), stderr: "" }),
   });
   expect(result).toEqual({ updated: false, previousVersion: "1.4.0", installedVersion: "1.4.0" });
+});
+
+test("updateEngram accepts and returns pendingVersion when reported by Engram on Windows", async () => {
+  const result = await updateEngram({
+    home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({ updated: false, previousVersion: "1.8.7", installedVersion: "1.8.7", pendingVersion: "1.9.0" }),
+      stderr: "",
+    }),
+  });
+  expect(result).toEqual({ updated: false, previousVersion: "1.8.7", installedVersion: "1.8.7", pendingVersion: "1.9.0" });
+});
+
+test("updateEngram rejects a malformed pendingVersion", async () => {
+  await expect(updateEngram({
+    home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({ updated: false, previousVersion: "1.8.7", installedVersion: "1.8.7", pendingVersion: 190 }),
+      stderr: "",
+    }),
+  })).rejects.toMatchObject({ code: "engram-update-invalid-result" });
+  await expect(updateEngram({
+    home: "/Users/tester",
+    run: async () => ({
+      status: 0,
+      stdout: JSON.stringify({ updated: false, previousVersion: "1.8.7", installedVersion: "1.8.7", pendingVersion: "" }),
+      stderr: "",
+    }),
+  })).rejects.toMatchObject({ code: "engram-update-invalid-result" });
 });
 
 test("updateEngram throws Engram's own safe message on failure, reading it from stderr", async () => {

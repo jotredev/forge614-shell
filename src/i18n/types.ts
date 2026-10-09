@@ -562,6 +562,7 @@ export interface Catalog {
   update: {
     updated: (params: { label: string; detail?: string }) => string;
     alreadyUpToDate: (params: { label: string; detail?: string }) => string;
+    pending: (params: { label: string; pendingVersion: string; installedVersion?: string }) => string;
     notInstalled: (params: { label: string }) => string;
     failed: (params: { label: string; detail: string }) => string;
     noDetailsReported: string;

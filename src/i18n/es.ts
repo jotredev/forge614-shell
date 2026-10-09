@@ -539,6 +539,8 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
   update: {
     updated: ({ label, detail }) => `${label}: actualizado${detail ? ` (${detail})` : ""}`,
     alreadyUpToDate: ({ label, detail }) => `${label}: ya está actualizado${detail ? ` (${detail})` : ""}`,
+    pending: ({ label, pendingVersion, installedVersion }) =>
+      `${label}: la nueva versión ${pendingVersion} queda pendiente hasta salir del proceso${installedVersion ? ` (${installedVersion} activa actualmente)` : ""}`,
     notInstalled: ({ label }) => `${label}: no instalado, omitido`,
     failed: ({ label, detail }) => `${label}: falló la actualización — ${detail}`,
     noDetailsReported: "no se reportaron detalles.",

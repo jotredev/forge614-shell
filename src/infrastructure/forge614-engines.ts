@@ -65,10 +65,11 @@ function validateReport(value: unknown): EnginesReport {
   return report;
 }
 
-/** Where Shell looks for the Engines binary: `<FORGE614_HOME or ~/.forge614>/engines/bin/forge614-engines`. */
-export function enginesBinary(home: string, env?: NodeJS.ProcessEnv): string {
+/** Where Shell looks for the Engines binary: `<FORGE614_HOME or ~/.forge614>/engines/bin/forge614-engines[.exe]`. */
+export function enginesBinary(home: string, env?: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
   const forgeHome = env?.FORGE614_HOME ?? join(home, ".forge614");
-  return join(forgeHome, "engines", "bin", "forge614-engines");
+  const name = platform === "win32" ? "forge614-engines.exe" : "forge614-engines";
+  return join(forgeHome, "engines", "bin", name);
 }
 
 function toSelectableAgent(agent: EnginesAgent): AvailableEngine | undefined {
@@ -102,8 +103,9 @@ export async function detectInstalledEngines(options: {
   home?: string;
   env?: NodeJS.ProcessEnv;
   run?: DetectRun;
+  platform?: NodeJS.Platform;
 } = {}): Promise<AvailableEngine[]> {
-  const binary = enginesBinary(options.home ?? homedir(), options.env);
+  const binary = enginesBinary(options.home ?? homedir(), options.env, options.platform);
   const agents = await runDetect(binary, options.run ?? defaultRun);
   return agents.map(toSelectableAgent).filter((agent): agent is AvailableEngine => Boolean(agent));
 }
@@ -137,8 +139,9 @@ export async function discoverSelectableEngines(options: {
   home?: string;
   env?: NodeJS.ProcessEnv;
   run?: DetectRun;
+  platform?: NodeJS.Platform;
 } = {}): Promise<AvailableEngine[]> {
-  const binary = enginesBinary(options.home ?? homedir(), options.env);
+  const binary = enginesBinary(options.home ?? homedir(), options.env, options.platform);
   const run = options.run ?? defaultRun;
   const engines = await detectInstalledEngines({ ...options, run });
   const supported: AvailableEngine[] = [];
@@ -160,8 +163,9 @@ export async function discoverMcpCapableAgents(options: {
   home?: string;
   env?: NodeJS.ProcessEnv;
   run?: DetectRun;
+  platform?: NodeJS.Platform;
 } = {}): Promise<McpCapableAgent[]> {
-  const binary = enginesBinary(options.home ?? homedir(), options.env);
+  const binary = enginesBinary(options.home ?? homedir(), options.env, options.platform);
   const run = options.run ?? defaultRun;
   const installed = (await runDetect(binary, run)).filter(
     (agent): agent is EnginesAgent & { id: string; executable: string } =>
@@ -189,10 +193,10 @@ function parseEnginesError(stdout: string, stderr: string): string | undefined {
 async function runEnginesCommand(
   args: string[],
   label: string,
-  options: { home?: string; env?: NodeJS.ProcessEnv; run?: DetectRun },
+  options: { home?: string; env?: NodeJS.ProcessEnv; run?: DetectRun; platform?: NodeJS.Platform },
 ): Promise<unknown> {
   const home = options.home ?? homedir();
-  const binary = enginesBinary(home, options.env);
+  const binary = enginesBinary(home, options.env, options.platform);
   const result = await (options.run ?? defaultRun)(binary, args);
   if (result.status === null && !result.stdout.trim() && !result.stderr.trim()) {
     throw new ShellError("engines-unavailable-at-path", { path: binary });

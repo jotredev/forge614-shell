@@ -2,6 +2,14 @@ import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { ShellError } from "../shell-error.ts";
 
+/** Comando y argumentos para fijar el portapapeles en Windows leyendo UTF-8 desde stdin sin interpolar en shell. */
+const WINDOWS_CLIPBOARD_COMMAND = "powershell.exe";
+const WINDOWS_CLIPBOARD_ARGS: readonly string[] = [
+  "-NoProfile",
+  "-Command",
+  "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+];
+
 /** Runs `command` with `args` and writes `input` to its standard input; rejects when it cannot run or exits with an error. */
 export type RunWithInput = (command: string, args: string[], input: string) => Promise<void>;
 
@@ -9,18 +17,27 @@ const runWithInput: RunWithInput = (command, args, input) => new Promise((resolv
   const child = spawn(command, args, { stdio: ["pipe", "ignore", "ignore"], windowsHide: true });
   child.once("error", reject);
   child.once("close", code => { if (code === 0) resolve(); else reject(new Error(`${command} exited with status ${code}`)); });
+  child.stdin?.on("error", () => {});
   child.stdin.end(input);
 });
 
 /**
  * Puts `text` on the system clipboard, for `/copy` and `/export`. Codex's terminal app copies natively on macOS;
  * Shell does the same with the system's own `/usr/bin/pbcopy` — the text goes in as its input, never as an
- * argument or through a shell — and installs nothing. On another system there is no built-in command Shell can
- * rely on, so it raises `clipboard-unavailable` instead of pretending it copied.
+ * argument or through a shell — and installs nothing. On Windows it uses powershell.exe with Set-Clipboard
+ * reading UTF-8 from stdin without putting text in arguments or shell. On another system there is no built-in
+ * command Shell can rely on, so it raises `clipboard-unavailable` instead of pretending it copied.
  */
 export async function copyToClipboard(text: string, platform: NodeJS.Platform = process.platform, run: RunWithInput = runWithInput): Promise<void> {
-  if (platform !== "darwin") throw new ShellError("clipboard-unavailable");
-  await run("/usr/bin/pbcopy", [], text);
+  if (platform === "darwin") {
+    await run("/usr/bin/pbcopy", [], text);
+    return;
+  }
+  if (platform === "win32") {
+    await run(WINDOWS_CLIPBOARD_COMMAND, [...WINDOWS_CLIPBOARD_ARGS], text);
+    return;
+  }
+  throw new ShellError("clipboard-unavailable");
 }
 
 /**
@@ -52,13 +69,13 @@ const runClipboardProgram: ClipboardRunner = (command, args, input) => new Promi
 function clipboardPrograms(platform: NodeJS.Platform): [string, string[]][] {
   if (platform === "darwin") return [["pbcopy", []]];
   if (platform === "linux") return [["wl-copy", []], ["xclip", ["-selection", "clipboard"]]];
-  if (platform === "win32") return [["clip", []]];
+  if (platform === "win32") return [[WINDOWS_CLIPBOARD_COMMAND, [...WINDOWS_CLIPBOARD_ARGS]]];
   return [];
 }
 
 /**
  * Copies the text selected with the mouse in the chat to the system's clipboard — the `copySelection` pi-tui's screen asks the app for: `pbcopy` on macOS, `wl-copy` and then
- * `xclip -selection clipboard` on Linux, `clip` on Windows; the text goes in as the program's input, never through a shell. It answers `true` only when a program ended with status 0. Without
+ * `xclip -selection clipboard` on Linux, `powershell.exe` on Windows; the text goes in as the program's input, never through a shell. It answers `true` only when a program ended with status 0. Without
  * a program, or when every one fails, it writes the OSC 52 sequence through `write` (what pi-tui did on its own, and what a terminal that understands it — Orca, a remote session — copies from)
  * and still answers `true`. Never throws: it answers `false` only when even that write fails.
  */

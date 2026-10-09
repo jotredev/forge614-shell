@@ -1,6 +1,21 @@
 import { expect, test } from "bun:test";
-import { applyEnginesPlan, defaultRun, discoverMcpCapableAgents, discoverSelectableEngines, planMcpInstall, planMcpRemove, planMemoryInstall, removeEngramMcpFromAgent, verifyMemoryIntegration } from "./forge614-engines.ts";
+import { join } from "node:path";
+import { applyEnginesPlan, defaultRun, discoverMcpCapableAgents, discoverSelectableEngines, enginesBinary, planMcpInstall, planMcpRemove, planMemoryInstall, removeEngramMcpFromAgent, verifyMemoryIntegration } from "./forge614-engines.ts";
 import { ShellError, describeError } from "../shell-error.ts";
+
+test("enginesBinary resolves without .exe on Unix platforms", () => {
+  expect(enginesBinary("/Users/tester", undefined, "darwin")).toBe(join("/Users/tester", ".forge614", "engines", "bin", "forge614-engines"));
+  expect(enginesBinary("/Users/tester", undefined, "linux")).toBe(join("/Users/tester", ".forge614", "engines", "bin", "forge614-engines"));
+});
+
+test("enginesBinary resolves with .exe on win32", () => {
+  expect(enginesBinary("C:\\Users\\tester", undefined, "win32")).toBe(
+    join("C:\\Users\\tester", ".forge614", "engines", "bin", "forge614-engines.exe"),
+  );
+  expect(enginesBinary("/Users/tester", { FORGE614_HOME: "/custom/forge" }, "win32")).toBe(
+    join("/custom/forge", "engines", "bin", "forge614-engines.exe"),
+  );
+});
 
 test("the real runner execs asynchronously — it does not block the event loop, so a caller can show live progress while it runs", async () => {
   let tickedWhileRunning = false;

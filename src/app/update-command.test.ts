@@ -223,3 +223,57 @@ test("with locale: \"es\", every outcome (success and failure) reports in Spanis
     expect(process.exitCode).toBe(1);
   } finally { restore(); process.exitCode = 0; }
 });
+
+test("Engram reports pendingVersion: reports pending status instead of already-up-to-date in English", async () => {
+  const { logs, errors, restore } = captureLogs();
+  process.exitCode = 0;
+  try {
+    await runUpdateCommand({
+      home: "/Users/tester",
+      locale: "en",
+      installer: "/tmp/release/install.sh",
+      spawn: okShellSpawn(),
+      engramBinaryExists: () => true,
+      enginesRun: async () => ({
+        status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { updated: false, currentVersion: "1.4.0", latestVersion: "1.4.0" } }), stderr: "",
+      }),
+      engramRun: async () => ({
+        status: 0,
+        stdout: JSON.stringify({ updated: false, previousVersion: "1.8.7", installedVersion: "1.8.7", pendingVersion: "1.9.0" }),
+        stderr: "",
+      }),
+    });
+    expect(logs).toContain("Forge614 Engram: version 1.9.0 is pending until the process exits (1.8.7 currently active)");
+    expect(logs.some(line => line.startsWith("Forge614 Engram: already up to date"))).toBe(false);
+    expect(logs.some(line => line.startsWith("Forge614 Engram: updated"))).toBe(false);
+    expect(errors).toHaveLength(0);
+    expect(process.exitCode as number | undefined).not.toBe(1);
+  } finally { restore(); process.exitCode = 0; }
+});
+
+test("Engram reports pendingVersion: reports pending status instead of already-up-to-date in Spanish", async () => {
+  const { logs, errors, restore } = captureLogs();
+  process.exitCode = 0;
+  try {
+    await runUpdateCommand({
+      home: "/Users/tester",
+      locale: "es",
+      installer: "/tmp/release/install.sh",
+      spawn: okShellSpawn(),
+      engramBinaryExists: () => true,
+      enginesRun: async () => ({
+        status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { updated: false, currentVersion: "1.4.0", latestVersion: "1.4.0" } }), stderr: "",
+      }),
+      engramRun: async () => ({
+        status: 0,
+        stdout: JSON.stringify({ updated: false, previousVersion: "1.8.7", installedVersion: "1.8.7", pendingVersion: "1.9.0" }),
+        stderr: "",
+      }),
+    });
+    expect(logs).toContain("Forge614 Engram: la nueva versión 1.9.0 queda pendiente hasta salir del proceso (1.8.7 activa actualmente)");
+    expect(logs.some(line => line.startsWith("Forge614 Engram: ya está actualizado"))).toBe(false);
+    expect(logs.some(line => line.startsWith("Forge614 Engram: actualizado"))).toBe(false);
+    expect(errors).toHaveLength(0);
+    expect(process.exitCode as number | undefined).not.toBe(1);
+  } finally { restore(); process.exitCode = 0; }
+});

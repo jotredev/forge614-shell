@@ -44,12 +44,12 @@ jobs:
           node-version: "22.19.0"
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
-      - run: bun test tests/integration/windows-installer-defenses.test.ts
       - name: Disable Windows Defender real-time scanning for this job
         shell: pwsh
         continue-on-error: true
         run: |
           Set-MpPreference -DisableRealtimeMonitoring $true
+      - run: bun test tests/integration/windows-installer-defenses.test.ts src/infrastructure/forge614-engines.test.ts src/infrastructure/forge614-engram.test.ts src/infrastructure/updater.test.ts src/infrastructure/clipboard.test.ts src/app/update-command.test.ts src/infrastructure/git-local.test.ts tests/integration/windows-s2-native.test.ts
 
       - name: PowerShell syntax check
         shell: pwsh

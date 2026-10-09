@@ -539,6 +539,8 @@ The selected engine's project settings and permissions apply. This is not a sand
   update: {
     updated: ({ label, detail }) => `${label}: updated${detail ? ` (${detail})` : ""}`,
     alreadyUpToDate: ({ label, detail }) => `${label}: already up to date${detail ? ` (${detail})` : ""}`,
+    pending: ({ label, pendingVersion, installedVersion }) =>
+      `${label}: version ${pendingVersion} is pending until the process exits${installedVersion ? ` (${installedVersion} currently active)` : ""}`,
     notInstalled: ({ label }) => `${label}: not installed, skipped`,
     failed: ({ label, detail }) => `${label}: update failed — ${detail}`,
     noDetailsReported: "no details were reported.",

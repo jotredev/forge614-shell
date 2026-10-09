@@ -67,15 +67,17 @@ export async function readEcosystemVersions(options: {
   run?: (binary: string, args: string[]) => Promise<string>;
   timers?: VersionTimers;
   limitMs?: number;
+  platform?: NodeJS.Platform;
 } = {}): Promise<EcosystemVersions> {
   const home = options.home ?? homedir();
   const exists = options.exists ?? existsSync;
   const run = options.run ?? defaultRun;
   const timers = options.timers ?? realTimers;
   const limitMs = options.limitMs ?? VERSION_LIMIT_MS;
+  const platform = options.platform ?? process.platform;
   const [engines, engram] = await Promise.all([
-    readOne(enginesBinary(home, options.env), exists, run, timers, limitMs),
-    readOne(locateEngramBinary(home, options.env), exists, run, timers, limitMs),
+    readOne(enginesBinary(home, options.env, platform), exists, run, timers, limitMs),
+    readOne(locateEngramBinary(home, options.env, platform), exists, run, timers, limitMs),
   ]);
   return { engines, engram };
 }

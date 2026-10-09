@@ -40,9 +40,10 @@ export const defaultRun: RunEngram = (command, args) => new Promise(resolve => {
   } catch { finish(null); }
 });
 
-export function locateEngramBinary(home: string, env?: NodeJS.ProcessEnv): string {
+export function locateEngramBinary(home: string, env?: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
   const forgeHome = env?.FORGE614_HOME ?? join(home, ".forge614");
-  return join(forgeHome, "engram", "bin", "forge614-engram");
+  const name = platform === "win32" ? "forge614-engram.exe" : "forge614-engram";
+  return join(forgeHome, "engram", "bin", name);
 }
 
 /** Engram's own reported error, extracted from its JSON error payload — external data, returned
@@ -72,9 +73,9 @@ function redactSecret(message: string, secret: string | null): string {
 async function runEngramCommand(
   command: string,
   args: string[],
-  options: { home?: string; env?: NodeJS.ProcessEnv; run?: RunEngram },
+  options: { home?: string; env?: NodeJS.ProcessEnv; run?: RunEngram; platform?: NodeJS.Platform },
 ): Promise<unknown> {
-  const binary = locateEngramBinary(options.home ?? homedir(), options.env);
+  const binary = locateEngramBinary(options.home ?? homedir(), options.env, options.platform);
   const result = await (options.run ?? defaultRun)(binary, args);
   // A null status with nothing on stderr means the binary never ran (missing or not executable).
   if (result.status === null && !result.stderr.trim()) {
@@ -144,20 +145,32 @@ export interface EngramUpdateResult {
   readonly updated: boolean;
   readonly previousVersion: string;
   readonly installedVersion: string;
+  readonly pendingVersion?: string;
 }
 
 interface EngramUpdatePayload {
   updated?: unknown;
   previousVersion?: unknown;
   installedVersion?: unknown;
+  pendingVersion?: unknown;
 }
 
 function toEngramUpdateResult(payload: unknown): EngramUpdateResult {
   const result = payload as EngramUpdatePayload;
-  if (typeof result.updated !== "boolean" || typeof result.previousVersion !== "string" || typeof result.installedVersion !== "string") {
+  if (
+    typeof result.updated !== "boolean" ||
+    typeof result.previousVersion !== "string" ||
+    typeof result.installedVersion !== "string" ||
+    (result.pendingVersion !== undefined && (typeof result.pendingVersion !== "string" || !result.pendingVersion.trim()))
+  ) {
     throw new ShellError("engram-update-invalid-result");
   }
-  return { updated: result.updated, previousVersion: result.previousVersion, installedVersion: result.installedVersion };
+  return {
+    updated: result.updated,
+    previousVersion: result.previousVersion,
+    installedVersion: result.installedVersion,
+    ...(typeof result.pendingVersion === "string" ? { pendingVersion: result.pendingVersion } : {}),
+  };
 }
 
 /**
@@ -530,9 +543,9 @@ function digestStartupContext(payload: StartupContextPayload): string {
  */
 export async function getStartupContext(
   directory: string,
-  options: { home?: string; env?: NodeJS.ProcessEnv; run?: RunEngram } = {},
+  options: { home?: string; env?: NodeJS.ProcessEnv; run?: RunEngram; platform?: NodeJS.Platform } = {},
 ): Promise<StartupContextResult> {
-  const binary = locateEngramBinary(options.home ?? homedir(), options.env);
+  const binary = locateEngramBinary(options.home ?? homedir(), options.env, options.platform);
   let result: { status: number | null; stdout: string; stderr: string };
   try {
     result = await (options.run ?? defaultRun)(binary, ["startup-context", "--directory", directory, "--json"]);
