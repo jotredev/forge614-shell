@@ -340,6 +340,7 @@ else {
 test("Claude UI: a long working folder is cut with «…» keeping its last whole folders", async () => {
   const root = await mkdtemp(join(tmpdir(), "forge614-long-folder-ui-"));
   const executable = testExecutablePath(root);
+  const workerPidFile = join(root, "worker.pid");
   const deep = join(root, "a-long-folder-name-for-the-permission-card", "another-long-folder-name-here", "project");
   mkdirSync(deep, { recursive: true });
   const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
@@ -358,6 +359,7 @@ test("Claude UI: a long working folder is cut with «…» keeping its last whol
   try {
     await writeTestExecutable(executable, `if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
 else {
+  require('fs').writeFileSync(${JSON.stringify(workerPidFile)}, String(process.pid));
   require('readline').createInterface({input:process.stdin}).on('line',line=>{
     const msg=JSON.parse(line);
     if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
@@ -384,6 +386,17 @@ else {
       for (let i = 0; i < 60 && !finished && !plain().includes(question); i++) await tick();
       if (!finished && plain().includes(question)) { terminal.input("\x1b[B"); terminal.input("\r"); }
       await ui;
+      // La UI puede terminar antes de que Windows libere el directorio de trabajo del proceso.
+      const workerPid = Number(readFileSync(workerPidFile, "utf8"));
+      const workerRunning = () => {
+        try { process.kill(workerPid, 0); return true; }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+          throw error;
+        }
+      };
+      for (let i = 0; i < 150 && workerRunning(); i++) await tick();
+      expect(workerRunning()).toBe(false);
     } finally {
       process.chdir(previousCwd);
       try { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
