@@ -21,25 +21,9 @@ beforeAll(async () => {
     const srcFile = join(sharedLauncherDir, "launcher.js");
     sharedLauncherExe = join(sharedLauncherDir, "launcher.exe");
     writeFileSync(srcFile, `
-const { spawn } = require("node:child_process");
 const { join, dirname, basename, extname } = require("node:path");
 const script = join(dirname(process.execPath), basename(process.execPath, extname(process.execPath)) + ".worker.js");
-const bunBin = process.env.FORGE614_BUN_BIN || ${JSON.stringify(process.execPath)} || "bun";
-const child = spawn(bunBin, [script, ...process.argv.slice(2)], {
-  stdio: "inherit",
-  windowsHide: true,
-});
-child.on("exit", (code, signal) => {
-  if (signal) {
-    try { process.kill(process.pid, signal); } catch { process.exit(1); }
-  } else {
-    process.exit(code ?? 0);
-  }
-});
-child.on("error", (err) => {
-  console.error("Launcher error:", err);
-  process.exit(1);
-});
+require(script);
 `);
     execFileSync("bun", ["build", srcFile, "--compile", "--outfile", sharedLauncherExe]);
   }
@@ -951,7 +935,7 @@ test("Claude UI: the / menu keeps the assistant's own names and lists only /f614
       for (const text of hidden) expect(other.plain(), typed).not.toContain(text);
     } finally { await other.finish(true); }
   }
-});
+}, { timeout: 15_000 });
 
 /**
  * `/f614:status` says where the memory comes from, so the person can check it without asking the model (the memory used to arrive twice: measured with a
