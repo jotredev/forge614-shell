@@ -1245,6 +1245,7 @@ test("/export copies the Markdown or saves it as codex-session-<id>.md", async (
   const markdown = "# Codex conversation\n\n## User\n\nhello\n";
   const thread = { thread: { id: "t", cwd: "/project", turns: [{ id: "1", items: [{ type: "userMessage", id: "a", content: [{ type: "text", text: "hello" }] }] }] } };
   const h = codexUi("en", rpc => rpc.replies.set("thread/read", thread));
+  const exportPath = join("/project", "codex-session-t.md");
   try {
     await withConversation(h);
     h.enter("/export"); await tick();
@@ -1254,8 +1255,8 @@ test("/export copies the Markdown or saves it as codex-session-<id>.md", async (
     expect(h.local.copied).toEqual([markdown]);
     expect(h.plain()).toContain("Copied conversation to clipboard");
     h.enter("/export"); await tick(); h.terminal.input("\x1b[B"); h.terminal.input("\r"); await tick();
-    expect(h.local.saved).toEqual([["/project/codex-session-t.md", markdown]]);
-    expect(h.plain()).toContain("Saved conversation to /project/codex-session-t.md");
+    expect(h.local.saved).toEqual([[exportPath, markdown]]);
+    expect(h.plain()).toContain(`Saved conversation to ${exportPath}`);
   } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
@@ -2355,7 +2356,8 @@ for (const locale of ["en", "es"] as const) {
       await tick();
       const where = (text: string) => { const rows = screenRows(h.terminal.output); const y = rows.findIndex(row => row.includes(text)); return { x: rows[y]!.indexOf(text), y }; };
       const click = async (x: number, y: number) => { h.terminal.input(`\x1b[<0;${x + 1};${y + 1}M`); h.terminal.input(`\x1b[<0;${x + 1};${y + 1}m`); await tick(); };
-      const web = where("https://example.com/docs"); const path = where(file);
+      // La ruta absoluta puede ocupar varias filas; el nombre visible basta para ubicar el clic y el destino se compara completo.
+      const web = where("https://example.com/docs"); const path = where("notes.txt");
       await click(web.x + 4, web.y); await click(path.x + 4, path.y);
       expect(opened).toEqual({ web: ["https://example.com/docs"], path: [file] });
       expect(screenRows(h.terminal.output).join("\n")).not.toContain(getCatalog(locale).chat.linkOpenFailed({ target: "https://example.com/docs" }));
