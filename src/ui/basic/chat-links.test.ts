@@ -334,9 +334,21 @@ test("a click on a path opens the file without its line suffix, from the text, i
  */
 test("a click through the real path opener opens a normal file and only shows an executable one", async () => {
   const notes = join(cwd, "notes.txt"); writeFileSync(notes, "x");
-  const program = join(cwd, "program"); writeFileSync(program, "x"); chmodSync(program, 0o755);
+  const program = join(cwd, "program"); writeFileSync(program, "x");
+  if (process.platform !== "win32") chmodSync(program, 0o755);
   const calls: [string, string[]][] = [];
-  const tools: ChatLinkTools = { openWeb: async () => true, openPath: path => openLocalPath(path, { platform: "darwin", run: async (command, args) => { calls.push([command, args]); } }) };
+  // En Windows (NTFS), statSync no expone bits de ejecución POSIX 0o111. Se modela stat para preservar la regla de seguridad.
+  const tools: ChatLinkTools = {
+    openWeb: async () => true,
+    openPath: path => openLocalPath(path, {
+      platform: "darwin",
+      run: async (command, args) => { calls.push([command, args]); },
+      ...(process.platform === "win32" ? {
+        stat: (target: string) => target === program ? { isDirectory: false, mode: 0o755 }
+          : target === notes ? { isDirectory: false, mode: 0o644 } : undefined,
+      } : {}),
+    }),
+  };
   const screen = chat({ columns: 200, tools });
   try {
     await screen.add(new ChatText(`Open ${notes}:4 and ${program} now`, undefined, screen.links));
@@ -370,9 +382,21 @@ test("a click on a Markdown link to an existing local path opens the full path w
  */
 test("a click through the real path opener on a Markdown link only shows an executable one", async () => {
   const notes = join(cwd, "notes.txt"); writeFileSync(notes, "x");
-  const program = join(cwd, "program"); writeFileSync(program, "x"); chmodSync(program, 0o755);
+  const program = join(cwd, "program"); writeFileSync(program, "x");
+  if (process.platform !== "win32") chmodSync(program, 0o755);
   const calls: [string, string[]][] = [];
-  const tools: ChatLinkTools = { openWeb: async () => true, openPath: path => openLocalPath(path, { platform: "darwin", run: async (command, args) => { calls.push([command, args]); } }) };
+  // En Windows (NTFS), statSync no expone bits de ejecución POSIX 0o111. Se modela stat para preservar la regla de seguridad.
+  const tools: ChatLinkTools = {
+    openWeb: async () => true,
+    openPath: path => openLocalPath(path, {
+      platform: "darwin",
+      run: async (command, args) => { calls.push([command, args]); },
+      ...(process.platform === "win32" ? {
+        stat: (target: string) => target === program ? { isDirectory: false, mode: 0o755 }
+          : target === notes ? { isDirectory: false, mode: 0o644 } : undefined,
+      } : {}),
+    }),
+  };
   const screen = chat({ columns: 200, tools });
   try {
     await screen.add(new ChatText("Open [the tool](./program) and [the notes](./notes.txt) now", undefined, screen.links));
