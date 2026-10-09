@@ -148,7 +148,7 @@ process.exit(64);
     }
 
     $helpOutput = & cmd.exe /c "`"$launcherSpaces`" --help"
-    if ($helpOutput -notmatch "Forge614-Shell") {
+    if ($LASTEXITCODE -ne 0 -or "$helpOutput" -notmatch "Forge614-Shell") {
         throw "Defensa 4 FALLO: El lanzador no mostro la ayuda correctamente."
     }
     $installedVersion = (Get-Content (Join-Path $homeWithSpaces "shell\.active-version") -Raw).Trim()

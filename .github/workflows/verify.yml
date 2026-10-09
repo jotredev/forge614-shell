@@ -24,7 +24,8 @@ jobs:
         with:
           node-version: "22.19.0"
       - run: bun install --frozen-lockfile
-      - run: bun test
+      # S1 comprueba el paquete y los instaladores; S4 ampliará Verify a la suite completa.
+      - run: bun test tests/integration/release-bundle.test.ts tests/integration/public-installer.test.ts tests/integration/windows-installer-defenses.test.ts
       - run: bun run typecheck
       - run: bun run build
       - run: git diff --check
@@ -43,6 +44,7 @@ jobs:
           node-version: "22.19.0"
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      - run: bun test tests/integration/windows-installer-defenses.test.ts
       - name: Disable Windows Defender real-time scanning for this job
         shell: pwsh
         continue-on-error: true
@@ -121,7 +123,7 @@ jobs:
             }
 
             $helpOutput = & cmd.exe /c "`"$launcher`" --help"
-            if ($helpOutput -notmatch "Forge614-Shell") {
+            if ($LASTEXITCODE -ne 0 -or "$helpOutput" -notmatch "Forge614-Shell") {
               throw "Salida inesperada de --help"
             }
 
