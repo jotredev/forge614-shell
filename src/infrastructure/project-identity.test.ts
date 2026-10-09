@@ -13,6 +13,9 @@ function temp(): string {
 }
 afterEach(() => { for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
+/** Git resuelve la raíz canónica del fixture en Windows (puede expandir el alias corto RUNNER~1 y usar barras diagonales). */
+const expectedGitRoot = (cwd: string) => execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
+
 function gitRepo(): string {
   const dir = temp();
   execFileSync("git", ["init", "-q"], { cwd: dir });
@@ -25,7 +28,7 @@ function identityFile(root: string, content = "{}"): void {
 
 test("a Git repository with no identity file asks, and reports the repository root", async () => {
   const repo = gitRepo();
-  expect(await resolveGroupPrompt({ cwd: repo, interactive: true })).toEqual({ ask: true, root: repo });
+  expect(await resolveGroupPrompt({ cwd: repo, interactive: true })).toEqual({ ask: true, root: expectedGitRoot(repo) });
 });
 
 test("a folder with a manifest (no Git) and no identity file asks, rooted at that folder", async () => {
@@ -60,7 +63,7 @@ test("a subfolder of a repository without the identity file asks, rooted at the 
   const repo = gitRepo();
   const sub = join(repo, "packages", "app");
   mkdirSync(sub, { recursive: true });
-  expect(await resolveGroupPrompt({ cwd: sub, interactive: true })).toEqual({ ask: true, root: repo });
+  expect(await resolveGroupPrompt({ cwd: sub, interactive: true })).toEqual({ ask: true, root: expectedGitRoot(repo) });
 });
 
 test("an identity path that is a directory or a broken symlink still counts as existing: no question", async () => {

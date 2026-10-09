@@ -42,7 +42,7 @@ test("never writes to stdout or stderr, even while enabled — this is the whole
   }
 });
 
-test("when enabled, writes to a private log file under $FORGE614_HOME/shell/logs/, with restrictive permissions", () => {
+test("when enabled, writes under $FORGE614_HOME/shell/logs/ with restrictive Unix permissions", () => {
   const home = tempHome();
   try {
     const log = createInitDebugLog({ FORGE614_SHELL_DEBUG_INIT: "1" }, home);
@@ -55,11 +55,18 @@ test("when enabled, writes to a private log file under $FORGE614_HOME/shell/logs
     expect(content).toContain("stdin-state");
     expect(content).toContain("isTTY=true");
     expect(content).toContain("isRaw=false");
-    // Restrictive permissions: owner read/write only, nothing for group/other.
-    const fileMode = statSync(log.path!).mode & 0o777;
-    expect(fileMode & 0o077).toBe(0);
-    const dirMode = statSync(logsDir).mode & 0o777;
-    expect(dirMode & 0o077).toBe(0);
+    if (process.platform !== "win32") {
+      // Restrictive permissions: owner read/write only, nothing for group/other.
+      const fileMode = statSync(log.path!).mode & 0o777;
+      expect(fileMode & 0o077).toBe(0);
+      const dirMode = statSync(logsDir).mode & 0o777;
+      expect(dirMode & 0o077).toBe(0);
+    } else {
+      // En Windows (NTFS), libuv mapea permisos a 0o666; no existen bits POSIX 0o077 observables.
+      expect(existsSync(log.path!)).toBe(true);
+      expect(statSync(log.path!).isFile()).toBe(true);
+      expect(statSync(logsDir).isDirectory()).toBe(true);
+    }
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 

@@ -49,8 +49,18 @@ test("apps, packages, executable files and the listed extensions are shown in Fi
   for (const extension of ["command", "tool", "terminal", "sh", "zsh", "bash", "pkg", "mpkg", "dmg", "workflow", "scpt", "applescript", "COMMAND", "Sh"]) {
     const file = join(root, "files", `thing.${extension}`); writeFileSync(file, "x"); await reveal(file);
   }
-  const executable = join(root, "program"); writeFileSync(executable, "x"); chmodSync(executable, 0o755); await reveal(executable);
-  const plainText = join(root, "executable-notes.txt"); writeFileSync(plainText, "x"); chmodSync(plainText, 0o700); await reveal(plainText);
+  if (process.platform !== "win32") {
+    const executable = join(root, "program"); writeFileSync(executable, "x"); chmodSync(executable, 0o755); await reveal(executable);
+    const plainText = join(root, "executable-notes.txt"); writeFileSync(plainText, "x"); chmodSync(plainText, 0o700); await reveal(plainText);
+  } else {
+    // En Windows (NTFS), statSync no expone bits de ejecución POSIX 0o111. Se inyecta stat para validar la regla de permisos.
+    const executable = join(root, "program"); writeFileSync(executable, "x");
+    expect(await openLocalPath(executable, { platform: "darwin", run, stat: () => ({ isDirectory: false, mode: 0o755 }) })).toBe(true);
+    expected.push(["/usr/bin/open", ["-R", executable]]);
+    const plainText = join(root, "executable-notes.txt"); writeFileSync(plainText, "x");
+    expect(await openLocalPath(plainText, { platform: "darwin", run, stat: () => ({ isDirectory: false, mode: 0o700 }) })).toBe(true);
+    expected.push(["/usr/bin/open", ["-R", plainText]]);
+  }
   expect(calls).toEqual(expected);
 });
 

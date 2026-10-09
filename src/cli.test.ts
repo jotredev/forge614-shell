@@ -26,8 +26,26 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getCatalog } from "./i18n/index.ts";
 import { helpLines } from "./ui/basic/logo.ts";
+
+const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
+
+/** Conserva variables del sistema necesarias en Windows y redirige las carpetas de perfil al fixture. */
+const testEnv = (home: string, locale: string) => ({
+  ...process.env,
+  HOME: home,
+  USERPROFILE: home,
+  APPDATA: join(home, "AppData", "Roaming"),
+  LOCALAPPDATA: join(home, "AppData", "Local"),
+  XDG_CONFIG_HOME: join(home, ".config"),
+  XDG_DATA_HOME: join(home, ".local", "share"),
+  XDG_CACHE_HOME: join(home, ".cache"),
+  XDG_STATE_HOME: join(home, ".local", "state"),
+  FORGE614_HOME: join(home, "forge614"),
+  FORGE614_SHELL_LOCALE: locale,
+});
 
 /** Idea 7: startup hands the picker the assistant used last time and remembers the one chosen now, both through Shell's preferences file. */
 test("startup marks the last used engine in the picker and remembers the one chosen", async () => {
@@ -39,9 +57,9 @@ test("startup marks the last used engine in the picker and remembers the one cho
 test("without a real terminal, init refuses at once (it never starts the screens, so it can never ask or link a group)", () => {
   const home = mkdtempSync(join(tmpdir(), "forge614-shell-cli-notty-"));
   try {
-    const result = spawnSync("bun", [new URL("./cli.ts", import.meta.url).pathname, "init", "--product", "engram"], {
+    const result = spawnSync(process.execPath, [cliPath, "init", "--product", "engram"], {
       encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000,
-      env: { PATH: process.env.PATH, HOME: home, FORGE614_HOME: join(home, "forge614"), FORGE614_SHELL_LOCALE: "es" },
+      env: testEnv(home, "es"),
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(getCatalog("es").startup.requiresInteractiveTerminal);
@@ -60,12 +78,12 @@ test("--help prints Shell commands with the /f614: prefix in both languages", ()
   const home = mkdtempSync(join(tmpdir(), "forge614-shell-cli-help-"));
   try {
     for (const locale of ["en", "es"]) {
-      const result = spawnSync("bun", [new URL("./cli.ts", import.meta.url).pathname, "--help"], {
+      const result = spawnSync(process.execPath, [cliPath, "--help"], {
         encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000,
-        env: { PATH: process.env.PATH, HOME: home, FORGE614_HOME: join(home, "forge614"), FORGE614_SHELL_LOCALE: locale },
+        env: testEnv(home, locale),
       });
       expect(result.status, locale).toBe(0);
-      expect(result.stdout, `${locale} non-terminal sign`).toStartWith("█▀▀▀ █▀▀█ █▀▀▄ █▀▀▀ █▀▀▀  █▀▀▀ ▀█  █  █\n");
+      expect(result.stdout.replace(/\r\n/g, "\n"), `${locale} non-terminal sign`).toStartWith("█▀▀▀ █▀▀█ █▀▀▄ █▀▀▀ █▀▀▀  █▀▀▀ ▀█  █  █\n");
       for (const name of ["login", "status", "refresh", "stop", "quit", "commands", "help"]) expect(result.stdout, `${locale} /f614:${name}`).toContain(`/f614:${name}`);
       for (const old of ["/refresh", "/yes", "/no", "/commands", "/help", "/quit!", "/exit!", "/forge614-status"]) expect(result.stdout, `${locale} ${old}`).not.toMatch(new RegExp(`(?<![\\w:/.-])${old}(?![\\w:-])`));
     }
@@ -114,9 +132,9 @@ test("--help says what Shell remembers and that a chat needs an interactive term
   } as const;
   try {
     for (const locale of ["en", "es"] as const) {
-      const result = spawnSync("bun", [new URL("./cli.ts", import.meta.url).pathname, "--help"], {
+      const result = spawnSync(process.execPath, [cliPath, "--help"], {
         encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000,
-        env: { PATH: process.env.PATH, HOME: home, FORGE614_HOME: join(home, "forge614"), FORGE614_SHELL_LOCALE: locale },
+        env: testEnv(home, locale),
       });
       expect(result.status, locale).toBe(0);
       for (const line of expected[locale]) expect(result.stdout, `${locale} ${line}`).toContain(line);

@@ -11,7 +11,7 @@ const lines = () => readFileSync(inputHistoryPath(options()), "utf8").split("\n"
 beforeEach(() => { forgeHome = mkdtempSync(join(tmpdir(), "forge614-history-test-")); });
 afterEach(() => { try { chmodSync(join(forgeHome, "shell"), 0o755); chmodSync(inputHistoryPath(options()), 0o600); } catch { /* nothing to restore */ } rmSync(forgeHome, { recursive: true, force: true }); });
 
-test("the history lives in shell/history.jsonl of the Forge614 home, one {cwd,text,at} line per entry, with permissions 600", () => {
+test("the history lives in shell/history.jsonl with one {cwd,text,at} line per entry and Unix mode 600", () => {
   expect(inputHistoryPath(options())).toBe(join(forgeHome, "shell", "history.jsonl"));
   appendInputHistory("/work/a", "first", options());
   appendInputHistory("/work/a", "multi\nline", options());
@@ -19,15 +19,24 @@ test("the history lives in shell/history.jsonl of the Forge614 home, one {cwd,te
   expect(entries.map(entry => Object.keys(entry).sort())).toEqual([["at", "cwd", "text"], ["at", "cwd", "text"]]);
   expect(entries.map(entry => [entry.cwd, entry.text])).toEqual([["/work/a", "first"], ["/work/a", "multi\nline"]]);
   expect(typeof entries[0].at).toBe("number");
-  expect(statSync(inputHistoryPath(options())).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect(statSync(inputHistoryPath(options())).mode & 0o777).toBe(0o600);
+  } else {
+    // En Windows (NTFS), libuv mapea archivos legibles y escribibles a 0o666; no existen bits de permiso de grupo/otros.
+    expect(statSync(inputHistoryPath(options())).mode & 0o777).toBe(0o666);
+  }
 });
 
-test("the permissions stay 600 when the file already existed with wider ones", () => {
+test("replacing existing history narrows Unix permissions to 600", () => {
   mkdirSync(join(forgeHome, "shell"), { recursive: true });
   writeFileSync(inputHistoryPath(options()), "", { mode: 0o644 });
   chmodSync(inputHistoryPath(options()), 0o644);
   appendInputHistory("/work/a", "again", options());
-  expect(statSync(inputHistoryPath(options())).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect(statSync(inputHistoryPath(options())).mode & 0o777).toBe(0o600);
+  } else {
+    expect(statSync(inputHistoryPath(options())).mode & 0o777).toBe(0o666);
+  }
 });
 
 test("loading gives only the entries of that folder, oldest first", () => {
