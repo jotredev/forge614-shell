@@ -44,12 +44,12 @@ const TOKEN = /(?<=^|[\s(\[{"'`<,;=])[^\s"'`<>()\[\]{}|,;*?=]{2,1024}/g;
 /** The full-stop, colon or bang a sentence puts after a path, which is not part of it. */
 const TRAILING_PUNCTUATION = /[.:!]+$/;
 
-/** Whether a token has the shape of a path: absolute, `~/`, `./`, `../`, with a folder in it, or a bare file name with an extension. A web address (`://`) and a leading `//` are not. */
+/** Reconoce rutas absolutas, `~/`, `./`, `../`, carpetas y nombres con extensión. En Windows acepta `\\` como separador; excluye direcciones `://` y rutas que empiezan con `//`. */
 function looksLikePath(token: string): boolean {
   if (token.includes("://") || token.startsWith("//")) return false;
   if (token.startsWith("/")) return token.length > 1;
   if (token.startsWith("~/") || token.startsWith("./") || token.startsWith("../")) return token.length > 2;
-  if (token.includes("/")) return true;
+  if (token.includes("/") || (process.platform === "win32" && token.includes("\\"))) return true;
   return /^[\w@+-][\w@+.-]*\.[A-Za-z0-9]+(?::\d+(?::\d+)?)?$/.test(token);
 }
 
