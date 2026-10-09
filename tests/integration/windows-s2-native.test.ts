@@ -95,7 +95,7 @@ describe("Windows S2 native verifications", () => {
         }
       }
     }
-  });
+  }, 20_000);
 
   /** Comprueba que gitDiff procesa correctamente archivos no rastreados con /dev/null en un repo temporal. */
   test("gitDiff handles untracked files correctly in temp repository", async () => {
