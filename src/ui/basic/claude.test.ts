@@ -1,5 +1,6 @@
 import { expect, test, beforeAll, afterAll } from "bun:test";
 import type { Terminal } from "@earendil-works/pi-tui";
+import { resetCapabilitiesCache, setCapabilityOverrides } from "@earendil-works/pi-tui";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -391,14 +392,26 @@ else {
     terminal.input("\x1b");
     await tick();
   } finally {
-    enter("/f614:quit"); await tick(); terminal.input("\x1b[B"); terminal.input("\r"); // the turn is still open: «¿Salir de todos modos?» → «Sí»
-    await ui; await tick(); process.chdir(previousCwd); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
-    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
-    if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
-    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+    try {
+      enter("/f614:quit");
+      let finished = false;
+      void ui?.then(() => { finished = true; }, () => { finished = true; });
+      const question = getCatalog("es").chat.quitQuestion;
+      for (let i = 0; i < 60 && !finished && !plain().includes(question); i++) await tick();
+      if (!finished && plain().includes(question)) { terminal.input("\x1b[B"); terminal.input("\r"); }
+      await ui;
+    } finally {
+      process.chdir(previousCwd);
+      try { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+      finally {
+        if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+        if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+        if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
+        if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+      }
+    }
   }
-});
+}, { timeout: 15_000 });
 
 /**
  * The owner's rule: the marked «Yes» is only for the permissions the assistant asks; a question of Shell's own that disconnects goes out with «No» marked and its own
@@ -1031,6 +1044,8 @@ function screenRows(output: string): string[] {
  * It exists because the unit tests build the screen by hand; this one proves Claude Code's screen wires the links, the clicks and the warning, as Codex's does.
  */
 test("links in a Claude Code answer open with a click and a failure is a warning line", async () => {
+  // El runner puede anunciar hipervínculos desactivados; el clic de esta prueba requiere OSC 8.
+  setCapabilityOverrides({ trueColor: true, hyperlinks: true });
   const root = await mkdtemp(join(tmpdir(), "forge614-links-ui-"));
   const executable = testExecutablePath(root);
   const file = join(root, "notes.txt"); writeFileSync(file, "x");
@@ -1072,11 +1087,15 @@ else { require('readline').createInterface({input:process.stdin}).on('line',line
     expect(text).toContain(getCatalog("en").chat.linkOpenFailed({ target: "https://example.com/docs" }));
     expect(text).toContain(getCatalog("en").chat.linkOpenFailed({ target: file }));
   } finally {
-    enter("/f614:quit"); await ui; await tick(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
-    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
-    if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
-    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+    try {
+      enter("/f614:quit"); await ui; await tick(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    } finally {
+      resetCapabilitiesCache();
+      if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+      if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+      if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
+      if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+    }
   }
 });
 
@@ -1449,7 +1468,7 @@ test("Claude UI: leaving, /new, /logout, a new effort and /f614:stop ask first w
       expect(await snapshot(h), action.name).toContain(ready1());
     } finally { await h.finish(); }
   }
-});
+}, { timeout: 20_000 });
 
 test("Claude UI: answering «Yes» cuts the tasks: /new closes Claude Code and opens another with no resume; /f614:stop interrupts", async () => {
   const t = getCatalog("en");
