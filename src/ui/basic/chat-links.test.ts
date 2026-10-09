@@ -473,7 +473,8 @@ test("hovering a link lights all of its columns, also on a second row, and leavi
   const file = join(cwd, "src", "a-rather-long-file-name.ts"); writeFileSync(file, "x");
   const screen = chat({ columns: 40 });
   try {
-    await screen.add(new ChatText(`Look at ${file} and [the long documentation page](https://example.com/docs/page) please.`, undefined, screen.links));
+    // El segundo enlace empieza en una línea propia con prefijo fijo para forzar su salto sin depender de la longitud de la ruta del fixture.
+    await screen.add(new ChatText(`Look at ${file}\n\nBefore continuing, read [the long documentation page](https://example.com/docs/page) please.`, undefined, screen.links));
     const lit = (row: string) => cells(row).filter(cell => cell.fg === BRIGHT && cell.bold && cell.underline).map(cell => cell.char).join("");
     expect(screen.frame().map(lit).join("")).toBe("");
     // The path wraps over several rows: hovering its first part lights every part.
