@@ -53,6 +53,8 @@ jobs:
       - run: bun test src/app/init-engram.test.ts src/app/init-engram.groups.test.ts src/infrastructure/forge614-engram.ecosystem.test.ts src/ui/startup/memory-setup.test.ts src/infrastructure/memory-hook.test.ts src/engines/claude/memory-delivery.test.ts src/engines/codex/memory-delivery.test.ts
       - run: bun test src/infrastructure/project-identity.test.ts src/infrastructure/project-info.test.ts src/infrastructure/local-path.test.ts src/infrastructure/input-history.test.ts src/app/init-debug-log.test.ts src/cli.test.ts
       - run: bun test src/ui/basic/chat-links.test.ts src/ui/basic/workspace-chrome.test.ts
+      - run: bun test src/ui/basic/native.test.ts
+        timeout-minutes: 4
 
       - name: PowerShell syntax check
         shell: pwsh

@@ -2541,12 +2541,17 @@ test("Codex UI: the answer to a permission question (/f614:no) does not enter th
   } finally { await h.finish(); }
 });
 
-test("Codex UI: the history is saved per folder (history.jsonl, 600) and comes back on opening the chat again in the same folder, not in another", async () => {
+test("Codex UI: the history is saved per folder (Unix mode 600) and comes back on opening the chat again in the same folder, not in another", async () => {
   const first = codexHistoryUi("/project");
   try {
     await tick();
     first.enter("mensaje que se guarda"); await first.waitForSent(1);
-    expect(statSync(historyFile()).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(historyFile()).mode & 0o777).toBe(0o600);
+    } else {
+      // En Windows (NTFS), statSync no refleja permisos POSIX 0o600. El archivo esperado vive bajo el FORGE614_HOME temporal.
+      expect(statSync(historyFile()).isFile()).toBe(true);
+    }
     const entries = readFileSync(historyFile(), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ cwd: "/project", text: "mensaje que se guarda" });
