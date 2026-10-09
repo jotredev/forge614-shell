@@ -46,7 +46,7 @@ const report = {
   ],
 };
 
-const BIN = "/Users/tester/.forge614/engines/bin/forge614-engines";
+const BIN = enginesBinary("/Users/tester");
 
 /** Builds an Engines `run` double: `detect` returns `detectReport`, `capabilities --agent <id>` returns `capsFor(id)` and every call is recorded in `calls`. */
 function enginesDouble(detectReport: unknown, capsFor: (id: string) => Record<string, unknown>, calls: string[][] = []) {
@@ -242,7 +242,7 @@ test("planMcpInstall sends the exact Engines contract and reads the plan", async
     },
   });
   expect(calls).toEqual([[
-    "/Users/tester/.forge614/engines/bin/forge614-engines", "plan", "mcp-install",
+    BIN, "plan", "mcp-install",
     "--agent", "claude-code", "--name", "forge614-engram",
     "--command", "/Users/tester/.forge614/engram/bin/forge614-engram", "--args", "mcp",
   ]]);
@@ -286,7 +286,7 @@ test("applyEnginesPlan sends the plan id and reports the changed files", async (
       return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { planId: "plan-1", applied: true, changedFiles: ["/Users/tester/.claude.json"] } }), stderr: "" };
     },
   });
-  expect(calls).toEqual([["/Users/tester/.forge614/engines/bin/forge614-engines", "apply", "--plan-id", "plan-1"]]);
+  expect(calls).toEqual([[BIN, "apply", "--plan-id", "plan-1"]]);
   expect(result).toEqual({ applied: true, changedFiles: ["/Users/tester/.claude.json"] });
 });
 
@@ -311,7 +311,7 @@ test("planMcpRemove sends the same four flags as install and throws when the ent
     },
   })).rejects.toThrow("does not match what this system would have installed");
   expect(calls).toEqual([[
-    "/Users/tester/.forge614/engines/bin/forge614-engines", "plan", "mcp-remove",
+    BIN, "plan", "mcp-remove",
     "--agent", "claude-code", "--name", "forge614-engram",
     "--command", "/Users/tester/.forge614/engram/bin/forge614-engram", "--args", "mcp",
   ]]);
@@ -331,11 +331,11 @@ test("removeEngramMcpFromAgent plans and applies removal in one call", async () 
   });
   expect(calls).toEqual([
     [
-      "/Users/tester/.forge614/engines/bin/forge614-engines", "plan", "mcp-remove",
+      BIN, "plan", "mcp-remove",
       "--agent", "claude-code", "--name", "forge614-engram",
       "--command", "/Users/tester/.forge614/engram/bin/forge614-engram", "--args", "mcp",
     ],
-    ["/Users/tester/.forge614/engines/bin/forge614-engines", "apply", "--plan-id", "plan-remove-1"],
+    [BIN, "apply", "--plan-id", "plan-remove-1"],
   ]);
   expect(result).toEqual({ applied: true, changedFiles: ["/Users/tester/.claude.json"] });
 });
@@ -383,7 +383,7 @@ test("planMemoryInstall sends only --agent and reads the full plan", async () =>
     },
   });
   expect(calls).toEqual([[
-    "/Users/tester/.forge614/engines/bin/forge614-engines", "plan", "memory-install", "--agent", "claude-code",
+    BIN, "plan", "memory-install", "--agent", "claude-code",
   ]]);
   expect(plan).toEqual({
     planId: "plan-1",
@@ -712,7 +712,7 @@ test("verifyMemoryIntegration sends only --agent and reads the verification", as
     },
   });
   expect(calls).toEqual([[
-    "/Users/tester/.forge614/engines/bin/forge614-engines", "verify", "memory-integration", "--agent", "claude-code",
+    BIN, "verify", "memory-integration", "--agent", "claude-code",
   ]]);
   expect(verification).toEqual({
     agentId: "claude-code",
@@ -810,7 +810,7 @@ test("updateEngines sends the bare update command and reads the result", async (
       };
     },
   });
-  expect(calls).toEqual([["/Users/tester/.forge614/engines/bin/forge614-engines", "update"]]);
+  expect(calls).toEqual([[BIN, "update"]]);
   expect(result).toEqual({ updated: true, currentVersion: "1.3.0", latestVersion: "1.4.0" });
 });
 

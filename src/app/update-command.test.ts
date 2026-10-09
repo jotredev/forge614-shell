@@ -1,5 +1,9 @@
 import { expect, spyOn, test } from "bun:test";
+import { join } from "node:path";
 import { runUpdateCommand, type ShellSpawn } from "./update-command.ts";
+
+const ENGINES_BIN = join("/Users/tester", ".forge614", "engines", "bin", process.platform === "win32" ? "forge614-engines.exe" : "forge614-engines");
+const ENGRAM_BIN = join("/Users/tester", ".forge614", "engram", "bin", process.platform === "win32" ? "forge614-engram.exe" : "forge614-engram");
 
 function captureLogs(): { logs: string[]; errors: string[]; restore: () => void } {
   const logs: string[] = [];
@@ -159,8 +163,8 @@ test("never sends any command to Engines or Engram other than update / update --
         return { status: 0, stdout: JSON.stringify({ updated: false, previousVersion: "1.4.0", installedVersion: "1.4.0" }), stderr: "" };
       },
     });
-    expect(enginesCalls).toEqual([["/Users/tester/.forge614/engines/bin/forge614-engines", "update"]]);
-    expect(engramCalls).toEqual([["/Users/tester/.forge614/engram/bin/forge614-engram", "update", "--json"]]);
+    expect(enginesCalls).toEqual([[ENGINES_BIN, "update"]]);
+    expect(engramCalls).toEqual([[ENGRAM_BIN, "update", "--json"]]);
   } finally { restore(); process.exitCode = 0; }
 });
 
@@ -176,7 +180,7 @@ test("checks Engram's binary at its canonical path, never assuming PATH", async 
       engramBinaryExists: (path: string) => { checkedPaths.push(path); return false; },
       enginesRun: async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { updated: false, currentVersion: "1.4.0", latestVersion: "1.4.0" } }), stderr: "" }),
     });
-    expect(checkedPaths).toEqual(["/Users/tester/.forge614/engram/bin/forge614-engram"]);
+    expect(checkedPaths).toEqual([ENGRAM_BIN]);
   } finally { restore(); process.exitCode = 0; }
 });
 
@@ -197,8 +201,8 @@ test("passes FORGE614_HOME through to both dependency lookups when given", async
         return { status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { updated: false, currentVersion: "1.4.0", latestVersion: "1.4.0" } }), stderr: "" };
       },
     });
-    expect(enginesCalls[0]![0]).toBe("/custom/forge/engines/bin/forge614-engines");
-    expect(checkedPaths).toEqual(["/custom/forge/engram/bin/forge614-engram"]);
+    expect(enginesCalls[0]![0]).toBe(join("/custom/forge", "engines", "bin", process.platform === "win32" ? "forge614-engines.exe" : "forge614-engines"));
+    expect(checkedPaths).toEqual([join("/custom/forge", "engram", "bin", process.platform === "win32" ? "forge614-engram.exe" : "forge614-engram")]);
   } finally { restore(); process.exitCode = 0; }
 });
 

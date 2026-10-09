@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { applyEngramInit, locateEngramBinary } from "./forge614-engram.ts";
 import { ShellError, describeError } from "../shell-error.ts";
 
+const BIN = locateEngramBinary("/Users/tester");
+
 test("runs init --json only when PostgreSQL and reinforcement are both disabled", async () => {
   const calls: string[][] = [];
   const result = await applyEngramInit(
@@ -15,7 +17,7 @@ test("runs init --json only when PostgreSQL and reinforcement are both disabled"
       },
     },
   );
-  expect(calls).toEqual([["/Users/tester/.forge614/engram/bin/forge614-engram", "init", "--json"]]);
+  expect(calls).toEqual([[BIN, "init", "--json"]]);
   expect(result).toEqual({ initResult: { initialized: true, storage: "sqlite" }, reinforcementResult: null });
 });
 
@@ -29,7 +31,7 @@ test("adds --postgres-url to the same init call when PostgreSQL is enabled", asy
     },
   );
   expect(calls).toEqual([[
-    "/Users/tester/.forge614/engram/bin/forge614-engram", "init", "--json", "--postgres-url", "postgres://user:secret@host/db",
+    BIN, "init", "--json", "--postgres-url", "postgres://user:secret@host/db",
   ]]);
 });
 
@@ -52,8 +54,8 @@ test("runs reinforcement-enable after init when reinforcement is enabled", async
     },
   );
   expect(calls).toEqual([
-    ["/Users/tester/.forge614/engram/bin/forge614-engram", "init", "--json"],
-    ["/Users/tester/.forge614/engram/bin/forge614-engram", "reinforcement-enable"],
+    [BIN, "init", "--json"],
+    [BIN, "reinforcement-enable"],
   ]);
   expect(result.reinforcementResult).toEqual({ enabled: true, schema: 7 });
 });
@@ -70,7 +72,7 @@ test("does not call reinforcement-enable when init fails, and surfaces Engram's 
       },
     },
   )).rejects.toThrow("forge614-engram init failed: No se pudo conectar a PostgreSQL.");
-  expect(calls).toEqual([["/Users/tester/.forge614/engram/bin/forge614-engram", "init", "--json", "--postgres-url", "postgres://bad"]]);
+  expect(calls).toEqual([[BIN, "init", "--json", "--postgres-url", "postgres://bad"]]);
 });
 
 test("a reinforcement-enable failure names that command and says init already succeeded", async () => {
@@ -93,7 +95,7 @@ test("a binary that cannot be spawned reports Engram as unavailable, not a gener
     { home: "/Users/tester", run: async () => ({ status: null, stdout: "", stderr: "" }) },
   ).catch((thrown: Error) => thrown);
   expect((error as Error).message).toBe(
-    "Forge614 Engram is unavailable at /Users/tester/.forge614/engram/bin/forge614-engram. Install or reinstall Forge614 Engram to repair this dependency.",
+    `Forge614 Engram is unavailable at ${BIN}. Install or reinstall Forge614 Engram to repair this dependency.`,
   );
   expect((error as Error).message).not.toContain("Forge614 Engram command failed.");
 });
@@ -143,7 +145,7 @@ test("respects FORGE614_HOME when locating the Engram binary", async () => {
     { postgresUrl: null, reinforcement: false },
     { env: { FORGE614_HOME: "/custom/forge" } as NodeJS.ProcessEnv, run: async (command, args) => { calls.push([command, ...args]); return { status: 0, stdout: "{}", stderr: "" }; } },
   );
-  expect(calls[0]![0]).toBe("/custom/forge/engram/bin/forge614-engram");
+  expect(calls[0]![0]).toBe(join("/custom/forge", "engram", "bin", process.platform === "win32" ? "forge614-engram.exe" : "forge614-engram"));
 });
 
 test("rejects a result Engram did not report as JSON", async () => {
@@ -154,12 +156,12 @@ test("rejects a result Engram did not report as JSON", async () => {
 });
 
 test("locateEngramBinary resolves under the given home by default", () => {
-  expect(locateEngramBinary("/Users/tester")).toBe("/Users/tester/.forge614/engram/bin/forge614-engram");
+  expect(locateEngramBinary("/Users/tester")).toBe(BIN);
 });
 
 test("locateEngramBinary honors FORGE614_HOME over the given home", () => {
   expect(locateEngramBinary("/Users/tester", { FORGE614_HOME: "/custom/forge" } as NodeJS.ProcessEnv)).toBe(
-    "/custom/forge/engram/bin/forge614-engram",
+    join("/custom/forge", "engram", "bin", process.platform === "win32" ? "forge614-engram.exe" : "forge614-engram"),
   );
 });
 
@@ -188,7 +190,7 @@ test("updateEngram sends update --json and reads the result", async () => {
       return { status: 0, stdout: JSON.stringify({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" }), stderr: "" };
     },
   });
-  expect(calls).toEqual([["/Users/tester/.forge614/engram/bin/forge614-engram", "update", "--json"]]);
+  expect(calls).toEqual([[BIN, "update", "--json"]]);
   expect(result).toEqual({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" });
 });
 

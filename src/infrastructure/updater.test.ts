@@ -4,7 +4,7 @@ import { ShellError, describeError } from "../shell-error.ts";
 
 test("runs the bundled installer with --latest", async () => {
   const calls: string[][] = [];
-  await updateInstalledShell({ installer: "/tmp/release/install.sh", spawn: ((command: string, args: string[]) => {
+  await updateInstalledShell({ installer: "/tmp/release/install.sh", platform: "darwin", spawn: ((command: string, args: string[]) => {
     calls.push([command, ...args]);
     return { status: 0, stderr: "" } as never;
   }) as never });
@@ -17,7 +17,7 @@ test("reports installer diagnostics", async () => {
 
 test("runs the bundled installer with --uninstall", async () => {
   const calls: string[][] = [];
-  await uninstallInstalledShell({ installer: "/tmp/release/install.sh", spawn: ((command: string, args: string[]) => {
+  await uninstallInstalledShell({ installer: "/tmp/release/install.sh", platform: "darwin", spawn: ((command: string, args: string[]) => {
     calls.push([command, ...args]);
     return { status: 0, stderr: "" } as never;
   }) as never });
