@@ -1,0 +1,170 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: Unix checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run typecheck
+      - run: bun run build
+      - run: git diff --check
+      - run: bash -n scripts/install.sh
+
+  windows:
+    name: Windows checks
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - name: Disable Windows Defender real-time scanning for this job
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Set-MpPreference -DisableRealtimeMonitoring $true
+
+      - name: PowerShell syntax check
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("scripts/install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+          [System.Management.Automation.Language.Parser]::ParseFile("tests/windows/installer-defenses.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+
+      - name: Build release bundle
+        shell: pwsh
+        run: |
+          bun run bundle:release -- --out ${{ runner.temp }}\dist-release
+
+      - name: Minimal Windows installation, execution, idempotence and uninstall
+        shell: pwsh
+        run: |
+          $testHome = Join-Path $env:RUNNER_TEMP "forge614-ci-home"
+          $originalUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+
+          try {
+            # 1. Preparar fixture de Engines compatible
+            $enginesBin = Join-Path $testHome "engines\bin"
+            New-Item -ItemType Directory -Force -Path $enginesBin | Out-Null
+            $fakeEnginesExe = Join-Path $enginesBin "forge614-engines.exe"
+
+            $fakeTs = Join-Path $env:RUNNER_TEMP "fake-ci-engines.ts"
+            @'
+          const args = process.argv.slice(2);
+          if (args[0] === "detect") {
+            console.log(JSON.stringify({ schemaVersion: 1, agents: [] }));
+            process.exit(0);
+          }
+          if (args[0] === "capabilities") {
+            console.log(JSON.stringify({ schemaVersion: 1, id: "claude-code", supportsMcp: true, fullySupported: true }));
+            process.exit(0);
+          }
+          process.exit(64);
+          '@ | Set-Content -Path $fakeTs -Encoding UTF8
+
+            & bun build $fakeTs --compile --outfile $fakeEnginesExe
+            if ($LASTEXITCODE -ne 0) { throw "Error compilando fake engines para CI" }
+
+            # 2. Marcadores en engram/ y engines/
+            $engramDir = Join-Path $testHome "engram"
+            New-Item -ItemType Directory -Force -Path $engramDir | Out-Null
+            Set-Content -Path (Join-Path $engramDir "marker.txt") -Value "engram-safe"
+            Set-Content -Path (Join-Path $testHome "engines\marker.txt") -Value "engines-safe"
+
+            # 3. Instalación desde -Archive
+            $archiveFile = (Get-ChildItem -Path "${{ runner.temp }}\dist-release" -Filter "*.tar.gz" | Select-Object -First 1).FullName
+            $env:FORGE614_HOME = $testHome
+            & pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Archive $archiveFile
+            if ($LASTEXITCODE -ne 0) { throw "install.ps1 -Archive falló en la instalación inicial" }
+
+            $launcher = Join-Path $testHome "shell\bin\forge614-shell.cmd"
+            if (-not (Test-Path $launcher)) { throw "El lanzador no fue creado en $launcher" }
+
+            # 4. Ejecución real con Node
+            $versionOutput = & cmd.exe /c "`"$launcher`" --version"
+            Write-Host "forge614-shell.cmd --version: $versionOutput"
+            if ($versionOutput -notmatch "forge614-shell \d+\.\d+\.\d+") {
+              throw "Salida inesperada de --version: $versionOutput"
+            }
+
+            $helpOutput = & cmd.exe /c "`"$launcher`" --help"
+            if ($helpOutput -notmatch "Forge614-Shell") {
+              throw "Salida inesperada de --help"
+            }
+
+            # 5. Repetición idempotente
+            & pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Archive $archiveFile
+            if ($LASTEXITCODE -ne 0) { throw "install.ps1 falló en la repetición idempotente" }
+
+            $pathAfterRepeat = [Environment]::GetEnvironmentVariable("Path", "User")
+            $targetBin = Join-Path $testHome "shell\bin"
+            $occurrences = ($pathAfterRepeat -split ';' | Where-Object { $_ -ieq $targetBin }).Count
+            if ($occurrences -ne 1) {
+              throw "Entrada duplicada en PATH: $occurrences veces encontrada"
+            }
+
+            # 6. Desinstalación con -Yes
+            & pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Uninstall -Yes
+            if ($LASTEXITCODE -ne 0) { throw "install.ps1 -Uninstall -Yes falló" }
+
+            if (Test-Path (Join-Path $testHome "shell")) {
+              throw "La carpeta shell/ no fue eliminada tras desinstalar"
+            }
+
+            # 7. Marcadores en engram/ y engines/ preservados
+            if (-not (Test-Path (Join-Path $engramDir "marker.txt"))) {
+              throw "Desinstalación afectó indebidamente la carpeta engram/"
+            }
+            if (-not (Test-Path (Join-Path $testHome "engines\marker.txt"))) {
+              throw "Desinstalación afectó indebidamente la carpeta engines/"
+            }
+
+            # 8. PATH retirado exactamente
+            $pathAfterUninstall = [Environment]::GetEnvironmentVariable("Path", "User")
+            if ($pathAfterUninstall -split ';' | Where-Object { $_ -ieq $targetBin }) {
+              throw "La entrada $targetBin no fue retirada del PATH"
+            }
+
+            Write-Host "Verificación mínima completada con éxito."
+          } finally {
+            [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
+            Remove-Item -Recurse -Force $testHome -ErrorAction SilentlyContinue
+          }
+
+      - name: Comprehensive Windows installer defenses
+        shell: pwsh
+        run: |
+          & pwsh -NoProfile -ExecutionPolicy Bypass -File tests\windows\installer-defenses.ps1

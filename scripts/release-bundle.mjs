@@ -24,6 +24,8 @@ try {
   execFileSync(bun, ["build", "src/cli.ts", "--target=node", "--outdir", join(releaseRoot, "dist")], { cwd: root, stdio: "inherit" });
   await cp(join(root, "package.json"), join(releaseRoot, "package.json"));
   await cp(join(root, "scripts", "install.sh"), join(releaseRoot, "install.sh"));
+  await cp(join(root, "scripts", "install.ps1"), join(releaseRoot, "install.ps1"));
+  await cp(join(root, "scripts", "forge614-shell.cmd.template"), join(releaseRoot, "forge614-shell.cmd.template"));
   await cp(join(root, "extensions"), join(releaseRoot, "extensions"), { recursive: true });
   await chmod(join(releaseRoot, "dist", "cli.js"), 0o755);
   await chmod(join(releaseRoot, "install.sh"), 0o755);
@@ -32,6 +34,9 @@ try {
   execFileSync("tar", ["-czf", archive, "-C", stagingRoot, releaseName]);
   const checksum = createHash("sha256").update(await readFile(archive)).digest("hex");
   await writeFile(`${archive}.sha256`, `${checksum}  ${basename(archive)}\n`);
+  await cp(join(root, "scripts", "install.ps1"), join(output, "install.ps1"));
+  await cp(join(root, "scripts", "install.sh"), join(output, "install.sh"));
+  await chmod(join(output, "install.sh"), 0o755);
   console.log(`Created ${archive}`);
 } finally {
   await rm(stagingRoot, { recursive: true, force: true });

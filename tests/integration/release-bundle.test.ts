@@ -19,6 +19,10 @@ test.skipIf(process.platform === "win32")("release bundle installs outside the r
     const version = JSON.parse(await readFile("package.json", "utf8")).version;
     const packagedInstaller = join(unpacked, `forge614-shell-${version}`, "install.sh");
     expect(await readFile(packagedInstaller, "utf8")).toContain("--latest");
+    const packagedWindowsInstaller = join(unpacked, `forge614-shell-${version}`, "install.ps1");
+    expect(await readFile(packagedWindowsInstaller, "utf8")).toContain("-Latest");
+    const packagedCmdTemplate = join(unpacked, `forge614-shell-${version}`, "forge614-shell.cmd.template");
+    expect(await readFile(packagedCmdTemplate, "utf8")).toContain("__VERSION__");
 
     const enginesExecutable = join(installation, "engines", "bin", "forge614-engines");
     await mkdir(join(installation, "engines", "bin"), { recursive: true });
