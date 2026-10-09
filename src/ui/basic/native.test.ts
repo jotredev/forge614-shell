@@ -3,6 +3,7 @@ import { stripVTControlCharacters } from "node:util";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resetCapabilitiesCache, setCapabilityOverrides } from "@earendil-works/pi-tui";
 import type { Terminal } from "@earendil-works/pi-tui";
 import type { Approve } from "../../engines/types.ts";
 import { runNativeUI } from "./native.ts";
@@ -2345,6 +2346,8 @@ function screenRows(output: string): string[] {
 for (const locale of ["en", "es"] as const) {
   test(`links in a Codex answer open with a click and a failure is a warning line (${locale})`, async () => {
     const file = join(forgeHome, "notes.txt"); writeFileSync(file, "x");
+    // El runner puede anunciar hipervínculos desactivados; esta prueba fija la capacidad para medir el clic sobre enlaces.
+    setCapabilityOverrides({ trueColor: true, hyperlinks: true });
     const opened = { web: [] as string[], path: [] as string[] };
     let works = true;
     const tools: ChatLinkTools = { openWeb: async url => { opened.web.push(url); return works; }, openPath: async path => { opened.path.push(path); return works; } };
@@ -2360,9 +2363,6 @@ for (const locale of ["en", "es"] as const) {
       // La ruta absoluta puede ocupar varias filas; el nombre visible basta para ubicar el clic y el destino se compara completo.
       const web = where("https://example.com/docs"); const path = where("notes.txt");
       await click(web.x + 4, web.y); await click(path.x + 4, path.y);
-      if (opened.web.length === 0 && opened.path.length === 0) {
-        throw new Error(`[diag] ${JSON.stringify({ web, path, webRow: rowsBeforeClick[web.y], pathRow: rowsBeforeClick[path.y], osc8: [...h.terminal.output.matchAll(/\x1b\]8;/g)].length })}`);
-      }
       expect(opened).toEqual({ web: ["https://example.com/docs"], path: [file] });
       expect(screenRows(h.terminal.output).join("\n")).not.toContain(getCatalog(locale).chat.linkOpenFailed({ target: "https://example.com/docs" }));
       works = false;
@@ -2371,7 +2371,10 @@ for (const locale of ["en", "es"] as const) {
       const text = screenRows(h.terminal.output).join("\n");
       expect(text).toContain(getCatalog(locale).chat.linkOpenFailed({ target: "https://example.com/docs" }));
       expect(text).toContain(getCatalog(locale).chat.linkOpenFailed({ target: file }));
-    } finally { h.enter("/f614:quit"); await h.ui; }
+    } finally {
+      try { h.enter("/f614:quit"); await h.ui; }
+      finally { resetCapabilitiesCache(); }
+    }
   });
 }
 
