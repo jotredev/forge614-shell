@@ -2354,11 +2354,15 @@ for (const locale of ["en", "es"] as const) {
       h.rpc.onNotification("item/completed", { threadId: "t", turnId: "u", item: { type: "agentMessage", id: "a1", text: `Docs: https://example.com/docs and the notes ${file}:3`, phase: null, memoryCitation: null }, completedAtMs: 1 });
       h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
       await tick();
-      const where = (text: string) => { const rows = screenRows(h.terminal.output); const y = rows.findIndex(row => row.includes(text)); return { x: rows[y]!.indexOf(text), y }; };
+      const rowsBeforeClick = screenRows(h.terminal.output);
+      const where = (text: string) => { const y = rowsBeforeClick.findIndex(row => row.includes(text)); return { x: rowsBeforeClick[y]!.indexOf(text), y }; };
       const click = async (x: number, y: number) => { h.terminal.input(`\x1b[<0;${x + 1};${y + 1}M`); h.terminal.input(`\x1b[<0;${x + 1};${y + 1}m`); await tick(); };
       // La ruta absoluta puede ocupar varias filas; el nombre visible basta para ubicar el clic y el destino se compara completo.
       const web = where("https://example.com/docs"); const path = where("notes.txt");
       await click(web.x + 4, web.y); await click(path.x + 4, path.y);
+      if (opened.web.length === 0 && opened.path.length === 0) {
+        throw new Error(`[diag] ${JSON.stringify({ web, path, webRow: rowsBeforeClick[web.y], pathRow: rowsBeforeClick[path.y], osc8: [...h.terminal.output.matchAll(/\x1b\]8;/g)].length })}`);
+      }
       expect(opened).toEqual({ web: ["https://example.com/docs"], path: [file] });
       expect(screenRows(h.terminal.output).join("\n")).not.toContain(getCatalog(locale).chat.linkOpenFailed({ target: "https://example.com/docs" }));
       works = false;
