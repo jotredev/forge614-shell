@@ -57,6 +57,29 @@ jobs:
         timeout-minutes: 4
       - run: bun test src/engines/claude/session.test.ts src/engines/codex/session.test.ts src/engines/codex/outside-commands.test.ts
         timeout-minutes: 3
+      - run: >-
+          bun test
+          src/ui/basic/sidebar.test.ts
+          src/ui/basic/sidebar-resize.test.ts
+          src/ui/basic/status-panel.test.ts
+          src/ui/basic/status-bar-indicators.test.ts
+          src/ui/basic/shell-state.test.ts
+          src/ui/basic/resume-picker.test.ts
+          src/ui/basic/permission-choice.test.ts
+          src/ui/basic/composer-status.test.ts
+          src/ui/basic/metrics.test.ts
+          src/ui/basic/theme.test.ts
+          src/ui/basic/composer.test.ts
+          src/ui/basic/duration.test.ts
+          src/ui/basic/transcript.test.ts
+          src/ui/basic/logo.test.ts
+          src/ui/basic/diff.test.ts
+          src/ui/basic/tool-tracker.test.ts
+          src/ui/basic/chat-selection.test.ts
+          src/ui/basic/claude-model-display.test.ts
+          src/ui/basic/codex-thread-commands.test.ts
+          src/ui/basic/codex-commands.test.ts
+        timeout-minutes: 3
 
       - name: PowerShell syntax check
         shell: pwsh
