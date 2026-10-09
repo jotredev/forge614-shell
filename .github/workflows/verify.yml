@@ -55,6 +55,8 @@ jobs:
       - run: bun test src/ui/basic/chat-links.test.ts src/ui/basic/workspace-chrome.test.ts
       - run: bun test src/ui/basic/native.test.ts
         timeout-minutes: 4
+      - run: bun test src/engines/claude/session.test.ts src/engines/codex/session.test.ts src/engines/codex/outside-commands.test.ts
+        timeout-minutes: 3
 
       - name: PowerShell syntax check
         shell: pwsh
