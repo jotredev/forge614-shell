@@ -45,6 +45,19 @@ import { ShellError, describeError } from "../../shell-error.ts";
 
 const clean = (text: string) => stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
 
+/** Resume los bloques de imagen antes de serializar la vista previa; los bytes base64 no aportan información legible al chat. */
+function toolResultPreview(content: unknown): string {
+  const visible = Array.isArray(content) ? content.map(block => {
+    if (!block || typeof block !== "object") return block;
+    const record = block as Record<string, unknown>;
+    if (record.type !== "image") return block;
+    const source = record.source;
+    const mediaType = source && typeof source === "object" ? (source as Record<string, unknown>).media_type : undefined;
+    return typeof mediaType === "string" ? { type: "image", media_type: mediaType } : { type: "image" };
+  }) : content;
+  return clean(typeof visible === "string" ? visible : JSON.stringify(visible ?? "")).slice(0, 3000);
+}
+
 /** Strips a trailing context-window tag like "[1m]" — catalog rows carry it on `resolvedModel` (e.g. "claude-opus-5[1m]") but a live event reports the bare wire id ("claude-opus-5"), so an exact match misses. */
 function stripContextTag(id: string): string {
   return id.replace(/\[[^[\]]*\]$/, "");
@@ -423,8 +436,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       if (text.trim()) writeActivity(getCatalog(locale).backgroundActivity.noticeTitle, text, true);
     } else if (event.type === "user" && !event.parent_tool_use_id && Array.isArray(event.message.content)) {
       for (const block of event.message.content) if (block.type === "tool_result") {
-        const detail = typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
-        toolTracker.finished(block.tool_use_id, Boolean(block.is_error), clean(detail).slice(0, 3000));
+        toolTracker.finished(block.tool_use_id, Boolean(block.is_error), toolResultPreview(block.content));
       }
     }
     // The error result of a turn the person stopped is the stop itself: the line «Turn stopped» says it, so it is not shown a second time as an error.

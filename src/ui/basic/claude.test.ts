@@ -1599,6 +1599,22 @@ test("Claude UI: the tools of a subagent (events with a parent_tool_use_id) draw
   } finally { await h.finish(); }
 });
 
+test("Claude UI shows an image tool result without rendering its base64 payload", async () => {
+  const h = await claudeUi([], "en", undefined, 300);
+  try {
+    const data = "IMAGE_BASE64_PAYLOAD_SHOULD_NOT_RENDER_" + "A/".repeat(1500);
+    h.terminal.output = "";
+    h.emit(
+      { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "image-1", name: "mcp__blender__look", input: {} }] }, parent_tool_use_id: null, session_id: "s", uuid: "00000000-0000-4000-8000-0000000000e1" },
+      { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "image-1", content: [{ type: "text", text: "rendered view" }, { type: "image", source: { type: "base64", media_type: "image/png", data } }] }] }, parent_tool_use_id: null, session_id: "s", uuid: "00000000-0000-4000-8000-0000000000e2" },
+    );
+    for (let i = 0; i < 60 && !h.plain().includes("rendered view"); i++) await tick();
+    expect(h.plain()).toContain("rendered view");
+    expect(h.plain()).toContain("image/png");
+    expect(h.plain()).not.toContain("IMAGE_BASE64_PAYLOAD_SHOULD_NOT_RENDER_");
+  } finally { await h.finish(); }
+});
+
 // The up arrow brings back what the person sent, as the shells do (the editor has it; Shell fills it with each message or command sent).
 const promptsOf = (h: ClaudeHarness) => h.calls().filter(line => line.startsWith("prompt:"));
 const waitForPrompts = async (h: ClaudeHarness, count: number) => { for (let i = 0; i < 60 && promptsOf(h).length < count; i++) await tick(); };
