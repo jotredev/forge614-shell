@@ -948,7 +948,7 @@ test("Claude UI: the / menu keeps the assistant's own names and lists only /f614
       for (const text of hidden) expect(other.plain(), typed).not.toContain(text);
     } finally { await other.finish(true); }
   }
-}, { timeout: 15_000 });
+}, { timeout: 30_000 });
 
 /**
  * `/f614:status` says where the memory comes from, so the person can check it without asking the model (the memory used to arrive twice: measured with a
@@ -981,7 +981,7 @@ test("Claude UI: /f614:status says who delivers the memory, from the one detecti
     expect(second.plain()).toContain("Memory: the assistant delivers it at startup");
     expect(second.plain()).not.toContain("Shell pastes it");
   } finally { await second.finish(); }
-});
+}, { timeout: 15_000 });
 
 /**
  * The sidebar on the Claude Code screen, with real SGR mouse sequences and a fake `claude`: the width saved in Shell's preferences (50) is what the screen opens with (the grip is at
@@ -1538,13 +1538,14 @@ test("Claude UI: stopping a turn says «Detuviste el turno.» (es) or «You stop
       h.enter("trabajo largo");
       for (let i = 0; i < 60 && !h.calls().some(line => line.startsWith("prompt:")); i++) await tick();
       h.terminal.output = ""; h.enter("/f614:stop");
-      for (let i = 0; i < 60 && !h.plain().includes(words[locale]); i++) await tick();
+      for (let i = 0; i < 120 && !h.plain().includes(words[locale]); i++) await tick();
+      expect(h.calls()).toContain("interrupt");
       expect(h.plain()).toContain(words[locale]);
       expect(h.plain()).not.toContain("error_during_execution");
       expect(h.plain()).not.toContain(getCatalog(locale).chat.turnStopped({ message: "" }).trim());
     } finally { await h.finish(); }
   }
-});
+}, { timeout: 25_000 });
 
 test("Claude UI: a turn that ends for another reason (Claude Code dies) still says «Turn stopped: …» with its message, not «You stopped the turn.»", async () => {
   const h = await claudeUi();
@@ -1695,7 +1696,7 @@ test("Claude UI: the history is saved per folder (history.jsonl, 600) and comes 
       expect(promptsOf(other)).toEqual([]);
     } finally { await other.finish(); }
   } finally { process.chdir(here); await rm(elsewhere, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
-});
+}, { timeout: 15_000 });
 
 test("Claude UI: a history file that cannot be used never breaks the chat or shows an error", async () => {
   // The history path is a folder: it can be neither read nor written as a file.

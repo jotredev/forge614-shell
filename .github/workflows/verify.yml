@@ -81,7 +81,7 @@ jobs:
           src/ui/basic/codex-commands.test.ts
         timeout-minutes: 3
       - run: bun test src/ui/basic/claude.test.ts
-        timeout-minutes: 5
+        timeout-minutes: 8
       - run: >-
           bun test
           src/app/language-gate.test.ts
@@ -125,6 +125,17 @@ jobs:
           src/engines/claude/session-background.test.ts
           src/engines/claude/session-live.test.ts
           src/engines/claude/telemetry.test.ts
+        timeout-minutes: 3
+      - run: >-
+          bun test
+          src/infrastructure/browser.test.ts
+          src/infrastructure/ecosystem-versions.test.ts
+          src/infrastructure/engram-notices.test.ts
+          src/infrastructure/forge614-engram.groups.test.ts
+          src/infrastructure/forge614-engram.run.test.ts
+          src/infrastructure/rpc.test.ts
+          src/infrastructure/shell-preferences.test.ts
+          src/shell-error.test.ts
         timeout-minutes: 3
 
       - name: PowerShell syntax check

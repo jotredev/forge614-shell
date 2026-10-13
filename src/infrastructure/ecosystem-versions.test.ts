@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test";
+import { join } from "node:path";
 import { readEcosystemVersions } from "./ecosystem-versions.ts";
 import type { VersionTimers } from "./ecosystem-versions.ts";
 
-const ENGINES = "/forge/engines/bin/forge614-engines";
-const ENGRAM = "/forge/engram/bin/forge614-engram";
+// En Windows los ejecutables resueltos por enginesBinary y locateEngramBinary llevan extensión .exe y separadores nativos.
+const isWindows = process.platform === "win32";
+const ENGINES = join("/forge", "engines", "bin", isWindows ? "forge614-engines.exe" : "forge614-engines");
+const ENGRAM = join("/forge", "engram", "bin", isWindows ? "forge614-engram.exe" : "forge614-engram");
 const env = { FORGE614_HOME: "/forge" };
 
 /** Stand-in for the clock: records the delay of every timer asked for and lets the test fire them all at once, so nothing waits for real seconds. */
@@ -33,7 +36,10 @@ test("the versions are the last word of what each binary prints", async () => {
 test("without FORGE614_HOME the binaries are looked for under the home folder", async () => {
   const asked: string[] = [];
   await readEcosystemVersions({ env: {}, home: "/home/ana", exists: path => { asked.push(path); return false; }, run: async () => "" });
-  expect(asked).toEqual(["/home/ana/.forge614/engines/bin/forge614-engines", "/home/ana/.forge614/engram/bin/forge614-engram"]);
+  expect(asked).toEqual([
+    join("/home/ana", ".forge614", "engines", "bin", isWindows ? "forge614-engines.exe" : "forge614-engines"),
+    join("/home/ana", ".forge614", "engram", "bin", isWindows ? "forge614-engram.exe" : "forge614-engram"),
+  ]);
 });
 
 /** A binary that is not there is «missing» and is never run; the other one is still read. */
