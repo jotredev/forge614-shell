@@ -137,6 +137,12 @@ jobs:
           src/infrastructure/shell-preferences.test.ts
           src/shell-error.test.ts
         timeout-minutes: 3
+      - run: >-
+          bun test
+          tests/architecture/layers.test.ts
+          tests/integration/package-engines.test.ts
+          tests/integration/runtime.test.ts
+        timeout-minutes: 3
 
       - name: PowerShell syntax check
         shell: pwsh
