@@ -5,6 +5,7 @@ import { ActivityCard, chatMessage } from "./transcript.ts";
 import { ChatText } from "./theme.ts";
 import { lineDiff } from "./diff.ts";
 import { getCatalog } from "../../i18n/index.ts";
+import { ChatLinks } from "./chat-links.ts";
 
 /** These tests read exact RGB codes (the surface and the diff backgrounds), so they pin true color instead of depending on the terminal that runs the suite. */
 beforeAll(() => setCapabilityOverrides({ trueColor: true }));
@@ -99,6 +100,27 @@ test("tool card replaces progress with reported completion details", () => {
   const output = stripVTControlCharacters(card.render(60).join("\n"));
   expect(output).toContain("Completed · 1.2s"); expect(output).toContain("file contents");
   expect(output).not.toContain("Requested");
+});
+
+test("a stable tool card does not rescan its preview for links on every frame", () => {
+  const links = new ChatLinks({ cwd: process.cwd() });
+  const linkify = links.linkify.bind(links);
+  let scans = 0;
+  links.linkify = (text, paint) => { scans++; return linkify(text, paint); };
+  const card = new ActivityCard("Look", "Completed", "image/png preview", false, undefined, undefined, undefined, links);
+
+  card.render(80);
+  const firstFrameScans = scans;
+  expect(firstFrameScans).toBeGreaterThan(0);
+  card.render(80);
+  expect(scans).toBe(firstFrameScans);
+
+  card.update("Completed · 1s", "new preview");
+  expect(stripVTControlCharacters(card.render(80).join("\n"))).toContain("new preview");
+  expect(scans).toBeGreaterThan(firstFrameScans);
+  const updatedScans = scans;
+  card.render(40);
+  expect(scans).toBeGreaterThan(updatedScans);
 });
 
 /** Owner's point 15: grey tool lines used to touch the chat's left edge, further out than the assistant's «ASSISTANT · time» header and text, so they did not read as sub-tasks of that message. They must start further in than both, and the `└` preview further in than the bullet. */
