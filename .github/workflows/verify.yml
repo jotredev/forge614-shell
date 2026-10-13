@@ -117,6 +117,15 @@ jobs:
           src/engines/codex/subagents.test.ts
           src/engines/codex/transcript.test.ts
         timeout-minutes: 3
+      - run: >-
+          bun test
+          src/engines/claude/auth.test.ts
+          src/engines/claude/catalog.test.ts
+          src/engines/claude/panels.test.ts
+          src/engines/claude/session-background.test.ts
+          src/engines/claude/session-live.test.ts
+          src/engines/claude/telemetry.test.ts
+        timeout-minutes: 3
 
       - name: PowerShell syntax check
         shell: pwsh
