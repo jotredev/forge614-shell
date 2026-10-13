@@ -37,6 +37,9 @@ export function chatMessage(role: "user" | "assistant" | "system", content: stri
  * two are the cases where seeing the whole thing is the point.
  */
 export class ActivityCard implements Component {
+  private cachedWidth?: number;
+  private cachedRows?: string[];
+
   constructor(
     private readonly title: string,
     private status: string,
@@ -60,9 +63,10 @@ export class ActivityCard implements Component {
   update(status: string, detail?: string): void {
     this.status = status;
     if (detail !== undefined) { this.detail = detail; this.diffLines = undefined; }
+    this.invalidate();
   }
 
-  invalidate(): void {}
+  invalidate(): void { this.cachedWidth = undefined; this.cachedRows = undefined; }
 
   private summary(): string {
     return this.status ? `${this.title} · ${this.status}` : this.title;
@@ -93,7 +97,11 @@ export class ActivityCard implements Component {
   }
 
   render(width: number): string[] {
-    const rows = this.rows(width);
+    if (this.cachedWidth !== width || !this.cachedRows) {
+      this.cachedRows = this.rows(width);
+      this.cachedWidth = width;
+    }
+    const rows = this.cachedRows;
     return this.linkView ? this.linkView.decorate(rows) : rows;
   }
 
