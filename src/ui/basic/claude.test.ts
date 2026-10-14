@@ -370,7 +370,8 @@ else {
     for (let i = 0; i < 60 && !existsSync(marker); i++) await tick();
     expect(JSON.parse(readFileSync(marker, "utf8"))).toMatchObject({ behavior: "allow", updatedInput: { answers: { "¿Qué hago con la nave?": "Girarla" } } });
   } finally {
-    terminal.input("\x1b"); enter("/f614:quit"); await ui; await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    terminal.input("\x1b"); enter("/f614:quit"); await ui;
+    await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
     if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
     if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
