@@ -67,6 +67,30 @@ test("model picker applies arrow selection, cancels unchanged and never sends a 
   } finally { enter("/f614:quit"); await ui; }
 });
 
+test("a Codex question appears in Shell and returns the option the person chose", async () => {
+  const terminal = new TestTerminal(); const rpc = new FixtureRpc();
+  rpc.replies.set("initialize", {});
+  rpc.replies.set("account/read", { account: { type: "chatgpt", planType: "plus" }, requiresOpenaiAuth: true });
+  rpc.replies.set("model/list", { data: [{ model: "test-model", displayName: "Test model", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium" }] }], nextCursor: null });
+  rpc.replies.set("thread/start", { thread: { id: "t" }, model: "test-model", modelProvider: "openai" });
+  let askQuestions: ((questions: import("../../engines/types.ts").AgentQuestion[], signal: AbortSignal) => Promise<Record<string, string[]> | undefined>) | undefined;
+  const ui = runNativeUI("codex", "/project", (emit, approve, ask) => {
+    askQuestions = ask;
+    return new CodexSession(rpc, "/project", emit, approve);
+  }, terminal, undefined, "es");
+  const enter = (value: string) => { terminal.input(value); terminal.input("\r"); };
+  try {
+    await tick();
+    expect(typeof askQuestions).toBe("function");
+    const pending = askQuestions!([{ id: "direction", header: "Nave", question: "¿Qué hago con la nave?", isOther: true,
+      options: [{ label: "Crecer", description: "Ampliar" }, { label: "Girarla", description: "Rotar" }] }], new AbortController().signal);
+    await until(() => stripVTControlCharacters(terminal.output).includes("¿Qué hago con la nave?"));
+    expect(stripVTControlCharacters(terminal.output)).toContain("¿Qué hago con la nave?");
+    terminal.input("\x1b[B"); terminal.input("\r");
+    expect(await pending).toEqual({ direction: ["Girarla"] });
+  } finally { terminal.input("\x1b"); enter("/f614:quit"); await ui; }
+});
+
 /** Idea 26: `/permissions` offers only a mode Codex itself allows (here a single restriction, in the protocol's own values), with the name Codex's macOS menu uses. */
 test("/permissions offers only the modes Codex allows, with the names Codex uses", async () => {
   const terminal = new TestTerminal(); const rpc = new FixtureRpc();

@@ -167,6 +167,17 @@ export interface NativeEvent {
 export type CancelOutcome = "requested" | "no-active-turn" | "no-answer";
 export type Emit = (event: NativeEvent) => void;
 export type Approve = (description: string, signal: AbortSignal) => Promise<boolean>;
+/** An assistant's question, kept separate from a permission request. The answer uses `id` as its key. */
+export interface AgentQuestion {
+  id: string;
+  header: string;
+  question: string;
+  options: { label: string; description: string; preview?: string }[] | null;
+  multiSelect?: boolean;
+  isOther?: boolean;
+  isSecret?: boolean;
+}
+export type AskAgentQuestions = (questions: AgentQuestion[], signal: AbortSignal) => Promise<Record<string, string[]> | undefined>;
 /** A Yes/No question of Shell's own (disconnect, delete, stop, install, send data out): `no` comes first and is the marked row, `body` is what the question is about. */
 export interface ShellQuestion { title: string; no: string; yes: string; body?: string }
 /**

@@ -13,6 +13,7 @@ import type { ClaudeStatusInfo } from "../../engines/claude/panels.ts";
 import { emptyTelemetry, telemetryLines, updateTelemetry } from "../../engines/claude/telemetry.ts";
 import { createComposer } from "./composer.ts";
 import { askPermission, askQuit, askShellQuestion } from "./permission-choice.ts";
+import { askAgentQuestions } from "./agent-questions.ts";
 import { formatClaudePermission } from "../../engines/permission-text.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
@@ -361,10 +362,6 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       writeError(tc.permissionTooLarge({ tool }));
       return Promise.resolve(false);
     }
-    if (tool === "AskUserQuestion") {
-      write(tc.questionnaireUnsupported);
-      return Promise.resolve(false);
-    }
     return askApproval(formatClaudePermission(tool, value, { locale, cwd }), signal);
   };
   /** Puts `label` (already in words the person reads) in the permission queue and resolves when they answer it; answers one at a time, in order. */
@@ -444,7 +441,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     refresh();
   };
   // Claude Code is one open conversation: the events (also those that arrive between messages) and the permission questions belong to the session, set once here.
-  session.attach({ onEvent, approve });
+  session.attach({ onEvent, approve, askQuestions: (questions, signal) => askAgentQuestions(input, questions, signal, locale) });
   /** What the person hears when a message ends in a failure: «Turn stopped: …», and a lost account also leaves the box disconnected, as when the chat opens without one. */
   const messageFailed = (error: unknown) => {
     if (closed) return;

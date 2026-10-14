@@ -166,6 +166,36 @@ test("tool denial and cancellation cannot become permission approvals", async ()
   expect(session.busy).toBe(false);
 });
 
+test("AskUserQuestion sends the person's answer through updatedInput instead of denying the tool", async () => {
+  let decision: unknown;
+  const question = "¿Qué hago con la nave?";
+  const sdk = fakeSdk({ turn: async (message, fake) => {
+    decision = await fake.params.options.canUseTool!("AskUserQuestion", { questions: [{ header: "Nave", question, options: [
+      { label: "Crecer", description: "Ampliar" }, { label: "Girarla", description: "Rotar" },
+    ], multiSelect: false }] }, { signal: new AbortController().signal, toolUseID: "tool-q", requestId: "request-q" });
+    fake.emit(fakeResult([message.uuid!]));
+  } });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: sdk.connect });
+  session.attach({ askQuestions: async () => ({ [question]: ["Girarla"] }) });
+  await session.send("ask", () => {}, async () => false);
+  expect(decision).toMatchObject({ behavior: "allow", updatedInput: { answers: { [question]: "Girarla" } } });
+});
+
+test("AskUserQuestion preserves multiple selected labels as an array", async () => {
+  let decision: unknown;
+  const question = "Which features?";
+  const sdk = fakeSdk({ turn: async (message, fake) => {
+    decision = await fake.params.options.canUseTool!("AskUserQuestion", { questions: [{ header: "Features", question, options: [
+      { label: "A", description: "First" }, { label: "B", description: "Second" },
+    ], multiSelect: true }] }, { signal: new AbortController().signal, toolUseID: "tool-m", requestId: "request-m" });
+    fake.emit(fakeResult([message.uuid!]));
+  } });
+  const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: sdk.connect });
+  session.attach({ askQuestions: async () => ({ [question]: ["A", "B"] }) });
+  await session.send("ask", () => {}, async () => false);
+  expect(decision).toMatchObject({ behavior: "allow", updatedInput: { answers: { [question]: ["A", "B"] } } });
+});
+
 test("an interrupted transport is not reported as a successful turn", async () => {
   const session = new ClaudeSession({ cwd: "/tmp", executable: "claude", env: {}, authenticate: async () => {}, connect: queryFromRun(() => (async function* () {})()) });
   await expect(session.send("hello", () => {}, async () => false)).rejects.toThrow("without a result");

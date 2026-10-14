@@ -1,9 +1,10 @@
 import { stripVTControlCharacters } from "node:util";
 import { Container, HStack, ProcessTerminal, ScrollView, Text, VStack, matchesKey } from "@earendil-works/pi-tui";
 import type { Terminal } from "@earendil-works/pi-tui";
-import type { Approve, Emit, NativeEvent, NativeId, NativeSession, NativeSessionInfo } from "../../engines/types.ts";
+import type { AskAgentQuestions, Approve, Emit, NativeEvent, NativeId, NativeSession, NativeSessionInfo } from "../../engines/types.ts";
 import { createComposer } from "./composer.ts";
 import { askPermission, askQuit, askShellQuestion } from "./permission-choice.ts";
+import { askAgentQuestions } from "./agent-questions.ts";
 import { resumeChoice, sortRecentFirst } from "./resume-picker.ts";
 import { ShellState } from "./shell-state.ts";
 import { ShellSidebar } from "./sidebar.ts";
@@ -47,7 +48,7 @@ const realLocalTools: CodexLocalTools = {
 };
 
 export async function runNativeUI(
-  id: NativeId, cwd: string, createSession: (emit: Emit, approve: Approve) => NativeSession,
+  id: NativeId, cwd: string, createSession: (emit: Emit, approve: Approve, askQuestions: AskAgentQuestions) => NativeSession,
   terminal: Terminal = new ProcessTerminal(),
   version?: string,
   locale: Locale = "en",
@@ -436,7 +437,7 @@ export async function runNativeUI(
       else throw new Error(t.unknownCommand({ name: name ?? "" }));
     } finally { commandBusy = false; refresh(); }
   };
-  session = createSession(emit, approve);
+  session = createSession(emit, approve, (questions, signal) => askAgentQuestions(input, questions, signal, locale));
   const handlers = codexCommandHandlers({
     session, cwd, locale, local,
     write: text => { write(text); },
