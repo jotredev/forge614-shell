@@ -21,6 +21,8 @@ import { StatusPanels, attachStatusPanels } from "./status-panel.ts";
 import type { EcosystemVersions } from "../../infrastructure/ecosystem-versions.ts";
 import { ActivityCard } from "./transcript.ts";
 import { AssistantMessage, UserBubble } from "./chat-message.ts";
+import { TurnTranscript } from "./turn-transcript.ts";
+import { summarizeToolText } from "./tool-summary.ts";
 import { effortDescription, effortLabel } from "./metrics.ts";
 import { ChatText, danger, warning } from "./theme.ts";
 import { ChatLinks, enableTerminalLinks, realChatLinkTools } from "./chat-links.ts";
@@ -75,7 +77,7 @@ export async function runNativeUI(
   }, locale);
   const { surface, tui, copy } = chatScreen(terminal, links, panels, { locale });
   const composer = createComposer(tui, locale);
-  const transcript = new Container();
+  const transcript = new TurnTranscript();
   let transcriptScroll!: IndependentScrollView;
   const chatLogo = new ChatLogo(() => transcriptScroll.viewportRows, () => terminal.rows);
   transcript.addChild(chatLogo);
@@ -122,7 +124,7 @@ export async function runNativeUI(
   const writeNodeWarning = (message: string) => { transcript.addChild(nodeWarningRow(clean(t.nodeWarning({ message })))); tui.requestRender(); };
   /** A message of the person: a bubble on the right (see `UserBubble`). `at` is the time of a message replayed from history (`null`: unknown, no time shown); a live message leaves it out and takes the time of now. */
   const writeUser = (text: string, at?: number | null): void => {
-    transcript.addChild(new UserBubble(clean(text), { links, ...(at === undefined ? {} : { at }) }));
+    transcript.addChild(new UserBubble(clean(text), { locale, links, ...(at === undefined ? {} : { at }) }));
     tui.requestRender();
   };
   /** An answer of the agent, on the left; it gets its «Copy» button when `complete()` is called on it (see `AssistantMessage`). `at` as in `writeUser`. */
@@ -147,7 +149,10 @@ export async function runNativeUI(
     if (text.startsWith("You: ")) writeUser(text.slice(5), at);
     else if (text.startsWith("Tool:")) {
       const [title, ...detail] = text.slice(5).trim().split("\n");
-      writeActivity(title || tc.toolFallbackTitle, detail.join("\n") || tc.toolFallbackDetail);
+      // What Codex sends is the call's arguments as indented JSON, whose first line is a lone «{»: a line that says what the call asks goes first, and the JSON stays under it.
+      const arguments_ = detail.join("\n");
+      const summary = summarizeToolText(arguments_, getCatalog(locale));
+      writeActivity(title || tc.toolFallbackTitle, (summary !== arguments_ ? `${summary}\n${arguments_}` : arguments_) || tc.toolFallbackDetail);
     } else {
       const message = writeAssistant(text, at);
       // Only an answer replayed from a saved conversation (it carries `at`, a time or `null`) can be copied; the notices Shell itself sends as text (connected, disconnected…) have none and get no button.

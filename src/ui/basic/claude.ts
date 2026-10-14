@@ -30,6 +30,8 @@ import type { EcosystemVersions } from "../../infrastructure/ecosystem-versions.
 import { effortDescription, effortLabel, isDisplayableUsage } from "./metrics.ts";
 import { ActivityCard } from "./transcript.ts";
 import { AssistantMessage, UserBubble } from "./chat-message.ts";
+import { TurnTranscript } from "./turn-transcript.ts";
+import { toolResultPreview } from "./tool-summary.ts";
 import { lineDiff } from "./diff.ts";
 import { engramToolLabel, parseClaudeMcpToolName } from "../../engines/mcp-labels.ts";
 import { ChatText, PanelText, danger, warning } from "./theme.ts";
@@ -46,19 +48,6 @@ import type { Locale } from "../../i18n/index.ts";
 import { ShellError, describeError } from "../../shell-error.ts";
 
 const clean = (text: string) => stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
-
-/** Resume los bloques de imagen antes de serializar la vista previa; los bytes base64 no aportan información legible al chat. */
-function toolResultPreview(content: unknown): string {
-  const visible = Array.isArray(content) ? content.map(block => {
-    if (!block || typeof block !== "object") return block;
-    const record = block as Record<string, unknown>;
-    if (record.type !== "image") return block;
-    const source = record.source;
-    const mediaType = source && typeof source === "object" ? (source as Record<string, unknown>).media_type : undefined;
-    return typeof mediaType === "string" ? { type: "image", media_type: mediaType } : { type: "image" };
-  }) : content;
-  return clean(typeof visible === "string" ? visible : JSON.stringify(visible ?? "")).slice(0, 3000);
-}
 
 /** Strips a trailing context-window tag like "[1m]" — catalog rows carry it on `resolvedModel` (e.g. "claude-opus-5[1m]") but a live event reports the bare wire id ("claude-opus-5"), so an exact match misses. */
 function stripContextTag(id: string): string {
@@ -162,7 +151,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   }, locale);
   const { surface, tui, copy } = chatScreen(terminal ?? new ProcessTerminal(), links, panels, { locale });
   const composer = createComposer(tui, locale);
-  const transcript = new Container();
+  const transcript = new TurnTranscript();
   let transcriptScroll!: IndependentScrollView;
   const chatLogo = new ChatLogo(() => transcriptScroll.viewportRows, () => (terminal ?? surface).rows);
   transcript.addChild(chatLogo);
@@ -275,7 +264,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   };
   /** A message of the person: a bubble on the right (see `UserBubble`). */
   const writeUser = (text: string, at?: number | null): void => {
-    transcript.addChild(new UserBubble(clean(text), { links, ...(at === undefined ? {} : { at }) }));
+    transcript.addChild(new UserBubble(clean(text), { locale, links, ...(at === undefined ? {} : { at }) }));
     tui.requestRender();
   };
   /** An answer of the agent, on the left; it gets its «Copy» button when `complete()` is called on it (see `AssistantMessage`). `at: null` is a message replayed from a saved conversation, whose time is not known. */
@@ -450,7 +439,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       if (text.trim()) writeActivity(getCatalog(locale).backgroundActivity.noticeTitle, text, true);
     } else if (event.type === "user" && !event.parent_tool_use_id && Array.isArray(event.message.content)) {
       for (const block of event.message.content) if (block.type === "tool_result") {
-        toolTracker.finished(block.tool_use_id, Boolean(block.is_error), toolResultPreview(block.content));
+        toolTracker.finished(block.tool_use_id, Boolean(block.is_error), toolResultPreview(block.content, getCatalog(locale)));
       }
     }
     // The error result of a turn the person stopped is the stop itself: the line «Turn stopped» says it, so it is not shown a second time as an error.

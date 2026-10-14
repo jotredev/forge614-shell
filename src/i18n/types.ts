@@ -416,8 +416,15 @@ export interface Catalog {
     dateTime: (params: { month: string; day: string; time: string }) => string;
   };
   chatRoles: {
+    /** The label over the person's own messages, in the same quiet line the agent's name has. */
+    human: string;
     assistant: string;
     system: string;
+  };
+  /** The one short line a tool card shows for a result that is JSON (see `summarizeToolText`). */
+  toolSummary: {
+    results: (params: { count: number; titles: string }) => string;
+    session: (params: { id: string }) => string;
   };
   /** The grey action under each finished answer of the assistant, and what it says for a moment after copying. */
   chatCopy: {

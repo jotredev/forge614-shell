@@ -22,7 +22,7 @@ const answer = (text: string) => {
   message.setText(text); message.complete();
   return message;
 };
-transcript.addChild(new UserBubble("Review the logout behavior and explain what changes in this workspace."));
+transcript.addChild(new UserBubble("Review the logout behavior and explain what changes in this workspace.", { locale: "en" }));
 transcript.addChild(answer("I will inspect the connector and its tests. Your other terminal sessions keep their existing accounts."));
 transcript.addChild(new ActivityCard("Read · session.ts", "Inspected the local disconnect handler and account verification."));
 transcript.addChild(answer("**Local logout is scoped to Shell.** The startup account check now runs before your first message.\n\n```ts\nawait verifyNativeAccount();\nrenderWorkspace();\n```\n\nThe existing account is reused through the native engine."));

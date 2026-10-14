@@ -30,48 +30,63 @@ function assistant(text: string, options: { copy?: (text: string) => Promise<boo
   return { message, renders: () => renders };
 }
 
+const human = (text: string, at: number | null = null, locale: "es" | "en" = "es") => new UserBubble(text, { at, locale });
+const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
 for (const width of [60, 100, 160]) {
-  test(`la burbuja del propietario va a la derecha, con fondo y sin pasarse de dos tercios (ancho ${width})`, () => {
-    const rows = new UserBubble(LONG, { at: null }).render(width);
+  test(`el mensaje del propietario va a la derecha, sin fondo, con «Humano» arriba y sin pasarse de dos tercios (ancho ${width})`, () => {
+    const at = new Date(2026, 9, 14, 13, 43).getTime();
+    const rows = human(LONG, at).render(width);
     const text = plain(rows);
-    const bubble = text.filter(row => row.trim() !== "");
-    expect(bubble.length).toBeGreaterThan(0);
-    const maxBubble = Math.floor((width * 2) / 3);
+    const lines = text.filter(row => row.trim() !== "");
+    const maxBlock = Math.floor((width * 2) / 3);
     for (const row of text) expect(row.length).toBeLessThanOrEqual(width);
-    for (const row of bubble) {
-      // La burbuja (con su relleno de 1 espacio a cada lado) termina a 2 columnas del borde derecho y no pasa de dos tercios.
-      expect(row.length).toBe(width);
-      const bubbleStart = row.length - row.trimStart().length - 1; // el espacio de relleno es parte de la burbuja
-      expect(width - 2 - bubbleStart).toBeLessThanOrEqual(maxBubble);
-      expect(bubbleStart).toBeGreaterThan(0);
+    // La primera fila con texto es la línea gris «Humano · hora», pegada al margen derecho.
+    expect(lines[0]!.trim()).toBe(`Humano · ${clock(at)}`);
+    expect(lines[0]!.length).toBe(width - 2);
+    // El texto termina a 2 columnas del borde derecho y su bloque no pasa de dos tercios.
+    for (const row of lines.slice(1)) {
+      expect(row.length).toBe(width - 2);
+      expect(row.length - row.trimStart().length).toBeGreaterThan(0);
+      expect(width - 2 - (row.length - row.trimStart().length)).toBeLessThanOrEqual(maxBlock);
     }
-    expect(text.join(" ").replace(/\s+/g, " ")).toContain("Esta es una frase bastante larga");
+    expect(lines.slice(1).map(row => row.trim()).join(" ")).toContain("Esta es una frase bastante larga");
     expect(text.join("\n")).not.toContain("##");
-    expect(text.join("\n")).not.toContain("TÚ");
-    expect(rows.filter(row => row.includes(SURFACE)).length).toBe(bubble.length);
+    // Sin fondo: ningún código de fondo en ninguna fila, y la hora de abajo ya no existe.
+    expect(rows.join("")).not.toMatch(/\x1b\[48;/);
+    expect(text.at(-1)!.trim()).not.toBe(clock(at));
   });
 }
 
 test("un mensaje corto queda pegado al margen derecho, a 2 columnas del borde", () => {
-  const row = plain(new UserBubble("hola", { at: null }).render(100)).find(line => line.includes("hola"))!;
-  expect(row.length).toBe(100);
-  expect(row.endsWith(" hola   ")).toBe(true); // relleno de la burbuja + 2 de margen
+  const row = plain(human("hola").render(100)).find(line => line.includes("hola"))!;
+  expect(row.length).toBe(98);
+  expect(row.endsWith("hola")).toBe(true);
 });
 
-test("el texto de la burbuja se parte dentro de ella: toda fila con texto lleva fondo y el mismo ancho", () => {
-  const rows = new UserBubble(LONG, { at: null }).render(60).filter(row => stripVTControlCharacters(row).trim() !== "");
-  expect(rows.length).toBeGreaterThan(1);
-  const widths = new Set(rows.map(row => stripVTControlCharacters(row).trimStart().length));
-  expect(widths.size).toBe(1);
-  for (const row of rows) expect(row).toContain(SURFACE);
+test("el texto se parte dentro del ancho máximo y conserva sus saltos de línea, todas las filas alineadas al mismo borde", () => {
+  const rows = plain(human(`${LONG}\n\nsegunda línea`).render(60)).filter(row => row !== "");
+  expect(rows.length).toBeGreaterThan(3);
+  for (const row of rows) expect(row.length).toBeLessThanOrEqual(58);
+  const text = rows.slice(1).map(row => row.trim());
+  expect(text.at(-1)).toBe("segunda línea");
+  expect(plain(human(`${LONG}\n\nsegunda línea`).render(60)).filter(row => row === "").length).toBeGreaterThanOrEqual(2); // fila de aire arriba y la línea en blanco del texto
 });
 
-test("la hora de la burbuja va pequeña y en gris bajo ella; sin hora (conversación retomada) no hay fila de hora", () => {
-  const at = new Date(2026, 9, 14, 11, 52).getTime();
-  const withTime = plain(new UserBubble("hola", { at }).render(60));
-  expect(withTime.at(-1)!.trim()).toBe(new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
-  const without = plain(new UserBubble("hola", { at: null }).render(60));
-  expect(without.filter(row => row.trim() !== "")).toEqual([expect.stringContaining("hola")]);
+test("«Humano» en español y «Human» en inglés; sin hora conocida (conversación retomada) queda solo la palabra", () => {
+  const at = new Date(2026, 9, 14, 13, 43).getTime();
+  expect(plain(human("hola", at, "en").render(60)).find(row => row.includes("Human"))!.trim()).toBe(`Human · ${clock(at)}`);
+  expect(plain(human("hola", null, "es").render(60)).find(row => row.includes("Humano"))!.trim()).toBe("Humano");
+});
+
+test("la línea «Humano» tiene el mismo formato y color que la del agente", () => {
+  const user = human("hola", Date.now()).render(80).find(row => row.includes("Humano"))!;
+  const agent = new AssistantMessage({ agent: "Claude", locale: "es", copy: async () => true, onChange: () => {} });
+  agent.setText("ok");
+  const line = agent.render(80).find(row => row.includes("Claude"))!;
+  const color = (row: string) => /\x1b\[38;2;\d+;\d+;\d+m/.exec(row)![0];
+  expect(color(user)).toBe(color(line));
+  expect(stripVTControlCharacters(user).trim().replace(/^\S+/, "")).toBe(stripVTControlCharacters(line).trim().replace(/^\S+/, ""));
 });
 
 test("la respuesta del agente va a la izquierda, con margen de 2 columnas y un ancho de lectura máximo", () => {
