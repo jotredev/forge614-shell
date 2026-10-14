@@ -1,6 +1,6 @@
 import type { RpcConnection } from "../../infrastructure/rpc.ts";
 import type {
-  Approve, CancelOutcome, Confirm, Emit, NativeAccountUsage, NativeDetour, NativeEvent, NativeSideStart, NativeApp, NativeAutoReviewDenial, NativeBackgroundTerminal, NativeCollaborationMode, NativeConfigWrite, NativeFeature,
+  AgentQuestion, AskAgentQuestions, Approve, CancelOutcome, Confirm, Emit, NativeAccountUsage, NativeDetour, NativeEvent, NativeSideStart, NativeApp, NativeAutoReviewDenial, NativeBackgroundTerminal, NativeCollaborationMode, NativeConfigWrite, NativeFeature,
   NativeFeedbackCategory, NativeGoal, NativeHook, NativeImportDetection, NativeImportItem, NativeImportSource, NativeMcpServer, NativeMemorySettings, NativeModel,
   NativePlugin, NativePluginDetail, NativeRecapResult, NativeReviewTarget, NativeSession, NativeSessionInfo, NativeSkill, NativeSubagent, NativeSubagentList, NativeVisualState,
   NativeWorkMode, WorkModeChange,
@@ -277,6 +277,7 @@ export class CodexSession implements NativeSession {
      * connection) is followed by a reconnection that resumes the same conversation; without it the connection stays closed and the person is told to restart Shell.
      */
     private reconnectFn?: () => RpcConnection,
+    private askQuestions?: AskAgentQuestions,
   ) {
     this.locale = locale;
     this.auth = this.t.notLoggedIn;
@@ -1649,8 +1650,24 @@ export class CodexSession implements NativeSession {
     if (method === "item/permissions/requestApproval") return { permissions: {}, scope: "turn" };
     if (method === "mcpServer/elicitation/request") return { action: "decline", content: null };
     if (method === "item/tool/requestUserInput") {
-      this.emit({ type: "text", text: this.t.questionnaireUnsupported });
-      return { answers: {} };
+      if (this.detourState && params.threadId !== this.detourState.threadId && params.threadId === this.sessionId) await this.holdForMainThread();
+      const detour = this.detourState && params.threadId === this.detourState.threadId ? this.detourState : undefined;
+      const signal = (detour ? detour.aborted : this.aborted).signal;
+      const scoped = detour
+        ? detour.kind === "side" && detour.busy && (!detour.turnId || params.turnId === detour.turnId)
+        : this.mainWorking && params.threadId === this.sessionId && (!this.turnId || params.turnId === this.turnId);
+      const raw: unknown = params.questions;
+      const questions: AgentQuestion[] = Array.isArray(raw) ? raw.filter((entry): entry is Record<string, unknown> =>
+        typeof entry === "object" && entry !== null && typeof entry.id === "string" &&
+        typeof entry.header === "string" && typeof entry.question === "string" &&
+        (entry.options === null || Array.isArray(entry.options)))
+        .map(entry => ({ id: entry.id as string, header: entry.header as string, question: entry.question as string,
+          options: entry.options as AgentQuestion["options"], isOther: entry.isOther === true, isSecret: entry.isSecret === true })) : [];
+      if (!scoped || !Array.isArray(raw) || !questions.length || questions.length !== raw.length || JSON.stringify(params).length > 20000 || !this.askQuestions)
+        return { answers: {} };
+      const selected = await this.askQuestions(questions, signal);
+      if (!selected || signal.aborted || questions.some(question => !selected[question.id])) return { answers: {} };
+      return { answers: Object.fromEntries(questions.map(question => [question.id, { answers: selected[question.id]! }])) };
     }
     throw new ShellError("codex-unsupported-request");
   }

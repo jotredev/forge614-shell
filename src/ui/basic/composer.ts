@@ -199,7 +199,7 @@ export class ForgeComposer extends Editor {
   private fileChoices: ComposerChoice[] = [];
   private picker?: { title: string; items: ComposerChoice[]; searchable: boolean; numbered: boolean; footer?: string; body?: string; resolve: (value?: string) => void };
   /** An open text question (`ask`): the box takes the answer, Enter gives it back and Esc gives back nothing. */
-  private textPrompt?: { title: string; placeholder: string; body?: string; resolve: (value?: string) => void };
+  private textPrompt?: { title: string; placeholder: string; body?: string; secret?: boolean; resolve: (value?: string) => void };
   private pickerQuery = "";
   private repaint: () => void;
   /** When the flash that follows Working → Ready began (clock milliseconds), and the stop function of the repaint timer while one runs. */
@@ -233,11 +233,11 @@ export class ForgeComposer extends Editor {
    * an explanation that goes away with the question) drawn above it. Enter resolves the answer trimmed (empty when nothing was written), Esc resolves nothing.
    * While it is open «/» is text: the command menu does not open and Enter runs no command.
    */
-  ask(title: string, placeholder: string, options: { body?: string } = {}): Promise<string | undefined> {
+  ask(title: string, placeholder: string, options: { body?: string; secret?: boolean } = {}): Promise<string | undefined> {
     this.cancelChoice();
     this.setText("");
     return new Promise(resolve => {
-      this.textPrompt = { title, placeholder, ...(options.body ? { body: options.body } : {}), resolve };
+      this.textPrompt = { title, placeholder, ...(options.body ? { body: options.body } : {}), ...(options.secret ? { secret: true } : {}), resolve };
       this.repaint();
     });
   }
@@ -466,7 +466,10 @@ export class ForgeComposer extends Editor {
     const t = getCatalog(this.locale).chat;
     const innerWidth = Math.max(1, width - 4);
     if (width < 10) return super.render(Math.max(1, width));
-    const editor = super.render(innerWidth).slice(1, -1);
+    // A secret answer stays in the editor for submission, but its rendered text never reaches the terminal.
+    const editor = this.textPrompt?.secret
+      ? ["•".repeat(Array.from(this.getText()).length)]
+      : super.render(innerWidth).slice(1, -1);
     const shown = this.shownStatus();
     const now = this.clock.now();
     this.syncRepaintTimer(now);

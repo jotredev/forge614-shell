@@ -337,7 +337,6 @@ export interface Catalog {
     requiresInteractiveTerminal: string;
     catalogLoadFailed: string;
     permissionTooLarge: (params: { tool: string }) => string;
-    questionnaireUnsupported: string;
     claudeError: (params: { message: string }) => string;
     finishOrStopFirst: string;
     /** A command of Claude Code's own that Shell has not connected yet (`/status`, `/help`): said honestly, never as an unknown command. */
@@ -592,7 +591,6 @@ export interface Catalog {
     loginCompleted: string;
     loginFailed: (params: { detail: string }) => string;
     cancelled: string;
-    questionnaireUnsupported: string;
     engineErrorFallback: string;
     /** What the person is told, once, when `/f614:stop` ends the turn on Shell's side: Codex did not answer in time (the connection is closed), or said no turn was running. */
     stopNoAnswer: string;

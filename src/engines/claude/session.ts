@@ -10,7 +10,7 @@ import type { getStartupContext } from "../../infrastructure/forge614-engram.ts"
 import { ShellError } from "../../shell-error.ts";
 import { claudeMcpState } from "../mcp-status.ts";
 import type { McpServerState } from "../mcp-status.ts";
-import type { BackgroundActivity, BackgroundActivityKind, NativeWorkMode, WorkModeChange } from "../types.ts";
+import type { AgentQuestion, AskAgentQuestions, BackgroundActivity, BackgroundActivityKind, NativeWorkMode, WorkModeChange } from "../types.ts";
 
 /**
  * The error a message ends with when the person stopped the turn (`/f614:stop`) and Claude Code answered with its error result. The screen says it in plain words («You stopped the turn.»)
@@ -204,6 +204,7 @@ function readInit(event: Record<string, any>): ClaudeInitInfo {
 export interface ClaudeHandlers {
   onEvent?: (event: SDKMessage) => void;
   approve?: (tool: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<boolean>;
+  askQuestions?: AskAgentQuestions;
 }
 
 /** What opening the query may be told: the account was just verified by the caller (the screen checks it when the chat opens), so the session does not check it a second time. */
@@ -340,6 +341,24 @@ export class ClaudeSession {
       ...(this.model ? { model: this.model } : {}),
       ...(this.effort ? { effort: this.effort } : {}),
       canUseTool: async (tool, input, context) => {
+        if (tool === "AskUserQuestion") {
+          const raw = input.questions;
+          const questions: AgentQuestion[] = Array.isArray(raw) ? raw.filter((entry): entry is Record<string, unknown> =>
+            typeof entry === "object" && entry !== null && typeof entry.question === "string" &&
+            typeof entry.header === "string" && Array.isArray(entry.options) &&
+            entry.options.every((option: unknown) => typeof option === "object" && option !== null &&
+              "label" in option && typeof option.label === "string" && "description" in option && typeof option.description === "string"))
+            .map(entry => ({ id: entry.question as string, question: entry.question as string, header: entry.header as string,
+              options: entry.options as AgentQuestion["options"], multiSelect: entry.multiSelect === true, isOther: true })) : [];
+          if (!Array.isArray(raw) || !questions.length || questions.length !== raw.length || !this.handlers.askQuestions)
+            return { behavior: "deny", message: "The user question could not be shown." };
+          const selected = await this.handlers.askQuestions(questions, context.signal);
+          if (!selected || context.signal.aborted || questions.some(question => !selected[question.id]))
+            return { behavior: "deny", message: "The user did not answer this question." };
+          const answers = Object.fromEntries(questions.map(question => [question.question,
+            question.multiSelect ? selected[question.id]! : selected[question.id]![0] ?? ""]));
+          return { behavior: "allow", updatedInput: { ...input, answers } };
+        }
         const allowed = this.handlers.approve ? await this.handlers.approve(tool, input, context.signal) : false;
         return allowed && !context.signal.aborted
           ? { behavior: "allow", updatedInput: input }

@@ -124,6 +124,24 @@ test("Codex streams a turn, scopes events and never grants denied permissions", 
   expect(session.busy).toBe(false);
 });
 
+test("Codex requestUserInput returns answers keyed by question id and never treats them as approvals", async () => {
+  const rpc = turnFixture(null);
+  const session = new CodexSession(rpc, "/project", () => {}, async () => { throw new Error("permission prompt is not a questionnaire"); },
+    undefined, undefined, "en", undefined, undefined, async () => ({ direction: ["Girarla"] }));
+  await session.initialize();
+  await session.openConversation();
+  const pending = session.send("ask");
+  await new Promise(resolve => setImmediate(resolve));
+  const answer = await rpc.onRequest("item/tool/requestUserInput", {
+    threadId: "t", turnId: "u", itemId: "q", isBlocking: true, autoResolutionMs: null,
+    questions: [{ id: "direction", header: "Direction", question: "What should happen?", isOther: true, isSecret: false,
+      options: [{ label: "Crecer", description: "Grow" }, { label: "Girarla", description: "Rotate" }] }],
+  });
+  expect(answer).toEqual({ answers: { direction: { answers: ["Girarla"] } } });
+  rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+  await pending;
+});
+
 /**
  * Minimal copy of what the Codex app-server accepts, taken from the protocol generated with
  * `codex app-server generate-ts` (codex-cli 0.159.0): `v2/AskForApproval.ts` (plus the object form

@@ -332,6 +332,60 @@ else {
   }
 });
 
+test("Claude UI shows AskUserQuestion and sends the chosen answer to the SDK", async () => {
+  const root = await mkdtemp(join(tmpdir(), "forge614-question-ui-"));
+  const executable = testExecutablePath(root); const marker = join(root, "answer");
+  const terminal = new TestTerminal(); let ui: Promise<void> | undefined;
+  const enter = (text: string) => { terminal.input(text); terminal.input("\r"); };
+  const plain = () => stripVTControlCharacters(terminal.output);
+  const previousForgeHome = process.env.FORGE614_HOME;
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  process.env.FORGE614_HOME = join(root, "forge614-home");
+  process.env.HOME = join(root, "home");
+  process.env.USERPROFILE = join(root, "home");
+  process.env.CLAUDE_CONFIG_DIR = join(root, "claude-config");
+  try {
+    await writeTestExecutable(executable, `const fs=require('fs'); let last;
+if(process.argv[2]==='auth') { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); }
+else {
+  require('readline').createInterface({input:process.stdin}).on('line',line=>{
+    const msg=JSON.parse(line);
+    if(msg.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:msg.request_id,response:{models:[],account:{email:'test@example.com'},commands:[],agents:[],output_style:'default',available_output_styles:[]}}}));
+    if(msg.type==='user') { last=msg.uuid; console.log(JSON.stringify({type:'control_request',request_id:'question-1',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions:[{header:'Nave',question:'¿Qué hago con la nave?',options:[{label:'Crecer',description:'Ampliar'},{label:'Girarla',description:'Rotar'}],multiSelect:false}]},tool_use_id:'tool-q'}})); }
+    if(msg.type==='control_response' && msg.response.response?.behavior) {
+      fs.writeFileSync(${JSON.stringify(marker)},JSON.stringify(msg.response.response));
+      console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,duration_ms:1,duration_api_ms:1,num_turns:1,result:'ok',session_id:'s1',total_cost_usd:0,usage:{},modelUsage:{},permission_denials:[],user_message_uuids:[last],uuid:'result-'+Date.now()}));
+    }
+  });
+}`);
+    ui = startClaudeUI([], executable, terminal, undefined, "es");
+    for (let i = 0; i < 60 && !plain().includes("test@example.com"); i++) await tick();
+    enter("Necesito decidir");
+    for (let i = 0; i < 60 && !plain().includes("¿Qué hago con la nave?"); i++) await tick();
+    expect(plain()).toContain("¿Qué hago con la nave?");
+    expect(plain()).toContain("Girarla");
+    terminal.input("\x1b[B"); terminal.input("\r");
+    for (let i = 0; i < 60 && !existsSync(marker); i++) await tick();
+    expect(JSON.parse(readFileSync(marker, "utf8"))).toMatchObject({ behavior: "allow", updatedInput: { answers: { "¿Qué hago con la nave?": "Girarla" } } });
+  } finally {
+    terminal.input("\x1b"); enter("/f614:quit"); await ui;
+    for (let attempt = 0; ; attempt++) {
+      try { await rm(root, { recursive: true, force: true }); break; }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (attempt === 49 || (code !== "EPERM" && code !== "EBUSY" && code !== "ENOTEMPTY")) throw error;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
+    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+  }
+});
+
 /**
  * Came out of the real-account test: in a copy under a long path the «Carpeta:» line was broken in the middle of a folder name.
  * The session works in a deep folder of the test's own making, so the screen must show the last folders whole behind «…»

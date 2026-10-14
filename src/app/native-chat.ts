@@ -1,6 +1,6 @@
 import { startNativeProcess } from "../engines/process.ts";
 import { CodexSession } from "../engines/codex/session.ts";
-import type { Approve, Emit, NativeId } from "../engines/types.ts";
+import type { AskAgentQuestions, Approve, Emit, NativeId } from "../engines/types.ts";
 import type { RpcConnection } from "../infrastructure/rpc.ts";
 import { runNativeUI } from "../ui/basic/native.ts";
 import { openLoginBrowser } from "../infrastructure/browser.ts";
@@ -37,12 +37,13 @@ export type StartProcess = (id: NativeId, executable: string, cwd: string, env: 
  */
 export function createCodexSession(
   id: NativeId, executable: string, cwd: string, emit: Emit, approve: Approve, locale: Locale, start: StartProcess = startNativeProcess,
+  askQuestions?: AskAgentQuestions,
 ): CodexSession {
   const open = () => start(id, executable, cwd, process.env, text => emit({ type: "text", text }));
   // Engram's notices reach the person as transcript text; the session never knows about them.
   const startupContext = withStartupNotices(codexStartupContext, text => emit({ type: "text", text }), locale);
   // Engines' startup hook already delivers the memory to Codex when `verify memory-integration` (and the session's `hooks/list`) says so.
-  return new CodexSession(open(), cwd, emit, approve, openLoginBrowser, startupContext, locale, createMemoryHookProbe("codex", { env: process.env }), open);
+  return new CodexSession(open(), cwd, emit, approve, openLoginBrowser, startupContext, locale, createMemoryHookProbe("codex", { env: process.env }), open, askQuestions);
 }
 
 // Composition root: views render sessions; they do not construct transports.
@@ -51,5 +52,5 @@ export async function startNativeUI(id: NativeId, executable: string, args: stri
   if (args.length) throw new Error(t.nativeCliOptionsUnsupported({ id }));
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error(t.nativeRequiresInteractiveTerminal);
   const cwd = process.cwd();
-  await runNativeUI(id, cwd, (emit, approve) => createCodexSession(id, executable, cwd, emit, approve, locale), undefined, version, locale, undefined, undefined, readVersions);
+  await runNativeUI(id, cwd, (emit, approve, askQuestions) => createCodexSession(id, executable, cwd, emit, approve, locale, startNativeProcess, askQuestions), undefined, version, locale, undefined, undefined, readVersions);
 }
