@@ -106,6 +106,8 @@ export const addedBackground = background(palette.addedBackground);
 export const removedBackground = background(palette.removedBackground);
 /** The general background and normal text color of the whole screen, as the one escape sequence the terminal gets when Shell enters its alternate screen. */
 export const workspaceColors = () => `\x1b[${sgr(48, palette.background)}m\x1b[${sgr(38, palette.foreground)}m`;
+/** Only the general background of the screen: what the workspace puts back after every `\x1b[49m`, which on its own would hand the rest of the row to the terminal's own default background. */
+export const workspaceBackground = () => `\x1b[${sgr(48, palette.background)}m`;
 export const fit = (text: string, width: number) => {
   const clipped = truncateToWidth(text, Math.max(0, width), "…");
   return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
@@ -242,7 +244,9 @@ export class ChatText extends Markdown {
   }
 
   override render(width: number): string[] {
-    const rows = super.render(width).filter(row => !row.includes(DROP_ROW));
+    // pi-tui pads each row to the width after cutting it (`markdown.js:236-241`), and when a background — an inline code — is still open at the end of a cut row because the code goes on in the next one, the padding is
+    // painted with it up to the edge. The background is closed right before that padding.
+    const rows = super.render(width).filter(row => !row.includes(DROP_ROW)).map(row => row.includes("\x1b[48;") ? row.replace(/( +)$/, "\x1b[49m$1") : row);
     return this.linkView ? this.linkView.decorate(rows) : rows;
   }
 }
