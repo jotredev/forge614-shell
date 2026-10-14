@@ -82,6 +82,8 @@ class TestTerminal implements Terminal {
   moveBy() {} hideCursor() {} showCursor() {} clearLine() {} clearFromCursor() {} clearScreen() {} setTitle() {} setProgress() {}
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 35));
+/** Waits until `ready()` holds, for at most `ms`: a runner as slow as Windows' needs longer than a fixed number of `tick`s, and a test that gives up waiting early fails on its assertion after its own timeout already ended it. */
+const waitUntil = async (ready: () => boolean, ms = 20_000) => { const end = Date.now() + ms; while (!ready() && Date.now() < end) await tick(); };
 
 test("Claude UI accepts logout consent and stop while auth is pending, without sending a model message", async () => {
   const root = await mkdtemp(join(tmpdir(), "forge614-logout-ui-"));
@@ -492,11 +494,12 @@ test("Claude UI: the /logout question has its own words and «No» marked; Enter
       expect(h.plain()).toContain(cancelled); expect(h.plain()).not.toContain(done);
       // Picking «Yes» disconnects.
       h.terminal.output = ""; h.enter("/logout"); await tick(); h.terminal.input("\x1b[B"); h.terminal.input("\r");
-      for (let i = 0; i < 30 && !h.plain().includes(done); i++) await tick();
+      await waitUntil(() => h.plain().includes(done));
       expect(h.plain()).toContain(done);
     } finally { await h.finish(); }
   }
-});
+// Two full screens (one per language): on windows-latest, Verify 38630188626 (872043f) took longer than the default 5 s and the timed-out run dragged the next tests down with it.
+}, { timeout: 30_000 });
 
 /**
  * A Claude Code screen over a fake `claude` that is signed in, reports `commands` as the assistant's own list, never answers a
@@ -645,7 +648,8 @@ test("the Claude screen takes Node's warning printer while it is open and gives 
   const after = process.listeners("warning");
   expect(after).toHaveLength(before.length);
   for (const [index, listener] of before.entries()) expect(after[index]).toBe(listener);
-});
+// One full screen: on windows-latest, Verify 38630188626 (872043f) it failed right after the earlier timed-out tests left their screens open (their warning listeners were still attached), and its own start can take several seconds there.
+}, { timeout: 30_000 });
 
 /**
  * Every Shell command with Claude Code answers to `/f614:<name>` and does what its unprefixed name did before 1.12.0:
@@ -824,7 +828,7 @@ test("Claude UI: /help lists the menu's commands with their description and the 
     try {
       h.terminal.output = ""; h.enter("/help");
       const t = getCatalog(locale).claudePanels; const c = getCatalog(locale).chat;
-      for (let i = 0; i < 60 && !h.plain().includes(t.helpShortcuts); i++) await tick();
+      await waitUntil(() => h.plain().includes(t.helpShortcuts));
       const shown = h.plain();
       for (const line of [t.helpTitle, t.helpCommands, "/compact  Clear conversation history but keep a summary in context", `/status   ${c.commandShowStatus}`, `/help     ${c.commandShowHelp}`,
         `/model    ${c.commandSelectModel}`, t.helpShellCommands, t.helpShortcuts, `Shift+Tab      ${t.keyCycleModes}`]) expect(shown).toContain(line);
@@ -832,7 +836,8 @@ test("Claude UI: /help lists the menu's commands with their description and the 
       expect(h.calls().filter(line => line.startsWith("prompt:"))).toEqual([]);
     } finally { await h.finish(); }
   }
-});
+// Two full screens (one per language): on windows-latest, Verify 38630188626 (872043f) it took 6148 ms against the default 5 s, and the assertions kept running after the timeout («Unhandled error between tests»).
+}, { timeout: 30_000 });
 
 /**
  * On a narrow screen `/help` keeps the rest of a long description under its own column instead of dropping it flush left («and MCP servers» used to break the columns),
@@ -1490,27 +1495,33 @@ test("Claude UI: the notice Claude Code gives on resuming («N background agents
 });
 
 /**
- * U1-r1: an answer arrives in parts and is drawn on the left under the agent's name; «Copy» appears under it only when Claude Code delivers the finished message, never while it is being written. The person's own message
- * is a bubble, with no «YOU» header.
+ * U1-r5: an answer arrives in parts and is drawn on the left under the agent's name; it has no «Copy» of its own — each fenced code block does, and a block still being written has none until it closes. The person's own
+ * message has no «YOU» header.
  */
-test("Claude UI: «Copy» appears under an answer only once it is finished, and the person's message has no header", async () => {
+test("Claude UI: «Copy» belongs to the code blocks, not to the answer, and not to a block still being written", async () => {
   const h = await claudeUi();
   try {
     const t = getCatalog("en");
     const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
     const delta = (text: string, n: number) => ({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }, parent_tool_use_id: null, session_id: "s-copy", uuid: uuid(n) });
     h.terminal.output = "";
-    h.emit({ type: "stream_event", event: { type: "message_start", message: {} }, parent_tool_use_id: null, session_id: "s-copy", uuid: uuid(1) }, delta("First part of the answer", 2));
-    for (let i = 0; i < 60 && !h.plain().includes("First part of the answer"); i++) await tick();
-    expect(h.plain()).toContain("First part of the answer");
+    h.emit({ type: "stream_event", event: { type: "message_start", message: {} }, parent_tool_use_id: null, session_id: "s-copy", uuid: uuid(1) }, delta("Your prompt:\n\n```text\nwrite a te", 2));
+    for (let i = 0; i < 60 && !h.plain().includes("write a te"); i++) await tick();
+    expect(h.plain()).toContain("write a te");
     expect(h.plain()).toContain("Claude");
-    expect(h.plain()).not.toContain(t.chatCopy.copy);
+    expect(h.plain()).not.toContain(t.chatCopy.copy); // the block is still being written
     expect(h.plain()).not.toContain("##");
     h.terminal.output = "";
-    h.emit({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "First part of the answer, and the rest." }] }, parent_tool_use_id: null, session_id: "s-copy", uuid: uuid(3) });
+    h.emit({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Your prompt:\n\n```text\nwrite a test\n```\n\nThat is all." }] }, parent_tool_use_id: null, session_id: "s-copy", uuid: uuid(3) });
     for (let i = 0; i < 60 && !h.plain().includes(t.chatCopy.copy); i++) await tick();
-    expect(h.plain()).toContain("and the rest.");
+    expect(h.plain()).toContain("That is all.");
     expect(h.plain()).toContain(t.chatCopy.copy);
+    // An answer with no code block has no «Copy» at all.
+    h.terminal.output = "";
+    h.emit({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Only plain words here." }] }, parent_tool_use_id: null, session_id: "s-copy", uuid: uuid(4) });
+    for (let i = 0; i < 60 && !h.plain().includes("Only plain words here."); i++) await tick();
+    expect(h.plain()).toContain("Only plain words here.");
+    expect(h.plain()).not.toContain(t.chatCopy.copy);
   } finally { await h.finish(); }
 });
 
@@ -1538,7 +1549,7 @@ test("Claude UI: «Human» over the person's message, one rule between turns, an
     expect(screen).not.toContain('{"type":"text"');
     expect(screen).not.toContain('\\"sessionId\\"');
     // Exactly one rule: between the person's message and the agent's tools; none between the two tools or before the answer.
-    const rules = (text: string) => text.split("\n").filter(row => row.includes("─".repeat(30))).length;
+    const rules = (text: string) => text.split("\n").filter(row => row.includes("┈".repeat(30))).length;
     expect(rules(screen)).toBe(1);
   } finally { await h.finish(); }
 });

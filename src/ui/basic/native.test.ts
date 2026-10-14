@@ -916,7 +916,8 @@ test("/resume draws each old message with the time of its turn and no time when 
     expect(shown).toContain("Here is the plan");
     expect(shown).toContain("Codex");
     expect(shown).not.toContain("Codex · ");
-    expect(shown).toContain(getCatalog("en").chatCopy.copy);
+    // A replayed answer with no code block has no «Copy» either (it belongs to code blocks only).
+    expect(shown).not.toContain(getCatalog("en").chatCopy.copy);
   } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
@@ -2063,16 +2064,16 @@ async function converseUi(h: CommandHarness): Promise<void> {
 const asked = (h: CommandHarness, method: string) => h.rpc.calls.filter(call => call.method === method);
 
 /**
- * U1-r1 with Codex: the answer arrives in `agentMessage/delta` parts and is drawn on the left under «Codex»; «Copy» appears under it only once the turn is over, never while it is being written, and the person's own
- * message is a bubble with no header.
+ * U1-r5 with Codex: the answer arrives in `agentMessage/delta` parts and is drawn on the left under «Codex»; it has no «Copy» of its own, a fenced code block does, and a block still being written has none until it closes or
+ * the turn ends. The person's own message is a bubble with no header.
  */
-test("Codex UI: «Copy» appears under an answer only when the turn ends, and the person's message has no header", async () => {
+test("Codex UI: «Copy» belongs to the code blocks and shows once the block closes or the turn ends, and the person's message has no header", async () => {
   const h = codexUi("en", rpc => threadReplies(rpc), undefined, 220);
   try {
     const copy = getCatalog("en").chatCopy.copy;
     await tick(); h.enter("hello"); await tick();
     h.terminal.output = "";
-    h.rpc.onNotification("item/agentMessage/delta", { threadId: "t", turnId: "u", itemId: "m1", delta: "Answer in parts" });
+    h.rpc.onNotification("item/agentMessage/delta", { threadId: "t", turnId: "u", itemId: "m1", delta: "Answer in parts\n\n```sh\nbun te" });
     await tick();
     expect(h.plain()).toContain("Answer in parts");
     expect(h.plain()).toContain("Codex");
@@ -2143,7 +2144,7 @@ test("Codex UI: «Human», one rule between turns, and a tool card that names it
     await tick(); await tick();
     const screen = h.plain();
     expect(screen).toContain("query: windows · scope: project");
-    expect(screen.split("\n").filter(row => row.includes("─".repeat(30))).length).toBe(1);
+    expect(screen.split("\n").filter(row => row.includes("┈".repeat(30))).length).toBe(1);
     h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } }); await tick();
   } finally { h.enter("/f614:quit"); await h.ui; }
 });

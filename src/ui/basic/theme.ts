@@ -1,5 +1,6 @@
+import { stripVTControlCharacters } from "node:util";
 import { Markdown, getCapabilities, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import type { Component, DefaultTextStyle, MarkdownOptions, MarkdownTheme, TuiMouseEvent } from "@earendil-works/pi-tui";
+import type { Component, DefaultTextStyle, MarkdownOptions, MarkdownTheme, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import type { ChatLinks, LinkView } from "./chat-links.ts";
 import { TABLE_LANG, renderTable, tableFences } from "./chat-table.ts";
 import type { CellRenderer } from "./chat-table.ts";
@@ -135,21 +136,47 @@ const GENERIC_LANGUAGES = new Set(["text", "txt", "plain", "plaintext"]);
 /** Columns taken away from a code block that sits inside a list or a quote, on top of the indent of its fence: pi-tui puts the list's bullet and its nesting indent in front of every row, and re-wraps (breaking the block) any row that no longer fits. */
 const NESTED_CODE_MARGIN = 4;
 
+/** A fenced code block as the source has it: the columns of indent in front of its opening fence, whether its closing fence has arrived (a block still being written has not), and its language. */
+export interface FenceInfo { prefix: number; closed: boolean; language: string }
+
 /**
- * For each fenced code block of `markdown`, in order, the columns of indent in front of its opening fence (spaces, `>` quote marks and list markers). pi-tui does not tell the theme how wide the space for a block is, so
- * `chatMarkdown` reads it here: a block inside a list item or a quote is drawn narrower by that indent, and never wider than the room it has. A block at the left edge has 0. Tabs count as pi-tui's three spaces.
+ * Every fenced code block of `markdown`, in order. pi-tui does not tell the theme how wide the space for a block is, so `chatMarkdown` reads the indent here (spaces, `>` quote marks and list markers): a block inside a list
+ * item or a quote is drawn narrower by that indent, and never wider than the room it has. A block at the left edge has 0. Whether it is closed says if its «Copy» button can already show. Tabs count as pi-tui's three spaces.
  */
-export function fencePrefixes(markdown: string): number[] {
-  const prefixes: number[] = [];
-  let open: { char: string; length: number } | undefined;
+export function fenceInfo(markdown: string): FenceInfo[] {
+  const blocks: FenceInfo[] = [];
+  let open: { char: string; length: number; block: FenceInfo } | undefined;
   for (const line of markdown.replace(/\t/g, "   ").split("\n")) {
     const match = /^((?:[ >]|[-+*] |\d{1,9}[.)] )*)(`{3,}|~{3,})(.*)$/.exec(line);
     if (!open) {
-      if (match && !(match[2]![0] === "`" && match[3]!.includes("`"))) { open = { char: match[2]![0]!, length: match[2]!.length }; prefixes.push(match[1]!.length); }
-    } else if (match && match[2]![0] === open.char && match[2]!.length >= open.length && match[3]!.trim() === "") open = undefined;
+      if (match && !(match[2]![0] === "`" && match[3]!.includes("`"))) {
+        const block: FenceInfo = { prefix: match[1]!.length, closed: false, language: match[3]!.trim() };
+        blocks.push(block);
+        open = { char: match[2]![0]!, length: match[2]!.length, block };
+      }
+    } else if (match && match[2]![0] === open.char && match[2]!.length >= open.length && match[3]!.trim() === "") { open.block.closed = true; open = undefined; }
   }
-  return prefixes;
+  return blocks;
 }
+
+/** The indent of each fenced code block, in order (see `fenceInfo`). */
+export const fencePrefixes = (markdown: string): number[] => fenceInfo(markdown).map(block => block.prefix);
+
+/**
+ * What the «Copy» buttons of the code blocks of a text need, shared between the text that draws them (`ChatText`) and the message that owns it: the words, whether the answer is complete (a block still being written has no
+ * button until it closes or the answer ends), which block shows «Copied», and — filled in every time the text is drawn — each block's original content and where its button is, for the click.
+ */
+export interface CodeBlockUi {
+  copyLabel: string;
+  copiedLabel: string;
+  complete: boolean;
+  copied?: number;
+  blocks: { code: string; button?: { row: number; col: number; width: number } }[];
+}
+
+/** An invisible mark (an APC sequence, which terminals ignore and pi-tui measures as zero columns) at the start of the first row of a block that has a button, so `ChatText.render` can find that row; it is taken out before the row is returned. */
+const copyMark = (index: number) => `\x1b_f614-copy:${index}\x07`;
+const COPY_MARK = /\x1b_f614-copy:(\d+)\x07/;
 
 /** What a row of a table block carries so `ChatText.render` can take it out: the blank rows pi-tui puts around a fenced block, which for a table would be a second blank line. */
 const DROP_ROW = "\x1b[8888m";
@@ -187,8 +214,8 @@ export function hardWrap(line: string, width: number): string[] {
  * The opening and closing rows are told apart by their order (`state.open`), because both reach the theme as plain «```» when the block has no language. A block inside a list or a quote is narrower, by the indent of its
  * fence in the source (`fencePrefixes`) plus `NESTED_CODE_MARGIN`: pi-tui draws the list's bullet in front of every row and re-wraps a row that no longer fits, which would break the block, and the theme is never told that width.
  */
-function chatMarkdown(baseColor: (text: string) => string, links: ChatLinks | undefined, paddingY: number): [paddingX: number, paddingY: number, theme: MarkdownTheme, defaultTextStyle: DefaultTextStyle, options: MarkdownOptions] {
-  const state = { width: 80, open: false, table: false, prefixes: [] as number[], next: 0, blockWidth: 80 };
+function chatMarkdown(baseColor: (text: string) => string, links: ChatLinks | undefined, paddingY: number, ui?: CodeBlockUi): [paddingX: number, paddingY: number, theme: MarkdownTheme, defaultTextStyle: DefaultTextStyle, options: MarkdownOptions] {
+  const state = { width: 80, open: false, table: false, fences: [] as FenceInfo[], next: 0, blockWidth: 80, block: -1 };
   const row = (content: string, paint: (text: string) => string = foreground) => {
     const inner = Math.max(1, state.blockWidth - CODE_PADDING * 2);
     const pad = " ".repeat(CODE_PADDING);
@@ -202,17 +229,27 @@ function chatMarkdown(baseColor: (text: string) => string, links: ChatLinks | un
     codeBlockBorder: text => {
       state.open = !state.open;
       if (!state.open) return state.table ? DROP_ROW : row("");
-      const prefix = state.prefixes[state.next++] ?? 0;
+      const info = state.fences[state.next++];
+      const prefix = info?.prefix ?? 0;
       state.blockWidth = Math.max(CODE_PADDING * 2 + 1, state.width - (prefix > 0 ? prefix + NESTED_CODE_MARGIN : 0));
       const language = text.replace(/^`+/, "").trim();
       state.table = language === TABLE_LANG;
       if (state.table) return DROP_ROW;
-      return language && !GENERIC_LANGUAGES.has(language.toLowerCase()) ? row(language, muted) : row("");
+      const label = language && !GENERIC_LANGUAGES.has(language.toLowerCase()) ? language : "";
+      if (!ui) return label ? row(label, muted) : row("");
+      // A block of the answer gets its «Copy» on the right of this first row, unless it is still being written (its closing fence has not arrived and the answer is not complete) or there is no room for it.
+      state.block = ui.blocks.push({ code: "" }) - 1;
+      const button = ui.copied === state.block ? ui.copiedLabel : ui.copyLabel;
+      const room = state.blockWidth - CODE_PADDING * 2;
+      if (!(info?.closed ?? true) && !ui.complete || room < visibleWidth(label) + 1 + visibleWidth(button)) return row(label, muted);
+      return copyMark(state.block) + row(label + " ".repeat(room - visibleWidth(label) - visibleWidth(button)) + button, muted);
     },
     codeBlockIndent: "",
-    highlightCode: (code, language) => language === TABLE_LANG
-      ? renderTable(code, state.blockWidth, cell, row => surface(`\x1b[1m${row}\x1b[22m`))
-      : code.split("\n").flatMap(line => hardWrap(line, Math.max(1, state.blockWidth - CODE_PADDING * 2))).map(piece => row(piece)),
+    highlightCode: (code, language) => {
+      if (language === TABLE_LANG) return renderTable(code, state.blockWidth, cell, row => surface(`\x1b[1m${row}\x1b[22m`));
+      if (ui && ui.blocks[state.block]) ui.blocks[state.block]!.code = code;
+      return code.split("\n").flatMap(line => hardWrap(line, Math.max(1, state.blockWidth - CODE_PADDING * 2))).map(piece => row(piece));
+    },
     quote: muted, quoteBorder: accent, hr: faint, listBullet: accent,
     bold: text => `\x1b[1m${text}\x1b[22m`, italic: text => `\x1b[3m${text}\x1b[23m`,
     strikethrough: text => `\x1b[9m${text}\x1b[29m`, underline: text => `\x1b[4m${text}\x1b[24m`,
@@ -223,7 +260,8 @@ function chatMarkdown(baseColor: (text: string) => string, links: ChatLinks | un
   return [2, paddingY, theme, style, {
     transform: (markdown, width) => {
       const source = tableFences(markdown);
-      state.width = width; state.blockWidth = width; state.open = false; state.table = false; state.prefixes = fencePrefixes(source); state.next = 0;
+      state.width = width; state.blockWidth = width; state.open = false; state.table = false; state.fences = fenceInfo(source); state.next = 0; state.block = -1;
+      if (ui) ui.blocks.length = 0;
       return source;
     },
   }];
@@ -231,22 +269,50 @@ function chatMarkdown(baseColor: (text: string) => string, links: ChatLinks | un
 
 export class ChatText extends Markdown {
   private readonly linkView?: LinkView;
-  /** Present only when the text has `links`: it reports the pointer over one of its links, and never takes the event. */
-  handleMouse?: (event: TuiMouseEvent) => undefined;
+  private readonly codeUi?: CodeBlockUi;
+  /** Told, when the person clicks a code block's «Copy», which block (its position among the text's blocks) and its original content. Only a text made with `codeUi` has such buttons. */
+  onCopyBlock?: (index: number, code: string) => void;
   /**
    * `baseColor` lets an error message read as red at a glance instead of blending into normal chat text. A code block has no drawn border: it is a block of the surface background across the whole width of the text,
    * with its language, if any, in the secondary gray in the first row (see `chatMarkdown`), and `inline code` has the surface background too. With `links`, a path in the text or in `inline code` that exists on disk is
    * drawn as a link and the link under the pointer is lit (see `ChatLinks`); without them the text is exactly what it always was. `paddingY` is the blank rows above and below (1, or 0 when the caller draws its own).
+   * With `codeUi`, each code block gets a «Copy» on the right of its first row (see `CodeBlockUi`).
    */
-  constructor(text: string, baseColor: (text: string) => string = foreground, links?: ChatLinks, paddingY = 1) {
-    super(text, ...chatMarkdown(baseColor, links, paddingY));
-    if (links) { this.linkView = links.view(); this.handleMouse = event => this.linkView!.pointer(event); }
+  constructor(text: string, baseColor: (text: string) => string = foreground, links?: ChatLinks, paddingY = 1, codeUi?: CodeBlockUi) {
+    super(text, ...chatMarkdown(baseColor, links, paddingY, codeUi));
+    // Not a parameter property: Pi loads this file with Node's type stripping, which does not support them.
+    this.codeUi = codeUi;
+    if (links) this.linkView = links.view();
+  }
+
+  /** The pointer over one of the text's links lights it (it never takes that event); a left click on a code block's «Copy» is taken and reported to `onCopyBlock`. */
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    this.linkView?.pointer(event);
+    if (event.type !== "click" || event.button !== "left" || !this.codeUi || !this.onCopyBlock) return undefined;
+    const index = this.codeUi.blocks.findIndex(block => block.button && block.button.row === event.y && event.x >= block.button.col && event.x < block.button.col + block.button.width);
+    if (index < 0) return undefined;
+    this.onCopyBlock(index, this.codeUi.blocks[index]!.code);
+    return { handled: true, render: true };
   }
 
   override render(width: number): string[] {
     // pi-tui pads each row to the width after cutting it (`markdown.js:236-241`), and when a background — an inline code — is still open at the end of a cut row because the code goes on in the next one, the padding is
     // painted with it up to the edge. The background is closed right before that padding.
     const rows = super.render(width).filter(row => !row.includes(DROP_ROW)).map(row => row.includes("\x1b[48;") ? row.replace(/( +)$/, "\x1b[49m$1") : row);
+    // Where each «Copy» is: the row that carries its mark and the column of its label there. The marks are taken out.
+    if (this.codeUi) {
+      for (const block of this.codeUi.blocks) delete block.button;
+      rows.forEach((row, y) => {
+        const mark = COPY_MARK.exec(row);
+        if (!mark) return;
+        rows[y] = row.replace(COPY_MARK, "");
+        const block = this.codeUi!.blocks[Number(mark[1])];
+        if (!block) return;
+        const label = this.codeUi!.copied === Number(mark[1]) ? this.codeUi!.copiedLabel : this.codeUi!.copyLabel;
+        const visible = stripVTControlCharacters(rows[y]!);
+        block.button = { row: y, col: visibleWidth(visible.slice(0, visible.lastIndexOf(label))), width: visibleWidth(label) };
+      });
+    }
     return this.linkView ? this.linkView.decorate(rows) : rows;
   }
 }

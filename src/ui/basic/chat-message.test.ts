@@ -249,47 +249,108 @@ test("los títulos van en negrita y sin los # ", () => {
   expect(stripVTControlCharacters(raw)).not.toContain("#");
 });
 
-test("el botón Copiar solo aparece cuando la respuesta terminó", () => {
-  const writing = assistant("a medias", { done: false });
-  expect(plain(writing.message.render(60)).join("\n")).not.toContain("Copiar");
-  const finished = assistant("completa");
-  expect(plain(finished.message.render(60)).join("\n")).toContain("Copiar");
+const LONG_CODE = "const resultado = calcularAlgoMuyLargo(primerArgumento, segundoArgumento, tercerArgumento, cuartoArgumento, quintoArgumento);";
+const TWO_BLOCKS = `Antes\n\n\`\`\`text\nuno\n  dos con sangría\n\n   tres\n\`\`\`\n\nEn medio con \`código en línea\`.\n\n\`\`\`ts\n${LONG_CODE}\n\`\`\`\n\nDespués.`;
+const buttonsOf = (message: AssistantMessage, width = 80) => plain(message.render(width)).flatMap((row, y) => /Copiar|Copiado/.test(row) ? [{ y, x: row.search(/Copiar|Copiado/), row }] : []);
+
+test("una respuesta sin bloques de código no tiene ningún Copiar, ni al final ni en ningún lado", () => {
+  const { message } = assistant("Una respuesta con `código en línea`, una lista:\n\n- uno\n- dos\n\ny una tabla:\n\n| a | b |\n|---|---|\n| 1 | 2 |\n");
+  expect(plain(message.render(80)).join("\n")).not.toContain("Copiar");
+  expect(plain(assistant("").message.render(60)).join("\n")).not.toContain("Copiar");
 });
 
-test("un mensaje vacío no muestra Copiar", () => {
-  const { message } = assistant("");
-  expect(plain(message.render(60)).join("\n")).not.toContain("Copiar");
+test("cada bloque de código cercado lleva su Copiar, en gris, a la derecha de su primera fila y dentro del fondo del bloque", () => {
+  const { message } = assistant(TWO_BLOCKS);
+  const raw = message.render(80);
+  const buttons = buttonsOf(message);
+  expect(buttons).toHaveLength(2);
+  for (const button of buttons) {
+    // La primera fila del bloque: con fondo, el botón al borde derecho con 1 columna de relleno y en gris.
+    expect(raw[button.y]).toContain(SURFACE);
+    expect(raw[button.y]).toContain("\x1b[38;2;161;161;170m");
+    // 1 columna de relleno entre el botón y el borde derecho del bloque, todavía con el fondo.
+    expect(raw[button.y]).toContain("Copiar \x1b[39m\x1b[49m");
+  }
+  // El segundo bloque tiene idioma: «ts» a la izquierda de la misma fila y el botón a la derecha.
+  const second = plain(raw)[buttons[1]!.y]!;
+  expect(second.indexOf("ts")).toBeLessThan(second.indexOf("Copiar"));
+  // El código en línea del medio no lleva botón.
+  expect(plain(raw).filter(row => row.includes("código en línea") || row.includes("Copiar")).filter(row => row.includes("código en línea") && row.includes("Copiar"))).toHaveLength(0);
 });
 
-test("el clic en Copiar copia exactamente el Markdown original y el botón dice Copiado unos 2 segundos", async () => {
-  const markdown = "## Título\n\n- uno\n- dos\n\n```ts\nconst a = 1;\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n";
+test("el clic en cada botón copia exactamente el contenido original de su bloque, sin cercas ni idioma ni cortes de Shell", async () => {
   const copied: string[] = [];
-  const { message, renders } = assistant(markdown, { copy: async text => { copied.push(text); return true; } });
-  const rows = plain(message.render(80));
-  const button = rows.findIndex(row => row.includes("Copiar"));
-  expect(button).toBeGreaterThan(-1);
-  // Un clic fuera del botón no copia nada.
-  clickOn(message, 0);
+  const { message } = assistant(TWO_BLOCKS, { copy: async text => { copied.push(text); return true; } });
+  const [first, second] = buttonsOf(message);
+  // Un clic fuera de los botones no copia nada.
+  clickOn(message, 0); clickOn(message, first!.y, 0); clickOn(message, first!.y + 1, first!.x);
   expect(copied).toEqual([]);
-  expect(clickOn(message, button)?.handled).toBe(true);
+  expect(clickOn(message, first!.y, first!.x)?.handled).toBe(true);
   await Bun.sleep(0);
-  expect(copied).toEqual([markdown]);
-  expect(copied[0]).not.toContain("\x1b");
-  expect(copied[0]).not.toContain("Claude");
-  expect(plain(message.render(80)).join("\n")).toContain("Copiado");
+  expect(copied).toEqual(["uno\n  dos con sangría\n\n   tres"]);
+  // La línea larga, que Shell parte en varias filas a 60 columnas, se copia entera y en una sola línea.
+  const narrow = buttonsOf(message, 60);
+  expect(plain(message.render(60)).filter(row => row.includes("resultado") || row.includes("cuartoArgumento")).length).toBeGreaterThan(0);
+  const container = new Container(); container.addChild(message); container.render(60);
+  container.handleMouse({ ...click(narrow[1]!.y, narrow[1]!.x), width: 60 });
+  await Bun.sleep(0);
+  expect(copied[1]).toBe(LONG_CODE);
+  expect(copied.join("")).not.toContain("```");
+  expect(copied.join("")).not.toContain("\x1b");
+  void second;
+});
+
+test("un bloque dentro de una lista lleva su botón, alineado al borde derecho del bloque, y copia solo ese bloque", async () => {
+  const copied: string[] = [];
+  const { message } = assistant("- paso uno:\n\n  ```sh\n  bun test --watch\n  ```\n\n- paso dos", { copy: async text => { copied.push(text); return true; } });
+  const [button] = buttonsOf(message);
+  expect(button).toBeDefined();
+  const raw = message.render(80);
+  const row = plain(raw)[button!.y]!;
+  // La fila del botón tiene el fondo del bloque, empieza con el margen más la sangría de la lista, y el botón queda cerca del borde derecho del bloque (a 1 columna de su relleno), no pegado al texto.
+  expect(raw[button!.y]).toContain(SURFACE);
+  expect(row.startsWith("     ")).toBe(true);
+  expect(raw[button!.y]).toContain("Copiar \x1b[39m\x1b[49m");
+  expect(button!.x).toBeGreaterThan(40);
+  expect(row.trimEnd().length).toBeLessThanOrEqual(80 - 2);
+  clickOn(message, button!.y, button!.x);
+  await Bun.sleep(0);
+  expect(copied).toEqual(["bun test --watch"]);
+});
+
+test("un bloque que todavía se está escribiendo no tiene botón; aparece cuando el bloque se cierra o cuando la respuesta termina", () => {
+  const open = assistant("Mira:\n\n```ts\nconst a = 1;", { done: false });
+  expect(buttonsOf(open.message)).toHaveLength(0);
+  open.message.setText("Mira:\n\n```ts\nconst a = 1;\n```\n\nY luego\n\n```sh\nbun te");
+  expect(buttonsOf(open.message)).toHaveLength(1); // el primero cerró, el segundo sigue abierto
+  open.message.setText("Mira:\n\n```ts\nconst a = 1;\n```\n\nY luego\n\n```sh\nbun test\n```");
+  expect(buttonsOf(open.message)).toHaveLength(2);
+  const unclosed = assistant("```sh\nbun te", { done: false });
+  expect(buttonsOf(unclosed.message)).toHaveLength(0);
+  unclosed.message.complete();
+  expect(buttonsOf(unclosed.message)).toHaveLength(1);
+});
+
+test("tras copiar, solo el botón pulsado dice Copiado unos 2 segundos y luego vuelve a Copiar", async () => {
+  const { message, renders } = assistant(TWO_BLOCKS);
+  const [first] = buttonsOf(message);
+  clickOn(message, first!.y, first!.x);
+  await Bun.sleep(0);
+  const now = buttonsOf(message);
+  expect(now.map(button => /Copiado/.test(button.row))).toEqual([true, false]);
   expect(renders()).toBeGreaterThan(0);
   await Bun.sleep(2100);
-  expect(plain(message.render(80)).join("\n")).toContain("Copiar");
+  expect(buttonsOf(message).map(button => /Copiar/.test(button.row))).toEqual([true, true]);
   expect(plain(message.render(80)).join("\n")).not.toContain("Copiado");
 });
 
 test("si no hay portapapeles, el clic avisa y no dice Copiado", async () => {
   let unavailable = 0;
   const message = new AssistantMessage({ agent: "Claude", locale: "es", at: null, copy: async () => false, onChange: () => {}, onCopyFailed: () => { unavailable++; } });
-  message.setText("hola");
+  message.setText("```sh\nbun test\n```");
   message.complete();
-  const button = plain(message.render(80)).findIndex(row => row.includes("Copiar"));
-  clickOn(message, button);
+  const [button] = buttonsOf(message);
+  clickOn(message, button!.y, button!.x);
   await Bun.sleep(0);
   expect(unavailable).toBe(1);
   expect(plain(message.render(80)).join("\n")).not.toContain("Copiado");

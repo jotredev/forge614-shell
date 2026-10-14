@@ -1,7 +1,8 @@
-import { Container, MouseRegion, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Container, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
 import type { ChatLinks, LinkView } from "./chat-links.ts";
 import { ChatText, foreground, muted } from "./theme.ts";
+import type { CodeBlockUi } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -62,7 +63,7 @@ class ReadingColumn implements Component {
   private cap(width: number) { return Math.min(width, MAX_READING_WIDTH + MARGIN * 2); }
   invalidate(): void { this.child.invalidate(); }
   render(width: number): string[] { return this.child.render(this.cap(width)); }
-  handleMouse(event: TuiMouseEvent) { return this.child.handleMouse?.({ ...event, width: this.cap(event.width) }); }
+  handleMouse(event: TuiMouseEvent) { return this.child.handleMouse({ ...event, width: this.cap(event.width) }); }
 }
 
 /** The grey line over an answer with the agent's name and the time, one blank row above it. */
@@ -91,59 +92,45 @@ export interface AssistantMessageOptions {
 
 /**
  * An answer of the agent: on the left, without a bubble, with a quiet line of name and time over it, the text drawn as Markdown with two columns of margin and at most `MAX_READING_WIDTH` columns of text. Its text
- * arrives in parts (`setText` replaces it) and, when it is complete (`complete`), a grey «Copy» appears under it: a click copies the answer's Markdown exactly as the agent sent it — no colors, no name line, nothing
- * Shell adds — and the label says «Copied» for `COPIED_MS`.
+ * arrives in parts (`setText` replaces it). The answer itself has no «Copy»: what the agents put in a fenced code block — a prompt, a command, code, a text for somewhere else — is what is meant to be copied and pasted, so
+ * each such block carries its own grey «Copy» on the right of its first row (see `CodeBlockUi`). A block still being written has none until it closes or the answer is complete (`complete`). A click copies exactly the block's
+ * original content — no fences, no language, none of the cuts Shell makes to fit lines — and its label says «Copied» for `COPIED_MS`.
  */
 export class AssistantMessage extends Container {
-  private raw = "";
-  private done = false;
-  private copied = false;
+  private readonly ui: CodeBlockUi;
   private timer?: ReturnType<typeof setTimeout>;
   private readonly body: ChatText;
 
   constructor(private readonly options: AssistantMessageOptions) {
     super();
-    this.body = new ChatText("", options.baseColor, options.links, 0);
+    const copy = getCatalog(options.locale).chatCopy;
+    this.ui = { copyLabel: copy.copy, copiedLabel: copy.copied, complete: false, blocks: [] };
+    this.body = new ChatText("", options.baseColor, options.links, 0, this.ui);
+    this.body.onCopyBlock = (index, code) => void this.copyBlock(index, code);
     this.addChild(new MessageStamp(messageStamp(options.agent, options.at)));
     this.addChild(new ReadingColumn(this.body));
-    this.addChild(new MouseRegion({ render: width => this.buttonRows(width), invalidate: () => {} }, event => this.onButtonMouse(event)));
   }
 
   /** The answer as it is now, replacing what was there; `text` is exactly what the agent sent (the caller has only removed terminal control codes). */
   setText(text: string): void {
-    this.raw = text;
     this.body.setText(text);
   }
 
-  /** The agent finished this answer: from now on it can be copied. */
+  /** The agent finished this answer: a code block left open gets its button too. */
   complete(): void {
-    this.done = true;
+    this.ui.complete = true;
+    this.body.invalidate();
   }
 
-  private get label(): string {
-    const t = getCatalog(this.options.locale).chatCopy;
-    return this.copied ? t.copied : t.copy;
-  }
-
-  private buttonRows(_width: number): string[] {
-    return this.done && this.raw.trim() !== "" ? ["", `${" ".repeat(MARGIN)}${muted(this.label)}`] : [];
-  }
-
-  private onButtonMouse(event: TuiMouseEvent) {
-    if (event.type !== "click" || event.button !== "left") return undefined;
-    if (event.x < MARGIN || event.x >= MARGIN + visibleWidth(this.label)) return undefined;
-    void this.copyNow();
-    return { handled: true, render: true };
-  }
-
-  private async copyNow(): Promise<void> {
+  private async copyBlock(index: number, code: string): Promise<void> {
     let copied = false;
-    try { copied = await this.options.copy(this.raw); } catch { copied = false; }
+    try { copied = await this.options.copy(code); } catch { copied = false; }
     if (!copied) { this.options.onCopyFailed?.(); return; }
-    this.copied = true;
+    this.ui.copied = index;
+    this.body.invalidate();
     this.options.onChange();
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => { this.copied = false; this.options.onChange(); }, COPIED_MS);
+    this.timer = setTimeout(() => { this.ui.copied = undefined; this.body.invalidate(); this.options.onChange(); }, COPIED_MS);
     this.timer.unref?.();
   }
 }

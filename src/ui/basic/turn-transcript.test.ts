@@ -12,7 +12,9 @@ afterAll(() => resetCapabilitiesCache());
 const FAINT = "\x1b[38;2;63;63;70m";
 const answer = (text: string) => { const m = new AssistantMessage({ agent: "Claude", locale: "es", at: null, copy: async () => true, onChange: () => {} }); m.setText(text); m.complete(); return m; };
 const user = (text: string) => new UserBubble(text, { locale: "es", at: null });
-const separators = (t: TurnTranscript, width = 60) => t.render(width).filter(row => row.includes(FAINT) && /^─+$/.test(stripVTControlCharacters(row))).length;
+/** La línea del separador: punteada (`┈`), en el color tenue, con espacios a los lados. */
+const isRule = (row: string) => row.includes(FAINT) && /^ +┈+$/.test(stripVTControlCharacters(row));
+const separators = (t: TurnTranscript, width = 60) => t.render(width).filter(isRule).length;
 
 test("hay un separador al pasar del propietario al agente y del agente al propietario", () => {
   const t = new TurnTranscript();
@@ -20,15 +22,27 @@ test("hay un separador al pasar del propietario al agente y del agente al propie
   expect(separators(t)).toBe(3);
 });
 
-test("el separador es una línea tenue de ancho completo con una fila en blanco arriba y otra abajo", () => {
-  const t = new TurnTranscript();
-  t.addChild(user("hola")); t.addChild(answer("buenas"));
-  const rows = t.render(60).map(row => stripVTControlCharacters(row));
-  const at = rows.findIndex(row => row === "─".repeat(60));
-  expect(at).toBeGreaterThan(0);
-  expect(rows[at - 1]).toBe("");
-  expect(rows[at + 1]).toBe(""); // la fila en blanco con la que empieza el mensaje siguiente
-});
+for (const [width, dots] of [[60, 36], [100, 60], [160, 72]] as const) {
+  test(`el separador es una línea punteada, tenue y centrada de ~60 % del ancho (máximo 72), sin tocar las orillas, con una fila en blanco arriba y otra abajo (ancho ${width})`, () => {
+    const t = new TurnTranscript();
+    t.addChild(user("hola")); t.addChild(answer("buenas"));
+    const raw = t.render(width);
+    const rows = raw.map(row => stripVTControlCharacters(row));
+    const at = rows.findIndex((_, y) => isRule(raw[y]!));
+    expect(at).toBeGreaterThan(0);
+    const rule = rows[at]!;
+    expect(rule.trimStart().length).toBe(dots);
+    expect(rule).not.toContain("─");
+    // Centrada: la misma holgura a los dos lados (±1) y ninguna en las orillas.
+    const left = rule.length - rule.trimStart().length;
+    const right = width - rule.length;
+    expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
+    expect(left).toBeGreaterThan(0);
+    expect(right).toBeGreaterThan(0);
+    expect(rows[at - 1]).toBe("");
+    expect(rows[at + 1]).toBe(""); // la fila en blanco con la que empieza el mensaje siguiente
+  });
+}
 
 test("no hay separador antes del primer mensaje, ni entre herramientas del mismo turno, ni entre mensajes del mismo lado", () => {
   const t = new TurnTranscript();
