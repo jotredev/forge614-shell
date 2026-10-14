@@ -35,23 +35,27 @@ const human = (text: string, at: number | null = null, locale: "es" | "en" = "es
 const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 for (const width of [60, 100, 160]) {
-  test(`el mensaje del propietario va a la derecha, sin fondo, con «Humano» arriba y sin pasarse de dos tercios (ancho ${width})`, () => {
+  test(`el mensaje del propietario va a la izquierda, sin fondo, con margen de 2 y el mismo ancho de lectura que el del agente, con «Humano · hora» arriba (ancho ${width})`, () => {
     const at = new Date(2026, 9, 14, 13, 43).getTime();
-    const rows = human(LONG, at).render(width);
+    const long = Array(5).fill(LONG).join(" ");
+    const rows = human(long, at).render(width);
     const text = plain(rows);
     const lines = text.filter(row => row.trim() !== "");
-    const maxBlock = Math.floor((width * 2) / 3);
     for (const row of text) expect(row.length).toBeLessThanOrEqual(width);
-    // La primera fila con texto es la línea gris «Humano · hora», pegada al margen derecho.
-    expect(lines[0]!.trim()).toBe(`Humano · ${clock(at)}`);
-    expect(lines[0]!.length).toBe(width - 2);
-    // El texto termina a 2 columnas del borde derecho y su bloque no pasa de dos tercios.
-    for (const row of lines.slice(1)) {
-      expect(row.length).toBe(width - 2);
-      expect(row.length - row.trimStart().length).toBeGreaterThan(0);
-      expect(width - 2 - (row.length - row.trimStart().length)).toBeLessThanOrEqual(maxBlock);
+    // La primera fila con texto es la línea «Humano · hora», en la columna 2, a la izquierda.
+    expect(lines[0]).toBe(`  Humano · ${clock(at)}`);
+    // El texto empieza en la columna 2 (margen), llena el ancho de lectura (el mismo que el del agente) y nunca más.
+    const body = lines.slice(1);
+    expect(body.length).toBeGreaterThan(1);
+    for (const row of body) {
+      expect(row.startsWith("  ")).toBe(true);
+      expect(row[2]).not.toBe(" ");
+      expect(row.length - 2).toBeLessThanOrEqual(Math.min(width - 4, MAX_READING_WIDTH));
     }
-    expect(lines.slice(1).map(row => row.trim()).join(" ")).toContain("Esta es una frase bastante larga");
+    expect(Math.max(...body.map(row => row.length - 2))).toBeGreaterThan(Math.min(width - 4, MAX_READING_WIDTH) - 25); // aprovecha el ancho, no un tercio
+    // Mismo ancho que el del agente: el texto parte donde parte el del agente.
+    const agent = assistant(long).message.render(width).map(row => stripVTControlCharacters(row)).filter(row => row.trim() !== "" && !row.includes("Claude"));
+    expect(body.map(row => row.trimEnd())).toEqual(agent.map(row => row.trimEnd()));
     expect(text.join("\n")).not.toContain("##");
     // Sin fondo: ningún código de fondo en ninguna fila, y la hora de abajo ya no existe.
     expect(rows.join("")).not.toMatch(/\x1b\[48;/);
@@ -59,35 +63,57 @@ for (const width of [60, 100, 160]) {
   });
 }
 
-test("un mensaje corto queda pegado al margen derecho, a 2 columnas del borde", () => {
+test("un mensaje corto queda en la columna 2, pegado al margen izquierdo", () => {
   const row = plain(human("hola").render(100)).find(line => line.includes("hola"))!;
-  expect(row.length).toBe(98);
-  expect(row.endsWith("hola")).toBe(true);
+  expect(row).toBe("  hola");
 });
 
-test("el texto se parte dentro del ancho máximo y conserva sus saltos de línea, todas las filas alineadas al mismo borde", () => {
-  const rows = plain(human(`${LONG}\n\nsegunda línea`).render(60)).filter(row => row !== "");
-  expect(rows.length).toBeGreaterThan(3);
-  for (const row of rows) expect(row.length).toBeLessThanOrEqual(58);
-  const text = rows.slice(1).map(row => row.trim());
-  expect(text.at(-1)).toBe("segunda línea");
-  expect(plain(human(`${LONG}\n\nsegunda línea`).render(60)).filter(row => row === "").length).toBeGreaterThanOrEqual(2); // fila de aire arriba y la línea en blanco del texto
+test("un mensaje largo (30 líneas con renglones largos) se ve completo, sin recortes, con sus saltos de línea y sus líneas en blanco", () => {
+  const lines = Array.from({ length: 30 }, (_, i) => i % 5 === 4 ? "" : `Línea ${i + 1}: ${"palabra ".repeat(25)}fin${i + 1}`);
+  const source = lines.join("\n");
+  for (const width of [60, 100, 160]) {
+    const text = plain(human(source).render(width));
+    for (const row of text) expect(row.length).toBeLessThanOrEqual(width);
+    // Todo lo escrito está: cada línea, partida o no, conserva todas sus palabras y su final.
+    const joined = text.map(row => row.trim()).join(" ").replace(/\s+/g, " ");
+    for (let i = 0; i < 30; i++) if (lines[i] !== "") expect(joined).toContain(`fin${i + 1}`);
+    expect((joined.match(/palabra/g) ?? []).length).toBe(lines.filter(line => line !== "").length * 25);
+    // Las líneas en blanco del texto siguen siendo filas en blanco, entre las del texto (6 en las 30 líneas).
+    const body = text.slice(2); // sin la fila de aire ni la línea «Humano»
+    expect(body.filter(row => row === "").length).toBe(6);
+    expect(body.findIndex(row => row.includes("Línea 4:"))).toBeGreaterThan(-1);
+  }
+});
+
+test("el texto del propietario es texto simple: un # o un - suyo no cambia de forma, y la sangría y los espacios de lo pegado se conservan", () => {
+  const text = plain(human("# no es un título\n- ni una viñeta\n**ni negrita**\n    sangrado con 4 espacios\n`ni código`").render(80));
+  expect(text.slice(2)).toEqual(["  # no es un título", "  - ni una viñeta", "  **ni negrita**", "      sangrado con 4 espacios", "  `ni código`"]);
 });
 
 test("«Humano» en español y «Human» en inglés; sin hora conocida (conversación retomada) queda solo la palabra", () => {
   const at = new Date(2026, 9, 14, 13, 43).getTime();
-  expect(plain(human("hola", at, "en").render(60)).find(row => row.includes("Human"))!.trim()).toBe(`Human · ${clock(at)}`);
-  expect(plain(human("hola", null, "es").render(60)).find(row => row.includes("Humano"))!.trim()).toBe("Humano");
+  expect(plain(human("hola", at, "en").render(60)).find(row => row.includes("Human"))!).toBe(`  Human · ${clock(at)}`);
+  expect(plain(human("hola", null, "es").render(60)).find(row => row.includes("Humano"))!).toBe("  Humano");
 });
 
-test("la línea «Humano» tiene el mismo formato y color que la del agente", () => {
+test("en la línea del propietario la palabra «Humano» va en el color de acento y la hora en gris; la del agente sigue toda en gris", () => {
+  const ACCENT = "\x1b[38;2;70;222;224m"; const MUTED = "\x1b[38;2;161;161;170m";
   const user = human("hola", Date.now()).render(80).find(row => row.includes("Humano"))!;
+  expect(user).toContain(`${ACCENT}Humano`);
+  expect(user.indexOf(ACCENT)).toBeLessThan(user.indexOf("Humano"));
+  const time = clock(Date.now());
+  expect(user.slice(user.indexOf("Humano") + "Humano".length)).toContain(`${MUTED} · ${time}`);
+  expect(user.slice(user.indexOf("·"))).not.toContain(ACCENT);
+  // Sin hora (conversación retomada): solo la palabra, en acento.
+  expect(human("hola", null).render(80).find(row => row.includes("Humano"))).toContain(`${ACCENT}Humano`);
+  // La línea del agente, igual que antes: nombre y hora en gris, sin acento.
   const agent = new AssistantMessage({ agent: "Claude", locale: "es", copy: async () => true, onChange: () => {} });
   agent.setText("ok");
   const line = agent.render(80).find(row => row.includes("Claude"))!;
-  const color = (row: string) => /\x1b\[38;2;\d+;\d+;\d+m/.exec(row)![0];
-  expect(color(user)).toBe(color(line));
-  expect(stripVTControlCharacters(user).trim().replace(/^\S+/, "")).toBe(stripVTControlCharacters(line).trim().replace(/^\S+/, ""));
+  expect(line).toContain(`${MUTED}Claude`);
+  expect(line).not.toContain(ACCENT);
+  // Las dos líneas empiezan en la misma columna (2).
+  expect(stripVTControlCharacters(line).indexOf("Claude")).toBe(stripVTControlCharacters(user).indexOf("Humano"));
 });
 
 test("la respuesta del agente va a la izquierda, con margen de 2 columnas y un ancho de lectura máximo", () => {

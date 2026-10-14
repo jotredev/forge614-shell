@@ -191,12 +191,12 @@ const DROP_ROW = "\x1b[8888m";
 
 /**
  * `line` (a line of code) cut into rows of at most `width` columns, at the last space that fits; only a word that alone does not fit is cut where the row ends. The line's own indent stays on the first row and the
- * rows that continue it carry that indent plus 2 spaces (none if there is no room). A line that fits, empty or not, is one row, as it came.
+ * rows that continue it carry that indent plus `extra` spaces (2 for code; none if there is no room). A line that fits, empty or not, is one row, as it came.
  */
-export function hardWrap(line: string, width: number): string[] {
+export function hardWrap(line: string, width: number, extra = 2): string[] {
   if (visibleWidth(line) <= width) return [line];
   const indent = /^ */.exec(line)![0];
-  const continuation = visibleWidth(indent) + 2 < width ? `${indent}  ` : "";
+  const continuation = visibleWidth(indent) + extra < width ? `${indent}${" ".repeat(extra)}` : "";
   const rows: string[] = [];
   let current = indent; let fresh = true; let gap = "";
   const next = () => { rows.push(current); current = continuation; fresh = true; gap = ""; };
