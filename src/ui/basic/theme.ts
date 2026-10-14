@@ -1,7 +1,7 @@
 import { stripVTControlCharacters } from "node:util";
 import { Markdown, getCapabilities, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Component, DefaultTextStyle, MarkdownOptions, MarkdownTheme, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
-import type { ChatLinks, LinkView } from "./chat-links.ts";
+import type { ChatLinks, LinkView, PointerClient } from "./chat-links.ts";
 import { TABLE_LANG, renderTable, tableFences } from "./chat-table.ts";
 import type { CellRenderer } from "./chat-table.ts";
 
@@ -128,8 +128,8 @@ export class PanelText implements Component {
     return ["", ...rows.map(line => `  ${foreground(line)}`), ""];
   }
 }
-/** Columns of space inside a code block, on each side of its text. */
-const CODE_PADDING = 1;
+/** Columns of space inside a code block, on each side of its text (and of its button's row). */
+const CODE_PADDING = 2;
 /** Languages whose label says nothing (a block fenced as ```text), so the first row of the block stays empty instead of showing the word. */
 const GENERIC_LANGUAGES = new Set(["text", "txt", "plain", "plaintext"]);
 
@@ -171,8 +171,16 @@ export interface CodeBlockUi {
   copiedLabel: string;
   complete: boolean;
   copied?: number;
+  /** The block whose button has the pointer over it (see `ChatLinks.watchPointer`). */
+  hovered?: number;
+  /** Each block's original content and the button's place: its row among the text's rows and its columns (the whole pill, padding included). */
   blocks: { code: string; button?: { row: number; col: number; width: number } }[];
 }
+
+/** The text of a «Copy» button: an icon, the word, and one space of padding on each side — the button is a pill, so the click covers all of it. */
+const pillText = (label: string, copied: boolean) => ` ${copied ? "✓" : "⧉"} ${label} `;
+/** The pill while the pointer is over it: the accent as background with the screen's dark color on it, in bold. */
+const pillHover = (text: string) => background(palette.accent)(`\x1b[1m${paint(palette.background)(text)}\x1b[22m`);
 
 /** An invisible mark (an APC sequence, which terminals ignore and pi-tui measures as zero columns) at the start of the first row of a block that has a button, so `ChatText.render` can find that row; it is taken out before the row is returned. */
 const copyMark = (index: number) => `\x1b_f614-copy:${index}\x07`;
@@ -237,18 +245,24 @@ function chatMarkdown(baseColor: (text: string) => string, links: ChatLinks | un
       if (state.table) return DROP_ROW;
       const label = language && !GENERIC_LANGUAGES.has(language.toLowerCase()) ? language : "";
       if (!ui) return label ? row(label, muted) : row("");
-      // A block of the answer gets its «Copy» on the right of this first row, unless it is still being written (its closing fence has not arrived and the answer is not complete) or there is no room for it.
+      // A block of the answer gets its «Copy» pill on the right of this first row, on its own row above the content — the language, if any, in gray on the left — unless the block is still being written (its closing
+      // fence has not arrived and the answer is not complete) or there is no room for it. The pill is lighter than the block (`elevated`), with the text in the normal color; lit with the accent under the pointer;
+      // after copying, `✓ Copied` in the success color.
       state.block = ui.blocks.push({ code: "" }) - 1;
-      const button = ui.copied === state.block ? ui.copiedLabel : ui.copyLabel;
+      const copied = ui.copied === state.block;
+      const caption = pillText(copied ? ui.copiedLabel : ui.copyLabel, copied);
       const room = state.blockWidth - CODE_PADDING * 2;
-      if (!(info?.closed ?? true) && !ui.complete || room < visibleWidth(label) + 1 + visibleWidth(button)) return row(label, muted);
-      return copyMark(state.block) + row(label + " ".repeat(room - visibleWidth(label) - visibleWidth(button)) + button, muted);
+      if (!(info?.closed ?? true) && !ui.complete || room < visibleWidth(label) + 1 + visibleWidth(caption)) return row(label, muted);
+      const pill = copied ? elevated(success(caption)) : ui.hovered === state.block ? pillHover(caption) : elevated(foreground(caption));
+      const pad = " ".repeat(CODE_PADDING);
+      return copyMark(state.block) + surface(`${pad}${muted(label)}${" ".repeat(room - visibleWidth(label) - visibleWidth(caption))}${pill}${pad}`);
     },
     codeBlockIndent: "",
+    // The first row of the content is an empty row of the block, so the text does not sit right under the button's row.
     highlightCode: (code, language) => {
       if (language === TABLE_LANG) return renderTable(code, state.blockWidth, cell, row => surface(`\x1b[1m${row}\x1b[22m`));
       if (ui && ui.blocks[state.block]) ui.blocks[state.block]!.code = code;
-      return code.split("\n").flatMap(line => hardWrap(line, Math.max(1, state.blockWidth - CODE_PADDING * 2))).map(piece => row(piece));
+      return [row(""), ...code.split("\n").flatMap(line => hardWrap(line, Math.max(1, state.blockWidth - CODE_PADDING * 2))).map(piece => row(piece))];
     },
     quote: muted, quoteBorder: accent, hr: faint, listBullet: accent,
     bold: text => `\x1b[1m${text}\x1b[22m`, italic: text => `\x1b[3m${text}\x1b[23m`,
@@ -283,14 +297,38 @@ export class ChatText extends Markdown {
     // Not a parameter property: Pi loads this file with Node's type stripping, which does not support them.
     this.codeUi = codeUi;
     if (links) this.linkView = links.view();
+    // The highlight of a button under the pointer is turned off by the links' mouse watching (see `ChatLinks.watchPointer`), which also redraws the screen when it changes.
+    if (links && codeUi) {
+      this.pointerClient = { hovered: () => codeUi.hovered, clear: () => this.setHovered(undefined) };
+      links.watchPointer(this.pointerClient);
+    }
   }
 
-  /** The pointer over one of the text's links lights it (it never takes that event); a left click on a code block's «Copy» is taken and reported to `onCopyBlock`. */
+  private readonly pointerClient?: PointerClient;
+
+  /** Lights (or turns off) the button of block `index`; the drawn rows are cached, so they are drawn again. */
+  private setHovered(index: number | undefined): void {
+    if (!this.codeUi || this.codeUi.hovered === index) return;
+    this.codeUi.hovered = index;
+    this.invalidate();
+  }
+
+  /** The block whose «Copy» pill covers the cell at (`x`, `y`) of the text, if any. */
+  private buttonAt(event: TuiMouseEvent): number | undefined {
+    const index = this.codeUi?.blocks.findIndex(block => block.button && block.button.row === event.y && event.x >= block.button.col && event.x < block.button.col + block.button.width);
+    return index === undefined || index < 0 ? undefined : index;
+  }
+
+  /**
+   * The pointer over one of the text's links lights it (it never takes that event); over a code block's «Copy» pill it lights the pill; a left click on the pill — any column of it — is taken and reported to
+   * `onCopyBlock`.
+   */
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     this.linkView?.pointer(event);
-    if (event.type !== "click" || event.button !== "left" || !this.codeUi || !this.onCopyBlock) return undefined;
-    const index = this.codeUi.blocks.findIndex(block => block.button && block.button.row === event.y && event.x >= block.button.col && event.x < block.button.col + block.button.width);
-    if (index < 0) return undefined;
+    if (!this.codeUi) return undefined;
+    const index = this.buttonAt(event);
+    if (event.type === "move" || event.type === "press" || event.type === "release") this.setHovered(index);
+    if (index === undefined || event.type !== "click" || event.button !== "left" || !this.onCopyBlock) return undefined;
     this.onCopyBlock(index, this.codeUi.blocks[index]!.code);
     return { handled: true, render: true };
   }
@@ -308,9 +346,10 @@ export class ChatText extends Markdown {
         rows[y] = row.replace(COPY_MARK, "");
         const block = this.codeUi!.blocks[Number(mark[1])];
         if (!block) return;
-        const label = this.codeUi!.copied === Number(mark[1]) ? this.codeUi!.copiedLabel : this.codeUi!.copyLabel;
+        const copied = this.codeUi!.copied === Number(mark[1]);
+        const text = pillText(copied ? this.codeUi!.copiedLabel : this.codeUi!.copyLabel, copied);
         const visible = stripVTControlCharacters(rows[y]!);
-        block.button = { row: y, col: visibleWidth(visible.slice(0, visible.lastIndexOf(label))), width: visibleWidth(label) };
+        block.button = { row: y, col: visibleWidth(visible.slice(0, visible.lastIndexOf(text))), width: visibleWidth(text) };
       });
     }
     return this.linkView ? this.linkView.decorate(rows) : rows;

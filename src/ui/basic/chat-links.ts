@@ -78,6 +78,9 @@ function spansOf(row: string): Span[] {
   return spans;
 }
 
+/** Something other than a link that the pointer lights (see `ChatLinks.watchPointer`): which of its parts is lit now, and a way to turn it off. */
+export interface PointerClient { hovered(): number | undefined; clear(): void }
+
 const sameHover = (a: Hover | undefined, b: Hover | undefined) => a?.view === b?.view && a?.group === b?.group;
 interface Hover { view: LinkView; group: number }
 
@@ -162,6 +165,8 @@ export class ChatLinks {
   private before?: Hover;
   private scheduled = false;
   private pointerRaised = false;
+  private readonly pointerClients = new Set<WeakRef<PointerClient>>();
+  private clientsBefore?: (number | undefined)[];
 
   constructor(options: ChatLinksOptions) {
     this.cwd = options.cwd; this.home = options.home;
@@ -258,15 +263,40 @@ export class ChatLinks {
    */
   observe(data: string): void {
     if (!/\x1b\[<\d+;\d+;\d+[Mm]/.test(data)) return;
-    if (!this.scheduled) { this.scheduled = true; this.before = this.hovered; queueMicrotask(() => this.settle()); }
+    if (!this.scheduled) { this.scheduled = true; this.before = this.hovered; this.clientsBefore = this.clientStates(); queueMicrotask(() => this.settle()); }
     this.hovered = undefined;
+    this.forEachClient(client => client.clear());
   }
 
   private settle(): void {
-    const before = this.before;
-    this.before = undefined; this.scheduled = false;
-    if (!sameHover(before, this.hovered)) this.hooks?.requestRender();
+    const before = this.before; const clientsBefore = this.clientsBefore;
+    this.before = undefined; this.clientsBefore = undefined; this.scheduled = false;
+    const after = this.clientStates();
+    const clientsChanged = !clientsBefore || clientsBefore.length !== after.length || clientsBefore.some((state, index) => state !== after[index]);
+    if (!sameHover(before, this.hovered) || clientsChanged) this.hooks?.requestRender();
     this.syncPointer();
+  }
+
+  // ── Other things lit by the pointer ────────────────────────────────────────────────────────
+
+  /**
+   * Lets another part of the chat (a code block's «Copy» button) light something under the pointer with the same rule as the links: every mouse event clears it first, the component under the pointer
+   * lights it again while handling the event, and the screen is redrawn if the result differs. pi-tui only tells the component under the pointer about a move, so without this nothing would turn the highlight
+   * off when the pointer leaves. The client is held weakly: a message taken off the screen does not stay here.
+   */
+  watchPointer(client: PointerClient): void { this.pointerClients.add(new WeakRef(client)); }
+
+  private forEachClient(action: (client: PointerClient) => void): void {
+    for (const ref of this.pointerClients) {
+      const client = ref.deref();
+      if (client) action(client); else this.pointerClients.delete(ref);
+    }
+  }
+
+  private clientStates(): (number | undefined)[] {
+    const states: (number | undefined)[] = [];
+    this.forEachClient(client => states.push(client.hovered()));
+    return states;
   }
 
   /** Asks the terminal for the hand pointer while a link is lit and gives it back when none is, writing only when that changes; it does not take it back from the sidebar's grip. */

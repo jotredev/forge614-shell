@@ -63,8 +63,9 @@ async function chatCells(text: string, columns: number, options: { trueColor: bo
   tui.stop();
   const panel = options.trueColor ? "10,10,11" : `idx${nearestAnsi256(palette.background)}`;
   const code = options.trueColor ? "24,24,27" : `idx${nearestAnsi256(palette.surface)}`;
-  const rows = [...screenCells(output)].filter(([y]) => y > 3 && y < 30).map(([, row]) => row.slice(0, columns - 42)); // the sidebar's 36 columns and the gap are not the chat
-  return { rows, panel, code };
+  const pill = options.trueColor ? "39,39,42" : `idx${nearestAnsi256(palette.elevated)}`;
+  const rows =[...screenCells(output)].filter(([y]) => y > 3 && y < 30).map(([, row]) => row.slice(0, columns - 42)); // the sidebar's 36 columns and the gap are not the chat
+  return { rows, panel, code, pill };
 }
 
 const PARAGRAPH = "Una sesión quedó abierta. La sesión `forge614-ai-2026-10-07-t41` quedó abierta; su última nota habla de otra cosa y sigue con texto normal para que el renglón se parta en varios renglones más.";
@@ -107,9 +108,11 @@ test("un código en línea partido entre dos renglones: el fondo cubre las dos p
 test("el encabezado de una tabla y los bloques de código cubren su ancho y no se derraman a lo que sigue", async () => {
   const text = "Antes\n\n| Plazo | Qué cambia |\n|---|---|\n| corto | `código` y texto normal |\n\n```ts\nconst a = 1;\n```\n\nDespués con `código` y más texto normal al final.";
   const columns = 200; // más ancho que el ancho de lectura, para que haya celdas a la derecha del bloque
-  const { rows, panel, code } = await chatCells(text, columns, { trueColor: true, links: true });
-  expect(rows.flatMap(row => row.filter(cell => cell.bg !== panel && cell.bg !== code))).toHaveLength(0);
-  const header = rows.find(row => row.map(cell => cell.ch).join("").includes("Plazo"))!;
+  const { rows, panel, code, pill } = await chatCells(text, columns, { trueColor: true, links: true });
+  // El único otro fondo permitido es el de la píldora de «Copiar» del bloque, y solo en sus celdas.
+  expect(rows.flatMap(row => row.filter(cell => cell.bg !== panel && cell.bg !== code && cell.bg !== pill))).toHaveLength(0);
+  expect(rows.flatMap(row => row.filter(cell => cell.bg === pill).map(cell => cell.ch)).join("")).toBe(" ⧉ Copiar ");
+  const header =rows.find(row => row.map(cell => cell.ch).join("").includes("Plazo"))!;
   const painted = header.filter(cell => cell.bg === code).length;
   expect(painted).toBeGreaterThan("Plazo  Qué cambia".length);
   // Después del ancho de la tabla el renglón vuelve al fondo del panel.
