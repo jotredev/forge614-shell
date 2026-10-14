@@ -208,6 +208,11 @@ export class ChatLinks {
     return last < text.length ? out + paint(text.slice(last)) : out;
   }
 
+  /** `label` painted with `paint` and, where the terminal has hyperlinks, a link that opens `path` — a file Shell has just checked is there — with a click, like the paths in the text. Otherwise just `paint(label)`. */
+  linkTo(path: string, label: string, paint: (text: string) => string): string {
+    return getCapabilities().hyperlinks ? `\x1b]8;;${this.pathUrl(path)}\x1b\\${paint(label)}\x1b]8;;\x1b\\` : paint(label);
+  }
+
   /**
    * Turns the Markdown links of a drawn row whose destination is a local path into Shell's own path links. A destination counts when it has no scheme (`file:`, `javascript:`, `mailto:`
    * and the rest are left alone; `:12` or `:12:3` after a path is a line, not a scheme) and is not an anchor or `//…`; it is read like a path written in the text — absolute, `~/`, `./`,

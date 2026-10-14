@@ -1,4 +1,5 @@
 import { ActivityCard } from "./transcript.ts";
+import type { ImageStrip } from "./chat-images.ts";
 import { formatDuration } from "./duration.ts";
 import type { Catalog } from "../../i18n/index.ts";
 
@@ -47,13 +48,14 @@ export class ToolTracker {
     this.addCard(card);
   }
 
-  /** Freezes the tool's card with its outcome and total time. `detail` is the already-cleaned result text. */
-  finished(id: string, isError: boolean, detail: string): void {
+  /** Freezes the tool's card with its outcome and total time. `detail` is the already-cleaned result text; `images`, if the result carried any, are drawn inside the card. */
+  finished(id: string, isError: boolean, detail: string, images?: ImageStrip): void {
     const tool = this.tools.get(id);
     if (!tool) return;
     const duration = formatDuration((Date.now() - tool.startedAt) / 1000);
     const status = isError ? this.t.toolFailed({ duration }) : this.t.toolCompleted({ duration });
     if (tool.isEdit) tool.card.update(status); else tool.card.update(status, detail);
+    if (images) tool.card.setImages(images);
     tool.running = false;
   }
 

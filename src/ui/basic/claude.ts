@@ -28,10 +28,11 @@ import { ShellStatusBar } from "./status-bar.ts";
 import { StatusPanels, attachStatusPanels } from "./status-panel.ts";
 import type { EcosystemVersions } from "../../infrastructure/ecosystem-versions.ts";
 import { effortDescription, effortLabel, isDisplayableUsage } from "./metrics.ts";
-import { ActivityCard } from "./transcript.ts";
+import { ActivityCard, TOOL_INDENT } from "./transcript.ts";
 import { AssistantMessage, UserBubble } from "./chat-message.ts";
 import { TurnTranscript } from "./turn-transcript.ts";
-import { toolResultPreview } from "./tool-summary.ts";
+import { toolResultImages, toolResultPreview } from "./tool-summary.ts";
+import { ImageStrip, enableTerminalImages } from "./chat-images.ts";
 import { lineDiff } from "./diff.ts";
 import { engramToolLabel, parseClaudeMcpToolName } from "../../engines/mcp-labels.ts";
 import { ChatText, PanelText, danger, warning } from "./theme.ts";
@@ -141,6 +142,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   });
   // A click on a link or a path opens it; `writeWarning` is declared below and only runs when a click fails, long after it exists.
   enableTerminalLinks(process.env);
+  // Before the screen starts: it reads whether the terminal shows images when it starts (see `enableTerminalImages`).
+  enableTerminalImages(process.env);
   const links = new ChatLinks({ cwd, home: process.env.HOME, tools: linkTools, onFailure: target => writeWarning(t.linkOpenFailed({ target })) });
   // The two panels the bottom bar opens: the MCP servers' (from the newest `init`) and Forge614's (Shell's version, the two read once in the background, and whether Engram's memory reached this session).
   // The data is asked when a panel is drawn, so `shellState` and `session` need only exist by then.
@@ -439,7 +442,9 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       if (text.trim()) writeActivity(getCatalog(locale).backgroundActivity.noticeTitle, text, true);
     } else if (event.type === "user" && !event.parent_tool_use_id && Array.isArray(event.message.content)) {
       for (const block of event.message.content) if (block.type === "tool_result") {
-        toolTracker.finished(block.tool_use_id, Boolean(block.is_error), toolResultPreview(block.content, getCatalog(locale)));
+        // An image block in the result (a screenshot it read, say) is drawn as a thumbnail inside the tool's card, under its lines.
+        const images = toolResultImages(block.content, getCatalog(locale));
+        toolTracker.finished(block.tool_use_id, Boolean(block.is_error), toolResultPreview(block.content, getCatalog(locale)), images.length ? new ImageStrip(images, { locale, links, indent: TOOL_INDENT + 2 }) : undefined);
       }
     }
     // The error result of a turn the person stopped is the stop itself: the line «Turn stopped» says it, so it is not shown a second time as an error.

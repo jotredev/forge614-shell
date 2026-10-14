@@ -3,6 +3,7 @@ import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
 import type { ChatLinks, LinkView } from "./chat-links.ts";
 import { accent as cyan, added, addedBackground, muted, fit, removed, removedBackground, surface } from "./theme.ts";
 import type { DiffLine } from "./diff.ts";
+import type { ImageStrip } from "./chat-images.ts";
 
 const MAX_DIFF_LINES_SHOWN = 60;
 
@@ -52,7 +53,15 @@ export class ActivityCard implements Component {
     this.invalidate();
   }
 
-  invalidate(): void { this.cachedWidth = undefined; this.cachedRows = undefined; }
+  private images?: ImageStrip;
+
+  /** The images a tool result carried, drawn inside the card under its lines (see `ImageStrip`). */
+  setImages(images: ImageStrip): void {
+    this.images = images;
+    this.invalidate();
+  }
+
+  invalidate(): void { this.cachedWidth = undefined; this.cachedRows = undefined; this.images?.invalidate(); }
 
   private summary(): string {
     return this.status ? `${this.title} · ${this.status}` : this.title;
@@ -92,6 +101,12 @@ export class ActivityCard implements Component {
   }
 
   private rows(width: number): string[] {
+    const own = this.ownRows(width);
+    // The image rows go last and untouched: they are not cut to the width or turned into links like the card's text.
+    return this.images ? [...own, ...this.images.render(width)] : own;
+  }
+
+  private ownRows(width: number): string[] {
     if (!this.full) {
       const pad = " ".repeat(Math.min(this.indent, Math.max(0, width - 1)));
       const line = fit(this.paint(`${pad}• ${this.summary()}`, muted), width);

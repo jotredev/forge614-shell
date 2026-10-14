@@ -2149,6 +2149,40 @@ test("Codex UI: «Human», one rule between turns, and a tool card that names it
   } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
+/**
+ * U2 with Codex: the app-server reports an image the assistant looked at (`imageView`, with the file's path) or made (`imageGeneration`, with `savedPath`) in `item/completed` (types checked in the protocol generated
+ * by `codex app-server generate-ts`, codex-cli 0.162.1). Shell draws it as a card named «Image» with the file's name and, where the terminal shows images, its thumbnail; where it does not, the gray line.
+ */
+test("Codex UI: an image Codex viewed or generated is drawn as a card with the image's line", async () => {
+  const header = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+  header.writeUInt32BE(13, 8); header.write("IHDR", 12); header.writeUInt32BE(640, 16); header.writeUInt32BE(480, 20);
+  const dir = mkdtempSync(join(tmpdir(), "forge614-codex-images-"));
+  const viewed = join(dir, "visto.png"); writeFileSync(viewed, header);
+  const generated = join(dir, "generada.png"); writeFileSync(generated, header);
+  const previousImages = process.env.FORGE614_SHELL_IMAGES;
+  process.env.FORGE614_SHELL_IMAGES = "off";
+  const h = codexUi("en", rpc => threadReplies(rpc), undefined, 220);
+  try {
+    await tick(); h.enter("hello"); await tick();
+    h.terminal.output = "";
+    h.rpc.onNotification("item/completed", { threadId: "t", turnId: "u", item: { type: "imageView", id: "iv1", path: viewed } });
+    h.rpc.onNotification("item/completed", { threadId: "t", turnId: "u", item: { type: "imageGeneration", id: "ig1", status: "completed", revisedPrompt: null, result: "", failure: null, savedPath: generated } });
+    // A file that is not there, or an image Shell cannot draw, still gets its card with the path, and no gray line.
+    h.rpc.onNotification("item/completed", { threadId: "t", turnId: "u", item: { type: "imageView", id: "iv2", path: join(dir, "ya-no-esta.webp") } });
+    await tick(); await tick();
+    const screen = h.plain();
+    expect(screen).toContain("🖼 visto.png · 640×480 · 33 B");
+    expect(screen).toContain("🖼 generada.png · 640×480 · 33 B");
+    expect(screen).toContain("ya-no-esta.webp");
+    expect(screen).not.toContain("🖼 ya-no-esta");
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } }); await tick();
+  } finally {
+    h.enter("/f614:quit"); await h.ui; rmSync(dir, { recursive: true, force: true }); resetCapabilitiesCache();
+    if (previousImages === undefined) delete process.env.FORGE614_SHELL_IMAGES; else process.env.FORGE614_SHELL_IMAGES = previousImages;
+  }
+});
+
 /** With nothing said yet there is no history: `/recap` says so and asks Codex for nothing. */
 test("/recap before any message says there is no history and calls nothing", async () => {
   const h = codexUi("en", rpc => threadReplies(rpc), undefined, 220);

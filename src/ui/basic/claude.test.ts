@@ -2,7 +2,7 @@ import { expect, test, beforeAll, afterAll } from "bun:test";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { resetCapabilitiesCache, setCapabilityOverrides } from "@earendil-works/pi-tui";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { stripVTControlCharacters } from "node:util";
 import { basename, dirname, extname, join } from "node:path";
@@ -1721,6 +1721,9 @@ test("Claude UI: the tools of a subagent (events with a parent_tool_use_id) draw
 });
 
 test("Claude UI shows an image tool result without rendering its base64 payload", async () => {
+  // With images on (Shell turns them on by itself in Orca) the payload is sent to the terminal inside a graphics sequence, as it must; this test is about it not being drawn as text, so images are off.
+  const previousImages = process.env.FORGE614_SHELL_IMAGES;
+  process.env.FORGE614_SHELL_IMAGES = "off";
   const h = await claudeUi([], "en", undefined, 300);
   try {
     const data = "IMAGE_BASE64_PAYLOAD_SHOULD_NOT_RENDER_" + "A/".repeat(1500);
@@ -1733,7 +1736,42 @@ test("Claude UI shows an image tool result without rendering its base64 payload"
     expect(h.plain()).toContain("rendered view");
     expect(h.plain()).toContain("image/png");
     expect(h.plain()).not.toContain("IMAGE_BASE64_PAYLOAD_SHOULD_NOT_RENDER_");
-  } finally { await h.finish(); }
+  } finally {
+    await h.finish(); resetCapabilitiesCache();
+    if (previousImages === undefined) delete process.env.FORGE614_SHELL_IMAGES; else process.env.FORGE614_SHELL_IMAGES = previousImages;
+  }
+});
+
+/**
+ * U2: an image block in a tool result is drawn inside that tool's card — as a thumbnail where the terminal shows images, as the gray line `🖼 name · size × size · weight` where it does not — and the pasted path of a
+ * file in the person's message gets its thumbnail under the text.
+ */
+test("Claude UI: an image in a tool result is drawn in its card, and an image the person pastes as a path under their message", async () => {
+  const header = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+  header.writeUInt32BE(13, 8); header.write("IHDR", 12); header.writeUInt32BE(800, 16); header.writeUInt32BE(600, 20);
+  const dir = mkdtempSync(join(tmpdir(), "forge614-ui-images-"));
+  const pasted = join(dir, "orca-paste-1.png"); writeFileSync(pasted, header);
+  // Off, so the test reads the gray lines whatever terminal runs it (in Orca, Shell turns images on by itself).
+  const previousImages = process.env.FORGE614_SHELL_IMAGES;
+  process.env.FORGE614_SHELL_IMAGES = "off";
+  const h = await claudeUi();
+  try {
+    h.enter(`mira ${pasted}`); await tick(); await tick();
+    expect(h.plain()).toContain("🖼 orca-paste-1.png · 800×600 · 33 B");
+    // El texto con la ruta se queda (una ruta larga se corta en varios renglones, y su final se ve).
+    expect(h.plain()).toContain("mira");
+    expect(h.plain()).toContain("orca-paste-1.png");
+    const toolUse = { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "img-1", name: "Read", input: { file_path: "/x/captura.png" } }] }, parent_tool_use_id: null, session_id: "s-img", uuid: "00000000-0000-4000-8000-0000000000f1" };
+    const result = { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "img-1", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: header.toString("base64") } }] }] }, parent_tool_use_id: null, session_id: "s-img", uuid: "00000000-0000-4000-8000-0000000000f2" };
+    h.terminal.output = "";
+    h.emit(toolUse, result);
+    for (let i = 0; i < 60 && !h.plain().includes("image.png"); i++) await tick();
+    expect(h.plain()).toContain("🖼 image.png · 800×600 · 33 B"); // la prueba corre en inglés
+  } finally {
+    await h.finish(); rmSync(dir, { recursive: true, force: true }); resetCapabilitiesCache();
+    if (previousImages === undefined) delete process.env.FORGE614_SHELL_IMAGES; else process.env.FORGE614_SHELL_IMAGES = previousImages;
+  }
 });
 
 // The up arrow brings back what the person sent, as the shells do (the editor has it; Shell fills it with each message or command sent).

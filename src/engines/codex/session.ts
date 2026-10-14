@@ -1599,6 +1599,9 @@ export class CodexSession implements NativeSession {
       }
     }
     if (method === "item/completed") this.runningCommands.delete(params.item.id);
+    // An image the assistant looked at (`imageView`, with the file's path) or made (`imageGeneration`, saved at `savedPath`): the screen draws it as a card with a thumbnail (`Image: <path>`).
+    if (method === "item/completed" && params.item.type === "imageView" && typeof params.item.path === "string") this.emit({ type: "text", text: `Image: ${params.item.path}` });
+    if (method === "item/completed" && params.item.type === "imageGeneration" && typeof params.item.savedPath === "string") this.emit({ type: "text", text: `Image: ${params.item.savedPath}` });
     if (method === "item/completed" && params.item.type === "agentMessage") {
       this.lastAgentMessage = params.item.text;
       this.visible.push({ role: "assistant", text: String(params.item.text) });
