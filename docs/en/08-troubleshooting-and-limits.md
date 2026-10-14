@@ -22,7 +22,7 @@ Like a car fault list, this document connects each symptom to the component that
 
 ## Known limits
 
-Shell needs manual tests with real accounts to validate external flows and platforms beyond macOS/Linux. There is no Windows installer, worktree manager, local engine, or MCP-removal UI. `forge614-ai` does not own `forge614 init` yet.
+Windows x64 has an official installer (`install.ps1`) and native launcher (`forge614-shell.cmd`), continuously verified in native CI (`windows-latest`) alongside macOS and Linux. However, interactive chat with real assistant accounts (Claude Code, Codex) and specific terminal emulators still requires manual verification with external accounts. Shell does not include a worktree manager, local engines, or an MCP-removal UI. `forge614-ai` does not own `forge614 init` yet.
 
 ## Maintenance verification
 

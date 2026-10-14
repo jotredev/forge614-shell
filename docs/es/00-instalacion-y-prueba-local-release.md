@@ -4,13 +4,35 @@ Como instalar una herramienta en un banco de trabajo, este proceso coloca Shell 
 
 ## Requisitos y primera instalación
 
+### macOS y Linux
 En macOS o Linux se necesitan Node.js 22.19 o superior, `curl` y `shasum` o `sha256sum`. Instala el release público con:
 
 ```bash
 curl -fsSL https://github.com/jotredev/forge614-shell/releases/latest/download/install.sh | bash
 ```
 
-El instalador verifica descargas, prepara Shell bajo `~/.forge614/shell/` y asegura una copia compatible de Engines. Abre una terminal nueva y ejecuta `forge614-shell`.
+El instalador verifica descargas mediante SHA-256, prepara Shell bajo `~/.forge614/shell/` y asegura una copia compatible de Engines. Abre una terminal nueva y ejecuta `forge614-shell`.
+
+### Windows x64
+En Windows se necesitan Windows 10 versión 1803+ o Windows 11 x64, Node.js 22.19 o superior, PowerShell 5.1 o PowerShell 7 (`pwsh`) y `tar.exe`. Los comandos de descarga de abajo también usan `curl.exe`; el instalador utiliza PowerShell para descargar los assets.
+
+Por seguridad, descarga el script instalador oficial como archivo local antes de ejecutarlo; nunca canalices scripts remotos directo a `Invoke-Expression` (`iex`):
+
+```powershell
+curl.exe -fsSL -o install.ps1 https://github.com/jotredev/forge614-shell/releases/latest/download/install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Latest
+Remove-Item install.ps1
+```
+
+O si utilizas PowerShell 7 (`pwsh`):
+
+```powershell
+curl.exe -fsSL -o install.ps1 https://github.com/jotredev/forge614-shell/releases/latest/download/install.ps1
+pwsh -ExecutionPolicy Bypass -File .\install.ps1 -Latest
+Remove-Item install.ps1
+```
+
+El instalador comprueba la huella criptográfica SHA-256 contra el sidecar `.sha256`, instala Shell bajo `%USERPROFILE%\.forge614\shell\<versión>` (o `$env:FORGE614_HOME\shell\<versión>`), asegura una versión compatible de Forge614 Engines (`forge614-engines.exe` con esquema 1 y la capacidad booleana `fullySupported`), genera el lanzador `forge614-shell.cmd` y añade `shell\bin` al `Path` de usuario. Abre una ventana nueva de PowerShell o Terminal y ejecuta `forge614-shell`.
 
 ## Comandos
 

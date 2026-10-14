@@ -4,13 +4,35 @@ Like installing a tool on a workbench, this process puts Shell where the termina
 
 ## Requirements and first installation
 
+### macOS and Linux
 macOS or Linux needs Node.js 22.19 or later, `curl`, and `shasum` or `sha256sum`. Install the public release with:
 
 ```bash
 curl -fsSL https://github.com/jotredev/forge614-shell/releases/latest/download/install.sh | bash
 ```
 
-The installer verifies downloads, prepares Shell under `~/.forge614/shell/`, and ensures a compatible Engines copy. Open a new terminal and run `forge614-shell`.
+The installer verifies downloads via SHA-256, prepares Shell under `~/.forge614/shell/`, and ensures a compatible Engines copy. Open a new terminal and run `forge614-shell`.
+
+### Windows x64
+Windows needs Windows 10 version 1803+ or Windows 11 x64, Node.js 22.19 or later, PowerShell 5.1 or PowerShell 7 (`pwsh`), and `tar.exe`. The download commands below also use `curl.exe`; the installer itself uses PowerShell to fetch assets.
+
+For security, download the official installer script as a local file before running it; never pipe remote scripts directly into `Invoke-Expression` (`iex`):
+
+```powershell
+curl.exe -fsSL -o install.ps1 https://github.com/jotredev/forge614-shell/releases/latest/download/install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Latest
+Remove-Item install.ps1
+```
+
+Or when using PowerShell 7 (`pwsh`):
+
+```powershell
+curl.exe -fsSL -o install.ps1 https://github.com/jotredev/forge614-shell/releases/latest/download/install.ps1
+pwsh -ExecutionPolicy Bypass -File .\install.ps1 -Latest
+Remove-Item install.ps1
+```
+
+The installer verifies cryptographic SHA-256 checksums against the `.sha256` sidecar, installs Shell under `%USERPROFILE%\.forge614\shell\<version>` (or `$env:FORGE614_HOME\shell\<version>`), ensures a compatible Forge614 Engines installation (`forge614-engines.exe` with schema 1 and a boolean `fullySupported` capability), creates the `forge614-shell.cmd` launcher, and adds `shell\bin` to the user `Path`. Open a new PowerShell or Terminal window and run `forge614-shell`.
 
 ## Commands
 

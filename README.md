@@ -12,6 +12,26 @@ Shell is a TypeScript application run with Bun and Node.js 22.19+. It is the hum
 - Shell never falls back to scanning `PATH` itself when Forge614 Engines is missing or incompatible.
 - Shell does not store subscription credentials, revoke external accounts, create projects during Engram initialization, or display MCP configuration-file contents.
 
+## Installation / Instalación
+
+Supported platforms: **macOS**, **Linux**, and **Windows x64**.
+Prerequisites: **Node.js 22.19+**.
+
+### macOS / Linux
+Requires `curl` and `shasum` or `sha256sum`:
+```bash
+curl -fsSL https://github.com/jotredev/forge614-shell/releases/latest/download/install.sh | bash
+```
+
+### Windows x64
+Requires Windows 10 version 1803+ or Windows 11, PowerShell (5.1 or `pwsh`), and `tar.exe`. The download command below also uses `curl.exe`; the installer itself uses PowerShell to fetch assets. Download the official `install.ps1` script as a file and execute it with `-Latest` (never pipe remote scripts directly to `iex`):
+```powershell
+curl.exe -fsSL -o install.ps1 https://github.com/jotredev/forge614-shell/releases/latest/download/install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Latest
+Remove-Item install.ps1
+```
+The installer validates SHA-256 sidecar checksums, places Forge614 Shell under `%USERPROFILE%\.forge614\shell\<version>`, ensures compatible Forge614 Engines, and adds the `forge614-shell.cmd` launcher to the user `Path`.
+
 ## Documentation / Documentación
 
 | No. | Español | English |

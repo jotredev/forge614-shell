@@ -22,7 +22,7 @@ Como una lista de averías de automóvil, este documento conecta cada síntoma c
 
 ## Límites conocidos
 
-Shell necesita pruebas manuales con cuentas reales para validar flujos externos y plataformas distintas de macOS/Linux. No hay instalador Windows, gestor de worktrees, motores locales ni interfaz de eliminación MCP. `forge614-ai` aún no posee `forge614 init`.
+Windows x64 cuenta con instalador oficial (`install.ps1`) y lanzador nativo (`forge614-shell.cmd`), verificados de forma continua en CI nativa (`windows-latest`) junto con macOS y Linux. No obstante, el chat interactivo con cuentas reales de asistentes (Claude Code, Codex) y emuladores de terminal concretos aún requiere comprobación manual con cuentas externas. Shell no incluye gestor de worktrees, motores locales ni interfaz de eliminación MCP. `forge614-ai` aún no posee `forge614 init`.
 
 ## Verificación de mantenimiento
 
