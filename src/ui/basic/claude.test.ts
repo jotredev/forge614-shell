@@ -1734,7 +1734,7 @@ test("Claude UI shows an image tool result without rendering its base64 payload"
     );
     for (let i = 0; i < 60 && !h.plain().includes("rendered view"); i++) await tick();
     expect(h.plain()).toContain("rendered view");
-    expect(h.plain()).toContain("image/png");
+    expect(h.plain()).toContain("PNG image"); // el resumen legible del bloque, no el JSON con su media_type
     expect(h.plain()).not.toContain("IMAGE_BASE64_PAYLOAD_SHOULD_NOT_RENDER_");
   } finally {
     await h.finish(); resetCapabilitiesCache();

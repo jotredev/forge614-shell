@@ -3,6 +3,8 @@ import type { Component, OverlayHandle, OverlayOptions, TUI, Terminal, TuiMouseE
 import { accent, elevated, fit, foreground, surface, warning, workspaceBackground, workspaceColors } from "./theme.ts";
 import { DEFAULT_POINTER, GRIP_WIDTH, LINK_POINTER, RESIZE_POINTER, SidebarLayout } from "./sidebar-layout.ts";
 import type { ChatLinks } from "./chat-links.ts";
+import { restoreImageRows } from "./image-rows.ts";
+import type { LayoutFrameLike } from "./image-rows.ts";
 import type { StatusPanels } from "./status-panel.ts";
 import { copySelectionText } from "../../infrastructure/clipboard.ts";
 import { getCatalog } from "../../i18n/index.ts";
@@ -122,6 +124,8 @@ interface PiScreenState {
   stopSelectionAutoScroll(): void;
   clearTextSelection(): void;
   handleViewportInput(data: string): { consume?: boolean } | undefined;
+  /** The first step on the rows of a frame, after the layout has painted them (`doRender`). */
+  applySearchHighlights?(screen: string[], layout: LayoutFrameLike): string[];
 }
 
 /** A left button's release as the terminal reports it (SGR): no motion, no wheel and the left button's code, with or without a modifier key held. */
@@ -148,6 +152,10 @@ class ChatScreen extends TuiAltScreen {
     const pi = this.pi();
     const handle = pi.handleViewportInput.bind(this);
     pi.handleViewportInput = data => { const result = handle(data); this.afterViewportInput(data); return result; };
+    // The rows of a frame go through this step first, once the layout has painted them: the ones that carry an image get back the sidebar's text that pi-tui's layout threw away (see `restoreImageRows`).
+    // If pi-tui no longer has the step, nothing is wrapped, and the test that reads the bytes of a frame with an image fails instead of the screen.
+    const highlights = pi.applySearchHighlights?.bind(this);
+    if (highlights) pi.applySearchHighlights = (screen, layout) => highlights(restoreImageRows(screen, layout), layout);
   }
 
   private pi(): PiScreenState { return this as unknown as PiScreenState; }

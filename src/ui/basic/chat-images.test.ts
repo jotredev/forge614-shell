@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { Container, TuiAltScreen, getCapabilities, resetCapabilitiesCache, setCapabilities, setCapabilityOverrides } from "@earendil-works/pi-tui";
+import { Container, getCapabilities, resetCapabilitiesCache, setCapabilities, setCapabilityOverrides } from "@earendil-works/pi-tui";
 import { ChatLinks } from "./chat-links.ts";
 import { ImageStrip, MAX_THUMBNAILS, THUMBNAIL_COLUMNS, THUMBNAIL_ROWS, enableTerminalImages, findImagePaths, formatBytes, imageLine, imagesInText, readImage } from "./chat-images.ts";
 import { UserBubble } from "./chat-message.ts";
@@ -12,7 +12,7 @@ import { toolResultImages } from "./tool-summary.ts";
 import { createComposer } from "./composer.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { ShellStatusBar } from "./status-bar.ts";
-import { IndependentScrollView, workspaceLayout, workspaceTerminal } from "./workspace.ts";
+import { IndependentScrollView, chatScreen, workspaceLayout } from "./workspace.ts";
 import { getCatalog } from "../../i18n/index.ts";
 
 /** A PNG with only the part pi-tui reads (the signature and the size in the header): enough to be drawn as a thumbnail, never decoded here. */
@@ -265,12 +265,12 @@ test("un bloque image de un resultado de herramienta se dibuja dentro de la tarj
 async function screen(children: (container: Container) => void, columns = 120, rows = 50) {
   let output = "";
   const terminal = { columns, rows, kittyProtocolActive: false, start() {}, stop() {}, async drainInput() {}, write(data: string) { output += data; }, moveBy() {}, hideCursor() {}, showCursor() {}, clearLine() {}, clearFromCursor() {}, clearScreen() {}, setTitle() {}, setProgress() {} };
-  const surface = workspaceTerminal(terminal as never);
-  const tui = new TuiAltScreen(surface);
+  // The screen as the app builds it (`ChatScreen`, with the step that gives the sidebar's text back to the rows that carry an image).
+  const { surface, tui } = chatScreen(terminal as never, new ChatLinks({ cwd: process.cwd() }), undefined, { copySelection: async () => true });
   const transcript = new Container();
   children(transcript);
   const scroll = new IndependentScrollView(transcript, { follow: "none", primary: true, scrollbar: "hidden" });
-  const snapshot = () => ({ account: "connected" as const, provider: "Claude Code", model: "m", reasoning: "medium", context: { used: 1, window: 100 }, usage: [] });
+  const snapshot = () => ({ account: "connected" as const, provider: "Claude Code", model: "claude-opus", reasoning: "High", context: { used: 1, window: 100 }, usage: [{ label: "Weekly", usedPercent: 74 }] });
   const { input } = createComposer(tui);
   tui.setLayoutRoot(workspaceLayout(scroll, input, new ShellSidebar(snapshot), new ShellStatusBar(snapshot), surface));
   tui.setFocus(input); tui.start();
@@ -352,5 +352,103 @@ test("sin imágenes activadas (FORGE614_SHELL_IMAGES=off) el frame compuesto no 
   const s = await screen(container => container.addChild(new UserBubble(`mira ${path}`, { locale: "es", at: null })));
   expect(s.all()).not.toContain("\x1b_G");
   expect(stripVTControlCharacters(s.all())).toContain("🖼 apagada.png · 300×200");
+  s.stop();
+});
+
+// ── The bytes the terminal gets (U2-r3) ────────────────────────────────────────────────────
+
+/** A PNG as big as a real screenshot, so its kitty sequence has dozens of `m=1` chunks (the 33-byte fixtures above fit in one and hid the defect). */
+const bigPng = (width: number, height: number, extra = 150_000) => Buffer.concat([png(width, height), Buffer.from(Array.from({ length: extra }, (_, i) => (i * 31) % 256))]);
+/** The text of a row with the graphics sequences taken out (they are zero columns wide) and the terminal's controls removed: what the person reads on that row. */
+const visible = (row: string) => stripVTControlCharacters(row.replace(KITTY, ""));
+/** Cuts the frame at each cursor move (`ESC[row;1H`): the last time each row was written. */
+const lastRows = (chunk: string) => { const rows: string[] = []; const parts = chunk.split(/(\x1b\[\d+;1H)/); for (let i = 1; i < parts.length; i += 2) rows[Number(/\[(\d+);/.exec(parts[i]!)![1])] = parts[i + 1]!; return rows; };
+
+/**
+ * Draws one transcript, with a recognizable sidebar, in the real layout; returns the rows the person reads on the right (the sidebar's columns) and the raw output. `images` off draws the same transcript with the gray lines,
+ * which is the reference: the sidebar of every row must read the same with an image as without one.
+ */
+async function sidebarOf(build: (container: Container) => void, images: boolean) {
+  setCapabilities({ images: images ? "kitty" : null, trueColor: true, hyperlinks: true });
+  let output = "";
+  const terminal = { columns: 120, rows: 50, kittyProtocolActive: false, start() {}, stop() {}, async drainInput() {}, write(data: string) { output += data; }, moveBy() {}, hideCursor() {}, showCursor() {}, clearLine() {}, clearFromCursor() {}, clearScreen() {}, setTitle() {}, setProgress() {} };
+  // The screen as the app builds it (`ChatScreen`, with the step that gives the sidebar's text back to the rows that carry an image).
+  const { surface, tui } = chatScreen(terminal as never, new ChatLinks({ cwd: process.cwd() }), undefined, { copySelection: async () => true });
+  const transcript = new Container();
+  build(transcript);
+  const scroll = new IndependentScrollView(transcript, { follow: "none", primary: true, scrollbar: "hidden" });
+  const snapshot = () => ({ account: "connected" as const, provider: "Claude Code", model: "claude-opus", reasoning: "High", context: { used: 1, window: 100 }, usage: [{ label: "Weekly", usedPercent: 74 }] });
+  const { input } = createComposer(tui);
+  tui.setLayoutRoot(workspaceLayout(scroll, input, new ShellSidebar(snapshot), new ShellStatusBar(snapshot), surface));
+  tui.setFocus(input); tui.start();
+  await new Promise(resolve => setTimeout(resolve, 80));
+  const before = output.length;
+  tui.stop({ preserveScreen: true });
+  const rows = lastRows(output.slice(0, before));
+  return { rows, right: rows.map(row => visible(row ?? "").slice(-36)), output, stopped: output.slice(before) };
+}
+
+test("el frame real entrega la secuencia kitty de una imagen grande completa y la barra lateral de esa fila intacta", async () => {
+  const path = file("captura-real.png", bigPng(1600, 1400));
+  // La fila donde empieza la imagen se barre sobre 8 filas seguidas: en alguna cae sobre texto de la barra lateral (en otras la barra está vacía y el defecto no se ve).
+  for (let lead = 0; lead < 8; lead++) await expectImageRowIntact(lead, path);
+});
+
+async function expectImageRowIntact(lead: number, path: string) {
+  const build = (container: Container) => container.addChild(new UserBubble(`${"\n".repeat(lead)}mira ${path}`, { locale: "es", at: null }));
+  const reference = await sidebarOf(build, false);
+  const drawn = await sidebarOf(build, true);
+  // 1. La secuencia llega completa: sus trozos `m=1…` y el final `m=0`, cada uno cerrado, sin nada insertado en medio.
+  const chunks = drawn.output.match(KITTY)!.filter(chunk => !chunk.startsWith("\x1b_Ga=d"));
+  expect(chunks.length).toBeGreaterThan(20);
+  expect(chunks[0]).toMatch(/^\x1b_Ga=T,f=100,q=2,C=1,c=\d+,r=\d+,i=\d+,m=1;[A-Za-z0-9+/=]+\x1b\\$/);
+  for (const chunk of chunks.slice(1, -1)) expect(chunk).toMatch(/^\x1b_Gm=1;[A-Za-z0-9+/=]+\x1b\\$/);
+  expect(chunks.at(-1)).toMatch(/^\x1b_Gm=0;[A-Za-z0-9+/=]+\x1b\\$/);
+  const payload = chunks.map(chunk => chunk.slice(chunk.indexOf(";") + 1, -2)).join("");
+  expect(payload).toBe(bigPng(1600, 1400).toString("base64"));
+  // 2. Los trozos van seguidos: entre el primero y el último no hay ningún otro código.
+  const start = drawn.output.indexOf(chunks[0]!);
+  expect(drawn.output.slice(start, start + chunks.join("").length)).toBe(chunks.join(""));
+  // 3. El texto de la barra lateral de cada fila llega igual que sin imagen, también en la fila donde empieza la imagen.
+  const imageRow = drawn.rows.findIndex(row => row?.includes("a=T"));
+  expect(imageRow).toBeGreaterThan(0);
+  for (let y = 3; y < 30; y++) expect(drawn.right[y], `con ${lead} líneas antes, fila ${y}`).toBe(reference.right[y]);
+  // 4. Y viene después del cierre de la secuencia en esa misma fila.
+  const row = drawn.rows[imageRow]!;
+  const tail = reference.right[imageRow]!.trim();
+  expect(visible(row.slice(row.lastIndexOf("\x1b\\") + 2)).includes(tail), `con ${lead} líneas antes, el texto «${tail}» de la barra lateral viene tras el cierre`).toBe(true);
+}
+
+test("lo mismo con la imagen dentro de una tarjeta de herramienta (Read) y después de desplazar", async () => {
+  const data = bigPng(1200, 900).toString("base64");
+  const images = toolResultImages([{ type: "image", source: { type: "base64", media_type: "image/png", data } }], getCatalog("es"));
+  const build = (container: Container) => {
+    for (let i = 0; i < 3; i++) container.addChild(new UserBubble(`relleno ${i}`, { locale: "es", at: null }));
+    const card = new ActivityCard("Read · captura.png", "Completado · 0s", "imagen");
+    card.setImages(new ImageStrip(images, { locale: "es", indent: 6 }));
+    container.addChild(card);
+  };
+  const reference = await sidebarOf(build, false);
+  const drawn = await sidebarOf(build, true);
+  const chunks = drawn.output.match(KITTY)!.filter(chunk => !chunk.startsWith("\x1b_Ga=d"));
+  expect(chunks.map(chunk => chunk.slice(chunk.indexOf(";") + 1, -2)).join("")).toBe(data);
+  for (let y = 3; y < 30; y++) expect(drawn.right[y], `fila ${y}`).toBe(reference.right[y]);
+  // Después de desplazar: la imagen medio recortada por abajo conserva la barra lateral de su fila.
+  const path = file("para-desplazar.png", bigPng(1600, 1400));
+  // La barra lateral no depende del contenido del chat: en cada fila lee lo mismo que con un chat cualquiera, esté la imagen donde esté (la referencia va antes: apaga las imágenes mientras se calcula).
+  const sidebar = (await sidebarOf(container => container.addChild(new UserBubble("hola", { locale: "es", at: null })), false)).right;
+  setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+  const filler = Array.from({ length: 70 }, (_, i) => `línea ${i + 1}`).join("\n");
+  const s = await screen(container => { container.addChild(new UserBubble(filler, { locale: "es", at: null })); container.addChild(new UserBubble(`mira ${path}`, { locale: "es", at: null })); container.addChild(new UserBubble(filler, { locale: "es", at: null })); }, 120, 50);
+  let withImage = 0;
+  for (const top of [0, 10, 20, 28, 32, 36, 40, 44, 48, 52, 56, 60]) {
+    s.scroll.scrollTo(top);
+    const from = s.mark();
+    s.tui.requestRender(); await s.settle();
+    const rows = lastRows(s.all());
+    if (rows.some(row => row?.includes("\x1b_Ga="))) withImage++; // hay imagen (entera o recortada) en el cuadro
+    for (let y = 3; y < 30; y++) expect(visible(rows[y] ?? "").slice(-36), `desplazado a ${top}, fila ${y}`).toBe(sidebar[y]!);
+  }
+  expect(withImage).toBeGreaterThan(3); // la prueba mira cuadros que de verdad llevan la imagen
   s.stop();
 });

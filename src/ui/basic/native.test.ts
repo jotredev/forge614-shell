@@ -42,6 +42,8 @@ class TestTerminal implements Terminal {
   moveBy() {} hideCursor() {} showCursor() {} clearLine() {} clearFromCursor() {} clearScreen() {} setTitle() {} setProgress() {}
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 25));
+/** Waits until `ready()` holds, for at most `ms`: a runner as slow as Windows' needs longer than a fixed number of `tick`s, and a test that stops waiting early fails on its assertions after its own timeout already ended it. */
+const waitUntil = async (ready: () => boolean, ms = 20_000) => { const end = Date.now() + ms; while (!ready() && Date.now() < end) await tick(); };
 /** Waits, a tick at a time, until `condition` holds (at most 60 ticks), instead of a fixed moment that a loaded machine overruns; the test's own expectation still decides. */
 async function until(condition: () => boolean): Promise<void> { for (let i = 0; i < 60 && !condition(); i++) await tick(); }
 
@@ -2170,7 +2172,8 @@ test("Codex UI: an image Codex viewed or generated is drawn as a card with the i
     h.rpc.onNotification("item/completed", { threadId: "t", turnId: "u", item: { type: "imageGeneration", id: "ig1", status: "completed", revisedPrompt: null, result: "", failure: null, savedPath: generated } });
     // A file that is not there, or an image Shell cannot draw, still gets its card with the path, and no gray line.
     h.rpc.onNotification("item/completed", { threadId: "t", turnId: "u", item: { type: "imageView", id: "iv2", path: join(dir, "ya-no-esta.webp") } });
-    await tick(); await tick();
+    // Waits for the three cards by time, not for a fixed number of turns: windows-latest is slower (see the timeout below).
+    await waitUntil(() => ["🖼 visto.png", "🖼 generada.png", "ya-no-esta.webp"].every(text => h.plain().includes(text)));
     const screen = h.plain();
     expect(screen).toContain("🖼 visto.png · 640×480 · 33 B");
     expect(screen).toContain("🖼 generada.png · 640×480 · 33 B");
@@ -2181,7 +2184,8 @@ test("Codex UI: an image Codex viewed or generated is drawn as a card with the i
     h.enter("/f614:quit"); await h.ui; rmSync(dir, { recursive: true, force: true }); resetCapabilitiesCache();
     if (previousImages === undefined) delete process.env.FORGE614_SHELL_IMAGES; else process.env.FORGE614_SHELL_IMAGES = previousImages;
   }
-});
+// On windows-latest, Verify 38645400650 (03eda3c) this test ran out of the default 5 s (5002 ms): it writes three temporary files and draws three cards on a runner several times slower than a Mac.
+}, { timeout: 30_000 });
 
 /**
  * U2-r2 with Codex: a pasted path (Orca pastes a screenshot as the path of its file) is a message to Codex, not a command; real commands stay commands.
