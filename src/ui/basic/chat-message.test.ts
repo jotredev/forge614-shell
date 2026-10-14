@@ -3,6 +3,7 @@ import { stripVTControlCharacters } from "node:util";
 import { Container, resetCapabilitiesCache, setCapabilityOverrides } from "@earendil-works/pi-tui";
 import type { TuiMouseEvent } from "@earendil-works/pi-tui";
 import { AssistantMessage, UserBubble, MAX_READING_WIDTH } from "./chat-message.ts";
+import { ChatLinks } from "./chat-links.ts";
 
 /** Estas pruebas leen códigos RGB exactos (el fondo de superficie), así que fijan el color verdadero en vez de depender de la terminal que corre la suite. */
 beforeAll(() => setCapabilityOverrides({ trueColor: true }));
@@ -204,7 +205,7 @@ test("una línea de código se parte por el último espacio que cabe, con la san
   const { message } = assistant("```\n    uno dos tres cuatro cinco seis siete ocho nueve diez once doce\n```");
   const rows = plain(message.render(40)).filter(row => /\S/.test(row) && !row.includes("Claude") && !row.includes("Copiar"));
   expect(rows.length).toBeGreaterThan(1);
-  const text = rows.map(row => row.replace(/^ {3}/, "").trimEnd());
+  const text = rows.map(row => row.replace(/^ {4}/, "").trimEnd()); // margen de 2 + relleno del bloque de 2
   expect(text[0]!.startsWith("    uno")).toBe(true);
   expect(text[1]!.startsWith("      ")).toBe(true); // sangría 4 + 2
   expect(text[1]!.trim()[0]).not.toBe(" ");
@@ -251,7 +252,11 @@ test("los títulos van en negrita y sin los # ", () => {
 
 const LONG_CODE = "const resultado = calcularAlgoMuyLargo(primerArgumento, segundoArgumento, tercerArgumento, cuartoArgumento, quintoArgumento);";
 const TWO_BLOCKS = `Antes\n\n\`\`\`text\nuno\n  dos con sangría\n\n   tres\n\`\`\`\n\nEn medio con \`código en línea\`.\n\n\`\`\`ts\n${LONG_CODE}\n\`\`\`\n\nDespués.`;
-const buttonsOf = (message: AssistantMessage, width = 80) => plain(message.render(width)).flatMap((row, y) => /Copiar|Copiado/.test(row) ? [{ y, x: row.search(/Copiar|Copiado/), row }] : []);
+/** Los botones dibujados: su fila y la columna donde empieza la píldora (con su espacio de relleno). */
+const PILL = / [⧉✓] (?:Copiar|Copiado) /;
+const buttonsOf = (message: AssistantMessage, width = 80) => plain(message.render(width)).flatMap((row, y) => PILL.test(row) ? [{ y, x: row.search(PILL), row }] : []);
+const ELEVATED = "\x1b[48;2;39;39;42m";
+const ACCENT_BG = "\x1b[48;2;70;222;224m";
 
 test("una respuesta sin bloques de código no tiene ningún Copiar, ni al final ni en ningún lado", () => {
   const { message } = assistant("Una respuesta con `código en línea`, una lista:\n\n- uno\n- dos\n\ny una tabla:\n\n| a | b |\n|---|---|\n| 1 | 2 |\n");
@@ -259,21 +264,26 @@ test("una respuesta sin bloques de código no tiene ningún Copiar, ni al final 
   expect(plain(assistant("").message.render(60)).join("\n")).not.toContain("Copiar");
 });
 
-test("cada bloque de código cercado lleva su Copiar, en gris, a la derecha de su primera fila y dentro del fondo del bloque", () => {
+test("cada bloque de código cercado lleva su Copiar como botón: una píldora con icono sobre un fondo más claro que el del bloque, en su propia fila, con 2 columnas al borde derecho", () => {
   const { message } = assistant(TWO_BLOCKS);
   const raw = message.render(80);
+  const rows = plain(raw);
   const buttons = buttonsOf(message);
   expect(buttons).toHaveLength(2);
   for (const button of buttons) {
-    // La primera fila del bloque: con fondo, el botón al borde derecho con 1 columna de relleno y en gris.
-    expect(raw[button.y]).toContain(SURFACE);
-    expect(raw[button.y]).toContain("\x1b[38;2;161;161;170m");
-    // 1 columna de relleno entre el botón y el borde derecho del bloque, todavía con el fondo.
-    expect(raw[button.y]).toContain("Copiar \x1b[39m\x1b[49m");
+    const row = raw[button.y]!;
+    expect(row).toContain(SURFACE); // la fila es del bloque…
+    expect(row).toContain(ELEVATED); // …y la píldora tiene su propio fondo, más claro
+    expect(row.indexOf(ELEVATED)).toBeGreaterThan(row.indexOf(SURFACE));
+    expect(row).toContain("\x1b[38;2;228;228;231m ⧉ Copiar "); // texto normal (no gris tenue), con icono y 1 espacio de relleno a cada lado
+    expect(rows[button.y]!.slice(button.x, button.x + 10)).toBe(" ⧉ Copiar ");
+    // El bloque ocupa las columnas 2 a 78 de 80; la píldora termina 2 columnas antes del borde derecho del bloque.
+    expect(button.x + " ⧉ Copiar ".length).toBe(80 - 2 - 2);
   }
-  // El segundo bloque tiene idioma: «ts» a la izquierda de la misma fila y el botón a la derecha.
-  const second = plain(raw)[buttons[1]!.y]!;
+  // El segundo bloque tiene idioma: «ts» en gris a la izquierda de la misma fila y la píldora a la derecha.
+  const second = rows[buttons[1]!.y]!;
   expect(second.indexOf("ts")).toBeLessThan(second.indexOf("Copiar"));
+  expect(raw[buttons[1]!.y]).toContain("\x1b[38;2;161;161;170mts");
   // El código en línea del medio no lleva botón.
   expect(plain(raw).filter(row => row.includes("código en línea") || row.includes("Copiar")).filter(row => row.includes("código en línea") && row.includes("Copiar"))).toHaveLength(0);
 });
@@ -298,6 +308,86 @@ test("el clic en cada botón copia exactamente el contenido original de su bloqu
   expect(copied.join("")).not.toContain("```");
   expect(copied.join("")).not.toContain("\x1b");
   void second;
+});
+
+test("entre la fila del botón y el contenido hay una fila en blanco con el fondo del bloque, y el contenido lleva 2 columnas de relleno a cada lado", () => {
+  const { message } = assistant(TWO_BLOCKS);
+  const raw = message.render(80);
+  const rows = plain(raw);
+  const [first, second] = buttonsOf(message);
+  // Primer bloque: botón, fila en blanco del bloque, y recién después «uno» (con 2 de margen + 2 de relleno).
+  expect(rows[first!.y + 1]!.trim()).toBe("");
+  expect(raw[first!.y + 1]).toContain(SURFACE);
+  expect(rows[first!.y + 2]!.indexOf("uno")).toBe(4);
+  expect(raw[first!.y + 2]).toContain("  \x1b[39m\x1b[49m"); // y 2 columnas de relleno a la derecha, aún con el fondo
+  // Al final del bloque, una fila en blanco con el fondo del bloque, como antes.
+  const last = rows.findIndex(row => row.includes("tres"));
+  expect(rows[last + 1]!.trim()).toBe("");
+  expect(raw[last + 1]).toContain(SURFACE);
+  // Segundo bloque: igual.
+  expect(rows[second!.y + 1]!.trim()).toBe("");
+  expect(raw[second!.y + 1]).toContain(SURFACE);
+  expect(rows[second!.y + 2]!.indexOf("const resultado")).toBe(4);
+});
+
+test("la zona de clic cubre toda la píldora: cualquier columna suya copia, y las de al lado no", async () => {
+  for (const [dx, copies] of [[0, true], [1, true], [4, true], [9, true], [-1, false], [10, false], [30, false]] as const) {
+    const copied: string[] = [];
+    const { message } = assistant("```sh\nbun test\n```", { copy: async text => { copied.push(text); return true; } });
+    const [button] = buttonsOf(message);
+    clickOn(message, button!.y, button!.x + dx);
+    await Bun.sleep(0);
+    expect(copied, `columna ${dx} de la píldora`).toEqual(copies ? ["bun test"] : []);
+  }
+});
+
+test("después de copiar el botón dice «✓ Copiado» en el color de éxito, sobre el mismo fondo, y vuelve a «⧉ Copiar»", async () => {
+  const { message } = assistant("```sh\nbun test\n```");
+  const [button] = buttonsOf(message);
+  const before = message.render(80)[button!.y]!;
+  clickOn(message, button!.y, button!.x);
+  await Bun.sleep(0);
+  const row = message.render(80)[button!.y]!;
+  expect(stripVTControlCharacters(row)).toContain(" ✓ Copiado ");
+  expect(row).toContain("\x1b[38;2;107;238;201m ✓ Copiado ");
+  expect(row).toContain(ELEVATED);
+  expect(row).not.toContain(ACCENT_BG);
+  expect(row).not.toBe(before);
+  // La píldora sigue pegada a 2 columnas del borde, así que al ser una columna más ancha empieza una antes; la zona de clic es la nueva.
+  expect(plain([row])[0]!.slice(button!.x - 1, button!.x + 10)).toBe(" ✓ Copiado ");
+  expect(buttonsOf(message)[0]!.x).toBe(button!.x - 1);
+  await Bun.sleep(2100);
+  expect(stripVTControlCharacters(message.render(80)[button!.y]!)).toContain(" ⧉ Copiar ");
+});
+
+test("al pasar el mouse por la píldora cambia al acento con texto oscuro y en negrita, solo la de ese bloque; al irse el puntero vuelve", async () => {
+  const links = new ChatLinks({ cwd: process.cwd(), home: process.env.HOME });
+  let redraws = 0;
+  links.bind({ requestRender: () => { redraws++; }, write: () => {} });
+  const message = new AssistantMessage({ agent: "Claude", locale: "es", at: null, links, copy: async () => true, onChange: () => {} });
+  message.setText(TWO_BLOCKS); message.complete();
+  const container = new Container(); container.addChild(message); container.render(80);
+  const [first, second] = buttonsOf(message);
+  const move = (y: number, x: number): TuiMouseEvent => ({ ...click(y, x), type: "move", button: "none" });
+  expect(message.render(80).join("")).not.toContain(ACCENT_BG);
+  // El puntero pasa por la primera píldora: cada evento de ratón pasa antes por `observe`, como en la pantalla real.
+  links.observe("\x1b[<35;10;5M");
+  container.handleMouse(move(first!.y, first!.x + 3));
+  const rows = message.render(80);
+  expect(rows[first!.y]).toContain(ACCENT_BG);
+  expect(rows[first!.y]).toContain("\x1b[1m"); // negrita
+  expect(rows[first!.y]).toContain("\x1b[38;2;10;10;11m ⧉ Copiar "); // texto oscuro del fondo de la pantalla
+  expect(rows[second!.y]).not.toContain(ACCENT_BG);
+  await Bun.sleep(0);
+  expect(redraws).toBeGreaterThan(0);
+  const afterHover = redraws;
+  // El puntero se va a otra parte (un evento de ratón que ningún botón recibe): se apaga y se pide redibujar.
+  links.observe("\x1b[<35;60;30M");
+  await Bun.sleep(0);
+  expect(message.render(80).join("")).not.toContain(ACCENT_BG);
+  expect(redraws).toBeGreaterThan(afterHover);
+  // El texto de la píldora no cambia con el realce: el clic sigue en el mismo lugar.
+  expect(buttonsOf(message)[0]!.x).toBe(first!.x);
 });
 
 test("un bloque dentro de una lista lleva su botón, alineado al borde derecho del bloque, y copia solo ese bloque", async () => {
