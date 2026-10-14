@@ -1,6 +1,6 @@
 import { HStack, TuiAltScreen, VStack, ScrollView, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Component, OverlayHandle, OverlayOptions, TUI, Terminal, TuiMouseEvent } from "@earendil-works/pi-tui";
-import { accent, elevated, fit, foreground, surface, warning, workspaceColors } from "./theme.ts";
+import { accent, elevated, fit, foreground, surface, warning, workspaceBackground, workspaceColors } from "./theme.ts";
 import { DEFAULT_POINTER, GRIP_WIDTH, LINK_POINTER, RESIZE_POINTER, SidebarLayout } from "./sidebar-layout.ts";
 import type { ChatLinks } from "./chat-links.ts";
 import type { StatusPanels } from "./status-panel.ts";
@@ -226,7 +226,9 @@ export function workspaceTerminal(terminal: Terminal, links?: ChatLinks, panels?
       if (data.includes("\x1b[?1049l")) { active = false; target.write((pointerRaised ? DEFAULT_POINTER : "") + "\x1b[0m" + data); pointerRaised = false; return; }
       // Asked on every write, like every painter in theme.ts, so the base colors follow the terminal's current color support.
       const colors = workspaceColors();
-      target.write(active ? colors + data.replace(/\x1b\[0m/g, "\x1b[0m" + colors) : data);
+      // `\x1b[49m` (how `surface()` and the other background painters end) means «the terminal's default background», not Shell's: left alone, everything after an inline code to the edge of the panel was drawn
+      // on whatever default the terminal has. The screen's own background is put back right after it, as after every `\x1b[0m`.
+      target.write(active ? colors + data.replace(/\x1b\[0m/g, "\x1b[0m" + colors).replace(/\x1b\[49m/g, "\x1b[49m" + workspaceBackground()) : data);
     };
     const value = Reflect.get(target, key, target);
     return typeof value === "function" ? value.bind(target) : value;
