@@ -4,14 +4,21 @@ import { AssistantMessage, UserBubble } from "./chat-message.ts";
 import { faint } from "./theme.ts";
 import { ActivityCard } from "./transcript.ts";
 
+/** What the line between turns is made of: `┈` (light quadruple dash), the thinnest and faintest of the dashed box-drawing characters, so it reads as a dotted hint and not as a rule. */
+const SEPARATOR_CHAR = "┈";
+/** The line is this share of the chat's width, and never longer than `SEPARATOR_MAX` columns. */
+const SEPARATOR_SHARE = 0.6;
+const SEPARATOR_MAX = 72;
+
 /**
- * The line between one turn and the next: a faint rule across the whole width, with a blank row above it (and the next message brings its own blank row below). A rule of `─` was chosen over a band of the
- * surface background because a band reads as one more block, like the table's header or a code block, while a thin faint line only says «the turn ended here» and disappears when the eyes are on the text.
+ * The line between one turn and the next: a faint dotted line, centered, about 60 % of the chat's width (72 columns at most), with a blank row above it (and the next message brings its own blank row below). It does not
+ * reach the edges, so it says «the turn ended here» without looking like a box or a block; a band of the surface background was ruled out because it reads as one more block, like the table's header or a code block.
  */
 export class TurnSeparator implements Component {
   invalidate(): void {}
   render(width: number): string[] {
-    return ["", faint("─".repeat(Math.max(1, width)))];
+    const length = Math.max(1, Math.min(SEPARATOR_MAX, Math.floor(width * SEPARATOR_SHARE)));
+    return ["", " ".repeat(Math.max(0, Math.floor((width - length) / 2))) + faint(SEPARATOR_CHAR.repeat(length))];
   }
 }
 
