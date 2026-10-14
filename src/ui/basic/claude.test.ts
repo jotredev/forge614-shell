@@ -1514,6 +1514,35 @@ test("Claude UI: «Copy» appears under an answer only once it is finished, and 
   } finally { await h.finish(); }
 });
 
+/**
+ * U1-r3 through the screen: the person's message says «Human» over it, a faint rule tells the person's turn from the agent's (once, not between the tools of the same turn), and an Engram result is one readable line
+ * instead of the raw JSON of its content blocks.
+ */
+test("Claude UI: «Human» over the person's message, one rule between turns, and an Engram result as a readable line", async () => {
+  const h = await claudeUi();
+  try {
+    let n = 0;
+    const uuid = () => `00000000-0000-4000-8000-${String(++n + 500).padStart(12, "0")}`;
+    h.enter("hello there"); await tick(); await tick();
+    expect(h.plain()).toContain("Human");
+    expect(h.plain()).not.toContain("YOU");
+    const toolUse = (id: string) => ({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name: "mcp__forge614-engram__memory_session_start", input: {} }] }, parent_tool_use_id: null, session_id: "s-r3", uuid: uuid() });
+    const result = (id: string, json: object) => ({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: [{ type: "text", text: JSON.stringify(json) }] }] }, parent_tool_use_id: null, session_id: "s-r3", uuid: uuid() });
+    h.terminal.output = "";
+    h.emit(toolUse("e1"), result("e1", { sessionId: "forge614-ai-2026-10-14-t42", projectId: "p" }), toolUse("e2"), result("e2", { results: [{ title: "Rule A" }, { title: "Rule B" }] }),
+      { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "All done." }] }, parent_tool_use_id: null, session_id: "s-r3", uuid: uuid() });
+    for (let i = 0; i < 60 && !h.plain().includes("All done."); i++) await tick();
+    const screen = h.plain();
+    expect(screen).toContain("session forge614-ai-2026-10-14-t42");
+    expect(screen).toContain("2 results: Rule A, Rule B");
+    expect(screen).not.toContain('{"type":"text"');
+    expect(screen).not.toContain('\\"sessionId\\"');
+    // Exactly one rule: between the person's message and the agent's tools; none between the two tools or before the answer.
+    const rules = (text: string) => text.split("\n").filter(row => row.includes("─".repeat(30))).length;
+    expect(rules(screen)).toBe(1);
+  } finally { await h.finish(); }
+});
+
 /** What each way of cutting work asks (and says) when background tasks are alive: the question names the count, «No» is the marked row, and answering «No» cuts nothing. */
 const cutActions: { name: string; run: (h: ClaudeHarness) => void; question: (t: ReturnType<typeof getCatalog>) => string }[] = [
   { name: "/f614:quit", run: h => h.enter("/f614:quit"), question: t => t.claudeChat.backgroundCutQuestion({ count: 1 }) },

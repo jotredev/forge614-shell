@@ -2128,6 +2128,26 @@ test("/recap says it could not generate a recap, still detaches the thread and l
   } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
+/**
+ * U1-r3 with Codex: «Human» over the person's message, one faint rule when the agent's turn starts, and the tool card's line says what the call asks («query: …») instead of the lone «{» that opens the JSON of its arguments.
+ */
+test("Codex UI: «Human», one rule between turns, and a tool card that names its arguments", async () => {
+  const h = codexUi("en", rpc => threadReplies(rpc), undefined, 220);
+  try {
+    await tick(); h.enter("hello"); await tick();
+    expect(h.plain()).toContain("Human");
+    expect(h.plain()).not.toContain("YOU");
+    h.terminal.output = "";
+    h.rpc.onNotification("item/started", { threadId: "t", turnId: "u", item: { type: "mcpToolCall", id: "c1", server: "forge614-engram", tool: "memory_search", status: "inProgress", arguments: { query: "windows", scope: "project" }, result: null, error: null } });
+    h.rpc.onNotification("item/agentMessage/delta", { threadId: "t", turnId: "u", itemId: "m1", delta: "Found it" });
+    await tick(); await tick();
+    const screen = h.plain();
+    expect(screen).toContain("query: windows · scope: project");
+    expect(screen.split("\n").filter(row => row.includes("─".repeat(30))).length).toBe(1);
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } }); await tick();
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
 /** With nothing said yet there is no history: `/recap` says so and asks Codex for nothing. */
 test("/recap before any message says there is no history and calls nothing", async () => {
   const h = codexUi("en", rpc => threadReplies(rpc), undefined, 220);

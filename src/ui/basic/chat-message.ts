@@ -1,7 +1,7 @@
 import { Container, MouseRegion, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
 import type { ChatLinks, LinkView } from "./chat-links.ts";
-import { ChatText, foreground, muted, surface } from "./theme.ts";
+import { ChatText, foreground, muted } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -24,37 +24,34 @@ export function messageStamp(name: string, at?: number | null): string {
 }
 
 /**
- * A message of the person: a bubble of the surface gray aligned to the right, with one column of space on each side of the text, no drawn border and at most two thirds of the width. The text is cut inside the bubble.
- * The time, if known, sits under it in the secondary gray, aligned to the bubble's right edge. With `links` a path in the text that exists on disk is a link, like in the agent's answers.
+ * A message of the person, in the same style as the agent's answers but on the right: a quiet line over it with «Human · time» (the same format and color as the agent's name line, aligned to the right margin), and the
+ * text under it with no background and no drawn border, as a block of at most two thirds of the width ending at the right margin, two columns from the edge. The text is cut inside that block and keeps its line
+ * breaks. With `links` a path in the text that exists on disk is a link, like in the agent's answers.
  */
 export class UserBubble implements Component {
   private readonly linkView?: LinkView;
-  /** Present only when the bubble has `links`: it reports the pointer over one of its links, and never takes the event. */
+  /** Present only when the message has `links`: it reports the pointer over one of its links, and never takes the event. */
   handleMouse?: (event: TuiMouseEvent) => undefined;
-  private readonly time?: string;
+  private readonly stamp: string;
+  private readonly links?: ChatLinks;
 
-  constructor(private readonly text: string, options: { at?: number | null; links?: ChatLinks } = {}) {
+  constructor(private readonly text: string, options: { locale: Locale; at?: number | null; links?: ChatLinks }) {
     this.links = options.links;
-    this.time = options.at === null ? undefined : clockTime(options.at ?? Date.now());
+    this.stamp = messageStamp(getCatalog(options.locale).chatRoles.human, options.at);
     if (this.links) { this.linkView = this.links.view(); this.handleMouse = event => this.linkView!.pointer(event); }
   }
-
-  private readonly links?: ChatLinks;
 
   invalidate(): void {}
 
   render(width: number): string[] {
     const margin = Math.min(MARGIN, Math.max(0, width - 1));
-    const bubbleMax = Math.max(3, Math.floor((width * 2) / 3));
-    const lines = this.text.split("\n").flatMap(line => line === "" ? [""] : wrapTextWithAnsi(line, bubbleMax - 2));
+    const blockMax = Math.max(1, Math.floor((width * 2) / 3));
+    const lines = this.text.split("\n").flatMap(line => line === "" ? [""] : wrapTextWithAnsi(line, blockMax));
     const inner = Math.max(1, ...lines.map(line => visibleWidth(line)));
-    const left = " ".repeat(Math.max(0, width - margin - inner - 2));
-    const rows = lines.map(line => {
-      const painted = this.links ? this.links.linkify(line, foreground) : foreground(line);
-      return `${left}${surface(` ${painted}${" ".repeat(inner - visibleWidth(line))} `)}${" ".repeat(margin)}`;
-    });
-    if (this.time) rows.push(" ".repeat(Math.max(0, width - margin - this.time.length)) + muted(this.time));
-    const out = ["", ...rows];
+    const left = " ".repeat(Math.max(0, width - margin - inner));
+    const rows = lines.map(line => line === "" ? "" : `${left}${this.links ? this.links.linkify(line, foreground) : foreground(line)}${" ".repeat(inner - visibleWidth(line))}`);
+    const stamp = " ".repeat(Math.max(0, width - margin - visibleWidth(this.stamp))) + muted(this.stamp);
+    const out = ["", stamp, ...rows];
     return this.linkView ? this.linkView.decorate(out) : out;
   }
 }

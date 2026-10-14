@@ -404,7 +404,12 @@ The selected engine's project settings and permissions apply. This is not a sand
     pm: "PM",
     dateTime: ({ month, day, time }) => `${month} ${day}, ${time}`,
   },
+  toolSummary: {
+    results: ({ count, titles }) => `${count} ${count === 1 ? "result" : "results"}${titles ? `: ${titles}` : ""}`,
+    session: ({ id }) => `session ${id}`,
+  },
   chatRoles: {
+    human: "Human",
     assistant: "Assistant",
     system: "System",
   },
