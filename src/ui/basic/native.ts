@@ -19,10 +19,11 @@ import type { WorkModeControl } from "../../engines/work-mode.ts";
 import { ShellStatusBar } from "./status-bar.ts";
 import { StatusPanels, attachStatusPanels } from "./status-panel.ts";
 import type { EcosystemVersions } from "../../infrastructure/ecosystem-versions.ts";
-import { ActivityCard } from "./transcript.ts";
+import { ActivityCard, TOOL_INDENT } from "./transcript.ts";
 import { AssistantMessage, UserBubble } from "./chat-message.ts";
 import { TurnTranscript } from "./turn-transcript.ts";
 import { summarizeToolText } from "./tool-summary.ts";
+import { ImageStrip, enableTerminalImages, readImage } from "./chat-images.ts";
 import { effortDescription, effortLabel } from "./metrics.ts";
 import { ChatText, danger, warning } from "./theme.ts";
 import { ChatLinks, enableTerminalLinks, realChatLinkTools } from "./chat-links.ts";
@@ -64,6 +65,8 @@ export async function runNativeUI(
   const tc = getCatalog(locale).codexChat;
   // A click on a link or a path opens it; `writeWarning` is declared below and only runs when a click fails, long after it exists.
   enableTerminalLinks(process.env);
+  // Before the screen starts: it reads whether the terminal shows images when it starts (see `enableTerminalImages`).
+  enableTerminalImages(process.env);
   const links = new ChatLinks({ cwd, home: process.env.HOME, tools: linkTools, onFailure: target => writeWarning(t.linkOpenFailed({ target })) });
   // The two panels the bottom bar opens: the MCP servers' and Forge614's (Shell's version, the two read once in the background, and whether Engram's memory reached this session).
   // The data is asked when a panel is drawn, so `shellState` and `session` need only exist by then.
@@ -153,6 +156,12 @@ export async function runNativeUI(
       const arguments_ = detail.join("\n");
       const summary = summarizeToolText(arguments_, getCatalog(locale));
       writeActivity(title || tc.toolFallbackTitle, (summary !== arguments_ ? `${summary}\n${arguments_}` : arguments_) || tc.toolFallbackDetail);
+    } else if (/^Image: \/[^\n]+$/.test(text)) {
+      // An image Codex looked at or made (see `item/completed` in `src/engines/codex/session.ts`): a card with its name and, where the terminal shows images, its thumbnail.
+      const path = text.slice("Image: ".length);
+      const image = readImage(path);
+      const card = writeActivity(getCatalog(locale).chatImages.viewedTitle, image?.name ?? path);
+      if (image) card.setImages(new ImageStrip([image], { locale, links, indent: TOOL_INDENT + 2 }));
     } else {
       const message = writeAssistant(text, at);
       // Only an answer replayed from a saved conversation (it carries `at`, a time or `null`) can be copied; the notices Shell itself sends as text (connected, disconnected…) have none and get no button.

@@ -421,6 +421,15 @@ export interface Catalog {
     assistant: string;
     system: string;
   };
+  /** The words around the images the chat draws (see `chat-images.ts`). */
+  chatImages: {
+    /** The line under a message with more images than are drawn. */
+    more: (params: { count: number }) => string;
+    /** The name of an image that has none (one a tool result carries inline), without its extension. */
+    unnamed: string;
+    /** The title of the card for an image the assistant looked at or made. */
+    viewedTitle: string;
+  };
   /** The one short line a tool card shows for a result that is JSON (see `summarizeToolText`). */
   toolSummary: {
     results: (params: { count: number; titles: string }) => string;

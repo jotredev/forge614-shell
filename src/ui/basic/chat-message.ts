@@ -3,6 +3,7 @@ import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
 import type { ChatLinks, LinkView } from "./chat-links.ts";
 import { ChatText, accent, foreground, hardWrap, muted } from "./theme.ts";
 import type { CodeBlockUi } from "./theme.ts";
+import { ImageStrip, imagesInText } from "./chat-images.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -37,15 +38,19 @@ export class UserBubble implements Component {
   private readonly name: string;
   private readonly time: string;
   private readonly links?: ChatLinks;
+  private readonly strip?: ImageStrip;
 
   constructor(private readonly text: string, options: { locale: Locale; at?: number | null; links?: ChatLinks }) {
     this.links = options.links;
     this.name = getCatalog(options.locale).chatRoles.human;
     this.time = messageStamp(this.name, options.at).slice(this.name.length);
+    // The images the person pasted as paths (a screenshot pasted into the terminal arrives as the path of its file) are drawn under the text; the text, with its path as a link, stays.
+    const images = imagesInText(text);
+    if (images.length) this.strip = new ImageStrip(images, { locale: options.locale, links: options.links, indent: MARGIN });
     if (this.links) { this.linkView = this.links.view(); this.handleMouse = event => this.linkView!.pointer(event); }
   }
 
-  invalidate(): void {}
+  invalidate(): void { this.strip?.invalidate(); }
 
   render(width: number): string[] {
     const margin = " ".repeat(Math.min(MARGIN, Math.max(0, width - 1)));
@@ -53,7 +58,8 @@ export class UserBubble implements Component {
     const rows = this.text.split("\n").flatMap(line => hardWrap(line, textWidth, 0))
       .map(line => line === "" ? "" : `${margin}${this.links ? this.links.linkify(line, foreground) : foreground(line)}`);
     const out = ["", `${margin}${accent(this.name)}${this.time ? muted(this.time) : ""}`, ...rows];
-    return this.linkView ? this.linkView.decorate(out) : out;
+    // The image rows come after the link handling: they are never turned into links, cut or padded as text.
+    return [...(this.linkView ? this.linkView.decorate(out) : out), ...(this.strip?.render(Math.min(width, MAX_READING_WIDTH + MARGIN * 2)) ?? [])];
   }
 }
 

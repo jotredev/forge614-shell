@@ -404,6 +404,11 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     pm: "p.m.",
     dateTime: ({ month, day, time }) => `el ${day} ${month}, ${time}`,
   },
+  chatImages: {
+    more: ({ count }) => `+${count} ${count === 1 ? "imagen" : "imágenes"}`,
+    unnamed: "imagen",
+    viewedTitle: "Imagen",
+  },
   toolSummary: {
     results: ({ count, titles }) => `${count} ${count === 1 ? "resultado" : "resultados"}${titles ? `: ${titles}` : ""}`,
     session: ({ id }) => `sesión ${id}`,

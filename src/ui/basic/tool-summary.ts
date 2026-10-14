@@ -1,4 +1,7 @@
 import { stripVTControlCharacters } from "node:util";
+import { getImageDimensions } from "@earendil-works/pi-tui";
+import { MAX_IMAGE_BYTES } from "./chat-images.ts";
+import type { ChatImage } from "./chat-images.ts";
 import type { Catalog } from "../../i18n/index.ts";
 
 /** The words a summary needs, from the catalog. */
@@ -44,6 +47,28 @@ export function summarizeToolText(text: string, t: SummaryText): string {
     .slice(0, MAX_PAIRS)
     .map(([key, value]) => `${key}: ${short(String(value))}`);
   return pairs.length ? pairs.join(" · ") : text;
+}
+
+/** The image types Shell draws, with the extension the gray line gives an image that has no name. */
+const DRAWN_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg" };
+
+/**
+ * The images of a tool result (`tool_result.content`): each `image` block with base64 data, as a `ChatImage` for the card to draw. Only PNG and JPEG have pixels to draw (the sizes pi-tui can read); another
+ * type, or data bigger than `MAX_IMAGE_BYTES`, comes without pixels, so the card shows just its gray line. The image has no file name: it is called «image.png» (in the catalog's language).
+ */
+export function toolResultImages(content: unknown, t: Pick<Catalog, "chatImages">): ChatImage[] {
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((block): ChatImage[] => {
+    if (!isRecord(block) || block.type !== "image" || !isRecord(block.source)) return [];
+    const { media_type: mime, data } = block.source;
+    if (typeof mime !== "string" || typeof data !== "string" || data === "") return [];
+    const extension = DRAWN_TYPES[mime] ?? mime.replace(/^image\//, "");
+    const bytes = Math.floor((data.length * 3) / 4);
+    const name = `${t.chatImages.unnamed}.${extension}`;
+    if (!DRAWN_TYPES[mime] || bytes > MAX_IMAGE_BYTES) return [{ name, mime, bytes }];
+    const dimensions = getImageDimensions(data, mime);
+    return [{ name, mime, base64: data, bytes, ...(dimensions ? { widthPx: dimensions.widthPx, heightPx: dimensions.heightPx } : {}) }];
+  });
 }
 
 /**
