@@ -1856,6 +1856,29 @@ test("Claude UI: the history is saved per folder (history.jsonl, 600) and comes 
   } finally { process.chdir(here); await rm(elsewhere, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 }, { timeout: 15_000 });
 
+/**
+ * U2-r2: a pasted path is a message, not a command. Orca pastes a screenshot as the path of its file (`/var/folders/…/orca-paste-….png`), which starts with «/»; Shell took it for a command and answered
+ * «Unknown command». A first word with another «/» is a path: the whole text goes to the agent. Real commands keep working.
+ */
+test("Claude UI: a pasted path is sent to the agent as a message, alone, followed by text or when the file does not exist, and real commands stay commands", async () => {
+  const unknown = (name: string) => getCatalog("en").chat.unknownCommand({ name });
+  const h = await claudeUi();
+  try {
+    // Real commands are still commands: no message goes to the agent (checked first, while no turn is running).
+    h.terminal.output = ""; h.enter("/nada-de-nada"); await tick(); await tick();
+    expect(h.plain()).toContain(unknown("/nada-de-nada"));
+    h.enter("/help"); await tick();
+    expect(promptsOf(h)).toHaveLength(0);
+    // A path is a message: the whole text reaches the agent.
+    const paths = ["/var/folders/py/x/T/orca-paste-1792014790450-4d52d7ff.png", "/Users/ana/captura.png mira esto", "/ruta/que/no/existe.png"];
+    for (const [index, text] of paths.entries()) {
+      h.terminal.output = ""; h.enter(text); await waitForPrompts(h, index + 1);
+      expect(promptsOf(h)[index]).toBe(`prompt:${JSON.stringify(text)}`);
+      expect(h.plain()).not.toContain(unknown(text.split(" ")[0]!)); // (the first error stays on screen; this one must not appear)
+    }
+  } finally { await h.finish(); }
+});
+
 test("Claude UI: a history file that cannot be used never breaks the chat or shows an error", async () => {
   // The history path is a folder: it can be neither read nor written as a file.
   const h = await claudeUi([], "en", undefined, 120, [], undefined, forgeHome => { mkdirSync(join(forgeHome, "shell", "history.jsonl"), { recursive: true }); });

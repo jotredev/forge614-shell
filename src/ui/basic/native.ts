@@ -22,6 +22,7 @@ import type { EcosystemVersions } from "../../infrastructure/ecosystem-versions.
 import { ActivityCard, TOOL_INDENT } from "./transcript.ts";
 import { AssistantMessage, UserBubble } from "./chat-message.ts";
 import { TurnTranscript } from "./turn-transcript.ts";
+import { isCommandText } from "./command-text.ts";
 import { summarizeToolText } from "./tool-summary.ts";
 import { ImageStrip, enableTerminalImages, readImage } from "./chat-images.ts";
 import { effortDescription, effortLabel } from "./metrics.ts";
@@ -504,7 +505,7 @@ export async function runNativeUI(
     if (closed || !value.trim()) return;
     input.setValue("");
     rememberInput(value);
-    if (value.startsWith("/")) void command(value).catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) })));
+    if (isCommandText(value)) void command(value).catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) })));
     // A subagent being watched takes no messages: say so before anything is written or sent.
     else if (session.detour?.()?.readOnly) writeError(getCatalog(locale).errors["codex-agent-read-only"]({}));
     else if (!ready || commandBusy || session.busy) writeError(tc.waitForCurrentOperationToFinish);

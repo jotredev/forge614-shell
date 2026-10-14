@@ -33,6 +33,10 @@ beforeEach(() => setCapabilities({ images: "kitty", trueColor: true, hyperlinks:
 afterEach(() => resetCapabilitiesCache());
 
 const file = (name: string, content: Buffer | string) => { const path = join(dir, name); writeFileSync(path, content); return path; };
+/** Makes `link` a symbolic link to `target`; false when the system does not allow it (Windows without the privilege). */
+const tryLink = (target: string, link: string) => { try { symlinkSync(target, link); return true; } catch { return false; } };
+/** What a row's text says with the line breaks and spaces taken out: a long path (`C:\Users\…\Temp\…` is) is cut into several rows, and the cuts are not what a test is about. */
+const solid = (rows: string[]) => plain(rows).join("").replace(/\s+/g, "");
 const plain = (rows: string[]) => rows.map(row => stripVTControlCharacters(row));
 const KITTY = /\x1b_G[^\x1b]*\x1b\\/g;
 
@@ -48,15 +52,47 @@ test("findImagePaths: una ruta absoluta, entre comillas dobles o simples, y con 
   expect(findImagePaths("relativa ./uno.png y ~/dos.png y https://x.dev/tres.png y /a/cuatro.gif y /a/cinco.txt")).toEqual([]);
 });
 
+/**
+ * Reconocimiento de rutas de Windows: solo mira el texto, así que corre igual en todos los sistemas. Es la causa de las 10 fallas de Verify 38643143183 en Windows: `tmpdir()` da `C:\Users\…\Temp\…` y
+ * `findImagePaths` solo entendía `/…`, de modo que las pruebas nunca encontraban sus imágenes.
+ */
+test("findImagePaths reconoce rutas de Windows: C:\\…, C:/…, de red \\\\servidor\\…, entre comillas y con espacios escapados", () => {
+  expect(findImagePaths("mira C:\\Users\\Ana\\Pictures\\captura.png por favor")).toEqual(["C:\\Users\\Ana\\Pictures\\captura.png"]);
+  expect(findImagePaths("mira C:/Users/Ana/foto.JPG, luego")).toEqual(["C:/Users/Ana/foto.JPG"]);
+  expect(findImagePaths("mira \\\\servidor\\recurso\\carpeta\\a.png y")).toEqual(["\\\\servidor\\recurso\\carpeta\\a.png"]);
+  // Como las pega PowerShell o Windows Terminal: entre comillas dobles (o simples) y con espacios.
+  expect(findImagePaths('"C:\\Users\\Ana\\Pictures\\captura 1.png"')).toEqual(["C:\\Users\\Ana\\Pictures\\captura 1.png"]);
+  expect(findImagePaths("mira 'C:\\Users\\Ana\\Mis capturas\\a b.jpeg' y")).toEqual(["C:\\Users\\Ana\\Mis capturas\\a b.jpeg"]);
+  expect(findImagePaths('mira "\\\\servidor\\mi recurso\\a.png" y')).toEqual(["\\\\servidor\\mi recurso\\a.png"]);
+  // Espacios escapados: con \ en Unix, con acento grave (el escape de PowerShell) en Windows.
+  expect(findImagePaths("mira C:\\Users\\Ana\\Mis` capturas\\a` b.png, luego")).toEqual(["C:\\Users\\Ana\\Mis capturas\\a b.png"]);
+  // Varias, mezcladas con las de Unix y sin repetir.
+  expect(findImagePaths('/tmp/uno.png y "C:\\Temp\\dos.jpg" y C:\\Temp\\dos.jpg y /tmp/uno.png')).toEqual(["/tmp/uno.png", "C:\\Temp\\dos.jpg"]);
+  // Lo que no es una ruta absoluta de imagen no cuenta: relativas, de unidad sin raíz, direcciones y otros tipos.
+  expect(findImagePaths("a.png .\\a.png ..\\a.png C:a.png Users\\Ana\\a.png https://x.dev/a.png file:///C:/a.png C:\\Temp\\a.gif C:\\Temp\\a.txt")).toEqual([]);
+});
+
+test("una ruta de Unix en Windows y una de Windows en Unix se reconocen en el texto pero no abren nada si no existen", () => {
+  const unixPath = "/ruta/que/no/existe/captura.png";
+  const windowsPath = "C:\\ruta\\que\\no\\existe\\captura.png";
+  const unc = "\\\\servidor-que-no-existe\\recurso\\captura.png";
+  for (const path of [unixPath, windowsPath, unc]) {
+    expect(findImagePaths(`mira ${path}`)).toEqual([path]);
+    expect(readImage(path)).toBeUndefined();
+    expect(imagesInText(`mira "${path}"`)).toEqual([]);
+  }
+});
+
 test("imagesInText: solo las que existen, son archivos normales y tienen la firma de bytes correcta", () => {
   const real = file("real.png", png(30, 20));
   const realJpeg = file("real.jpg", jpeg(30, 20));
   const notImage = file("falsa.png", "esto es texto, no una imagen");
   const wrongSignature = file("cambiada.jpg", png(30, 20)); // firma de PNG con extensión .jpg
   const folder = join(dir, "carpeta.png"); mkdirSync(folder);
-  const link = join(dir, "enlace.png"); symlinkSync(real, link);
+  const link = join(dir, "enlace.png"); const linked = tryLink(real, link);
   const missing = join(dir, "no-existe.png");
-  const found = imagesInText([real, realJpeg, notImage, wrongSignature, folder, link, missing].map(path => `"${path}"`).join(" "));
+  // Las rutas van en el texto tal como las da el sistema (con `\` en Windows), entre comillas como las pegan PowerShell o Windows Terminal.
+  const found = imagesInText([real, realJpeg, notImage, wrongSignature, folder, ...(linked ? [link] : []), missing].map(path => `"${path}"`).join(" "));
   expect(found.map(image => image.path)).toEqual([real, realJpeg]);
   expect(found[0]).toMatchObject({ name: "real.png", mime: "image/png", widthPx: 30, heightPx: 20 });
   expect(found[1]).toMatchObject({ name: "real.jpg", mime: "image/jpeg", widthPx: 30, heightPx: 20 });
@@ -65,9 +101,10 @@ test("imagesInText: solo las que existen, son archivos normales y tienen la firm
 
 test("un enlace simbólico no se sigue, ni siquiera a una imagen real", () => {
   const real = file("destino.png", png(8, 8));
-  const link = join(dir, "atajo.png"); symlinkSync(real, link);
-  expect(readImage(link)).toBeUndefined();
+  const link = join(dir, "atajo.png");
   expect(readImage(real)).toBeDefined();
+  if (!tryLink(real, link)) return; // en Windows crear un enlace pide privilegios que una cuenta común puede no tener
+  expect(readImage(link)).toBeUndefined();
 });
 
 test("el tope de tamaño: un archivo más grande se lee solo por su firma y queda sin píxeles, con su tamaño para la línea gris", () => {
@@ -110,7 +147,7 @@ test("sin soporte de imágenes (otra terminal o desactivadas) cada imagen se ve 
   const path = file("respaldo.png", png(1600, 1400));
   const rows = plain(new UserBubble(`mira ${path}`, { locale: "es", at: null }).render(100));
   expect(rows.at(-1)).toBe("  🖼 respaldo.png · 1600×1400 · 33 B");
-  expect(rows.some(row => row.includes(`mira ${path}`))).toBe(true); // el texto con la ruta se queda
+  expect(solid(rows)).toContain(`mira${path}`.replace(/\s+/g, "")); // el texto con la ruta se queda (aunque la ruta ocupe varios renglones)
   expect(rows.join("\n")).not.toContain("\x1b_G");
 });
 
@@ -171,7 +208,7 @@ test("la miniatura de un mensaje cabe en 40 columnas y 14 renglones, a la izquie
   expect(rows[at - 1]).toBe(""); // con aire arriba
   expect(rows.length - 1 - at).toBe(height - 1); // el resto de las filas de la imagen: vacías
   expect(rows.slice(at + 1).every(row => row === "")).toBe(true);
-  expect(plain(rows).join("\n")).toContain(path); // el texto con la ruta, como antes
+  expect(solid(rows)).toContain(path.replace(/\s+/g, "")); // el texto con la ruta, como antes
 });
 
 test("hasta 4 miniaturas por mensaje y, si hay más, una línea «+N imágenes»", () => {
@@ -190,7 +227,9 @@ test("«Copiar» y la selección ven solo texto: la fila de la imagen no lleva t
   const text = plain(rows.map(row => row.replace(KITTY, ""))).join("\n").replace(/\n+/g, "\n");
   expect(text).not.toContain("iVBOR"); // ningún byte de la imagen aparece como texto
   expect(text).not.toContain("\x1b");
-  expect(text.split("\n").filter(line => line.trim() !== "").map(line => line.trimEnd())).toEqual(["  Humano", `  mira ${path}`]);
+  const lines = text.split("\n").filter(line => line.trim() !== "");
+  expect(lines[0]!.trimEnd()).toBe("  Humano");
+  expect(lines.slice(1).join("").replace(/\s+/g, "")).toBe(`mira${path}`.replace(/\s+/g, "")); // solo el mensaje, aunque la ruta ocupe varios renglones
 });
 
 // ── Image blocks in a tool result ──────────────────────────────────────────────────────────
