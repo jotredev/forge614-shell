@@ -339,3 +339,17 @@ test("a command recalled with ↑ does not open the menu: the next ↑ goes on t
   expect(composer.getText()).toBe("/f614:refres");
   expect(screen(composer)).toContain("/f614:refresh");
 });
+
+/** A pasted path starts with «/» too (Orca pastes a screenshot as the path of its file): the command menu closes as soon as the first word has a second «/», and a real command still opens it. */
+test("the command menu does not open for a pasted path", () => {
+  const composer = new ForgeComposer(fakeTui, "en");
+  composer.setCommandGroups([{ title: "X", items: [{ value: "/f614:stop", label: "Cancel the answer" }, { value: "/var-fake", label: "A command" }] }]);
+  type(composer, "/va");
+  expect(screen(composer)).toContain("A command"); // still a command being written
+  type(composer, "r/folders/x/T/orca-paste-1.png");
+  expect(composer.getText()).toBe("/var/folders/x/T/orca-paste-1.png");
+  expect(screen(composer)).not.toContain("A command");
+  expect(screen(composer)).not.toContain("Cancel the answer");
+  composer.setText("/f614:st");
+  expect(screen(composer)).toContain("Cancel the answer");
+});

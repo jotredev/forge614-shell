@@ -31,6 +31,7 @@ import { effortDescription, effortLabel, isDisplayableUsage } from "./metrics.ts
 import { ActivityCard, TOOL_INDENT } from "./transcript.ts";
 import { AssistantMessage, UserBubble } from "./chat-message.ts";
 import { TurnTranscript } from "./turn-transcript.ts";
+import { isCommandText } from "./command-text.ts";
 import { toolResultImages, toolResultPreview } from "./tool-summary.ts";
 import { ImageStrip, enableTerminalImages } from "./chat-images.ts";
 import { lineDiff } from "./diff.ts";
@@ -680,7 +681,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
       void command(value).catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))).finally(refresh); return;
     }
     if (commandBusy) { writeError(t.waitForCurrentOperation); return; }
-    if (value.startsWith("/")) {
+    if (isCommandText(value)) {
       commandBusy = true;
       void command(value).catch(error => writeError(t.errorPrefixed({ message: describeError(error, locale) }))).finally(() => { commandBusy = false; refresh(); });
     } else if (disconnected) writeError(t.reconnectBeforeMessage);

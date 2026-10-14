@@ -47,16 +47,24 @@ export function enableTerminalImages(env: NodeJS.ProcessEnv = process.env): void
 // ── Finding the images in what the person wrote ────────────────────────────────────────────
 
 const EXTENSION = "(?:png|jpe?g)";
-/** An absolute path in single or double quotes (spaces allowed inside). */
-const QUOTED_PATH = new RegExp(`(["'])(/[^"'\\n]*?\\.${EXTENSION})\\1`, "gi");
-/** An absolute path with no quotes, whose spaces, if any, are escaped with a backslash. */
-const BARE_PATH = new RegExp(`(?<![\\w/~.\\-:])(/(?:[^\\s"'\\\\]|\\\\ )+?\\.${EXTENSION})(?=$|[\\s"'),;:!?])`, "gi");
+/** Where an absolute path starts, on any system: `/`, a drive (`C:\` or `C:/`) or a network share (`\\server\share`). The text is read the same way everywhere: a Windows path pasted on a Mac is recognized (and found missing). */
+const ROOT = String.raw`(?:/|[A-Za-z]:[\\/]|\\\\)`;
+/** An absolute path in single or double quotes (spaces allowed inside), as PowerShell and Windows Terminal paste them. */
+const QUOTED_PATH = new RegExp(String.raw`(["'])(${ROOT}[^"'\n]*?\.${EXTENSION})\1`, "gi");
+/** A Unix path with no quotes, whose spaces, if any, are escaped with a backslash. */
+const UNIX_BARE_PATH = new RegExp(String.raw`(?<![\w/\\~.\-:])(/(?:[^\s"'\\]|\\ )+?\.${EXTENSION})(?=$|[\s"'),;:!?])`, "gi");
+/** A Windows path (`C:\…`, `C:/…`, `\\server\…`) with no quotes: backslashes are separators, and a space, if any, is escaped with a backtick (PowerShell's escape). */
+const WINDOWS_BARE_PATH = new RegExp(String.raw`(?<![\w/\\~.\-:])((?:[A-Za-z]:[\\/]|\\\\)(?:[^\s"'<>|*?:\x60]|\x60 )+?\.${EXTENSION})(?=$|[\s"'),;:!?])`, "gi");
 
-/** The absolute `.png`, `.jpg` and `.jpeg` paths written in `text`, in order and without repeats — in quotes, or with spaces escaped by `\`. They are only candidates: `readImage` says which are real images. */
+/**
+ * The absolute `.png`, `.jpg` and `.jpeg` paths written in `text`, in order and without repeats: Unix paths and Windows ones (`C:\…`, `C:/…`, `\\server\share\…`), in quotes, or with spaces escaped by `\` (Unix) or by a backtick
+ * (Windows). Relative paths are never invented. They are only candidates: `readImage` says which are real images.
+ */
 export function findImagePaths(text: string): string[] {
   const found: { index: number; path: string }[] = [];
   for (const match of text.matchAll(QUOTED_PATH)) found.push({ index: match.index, path: match[2]! });
-  for (const match of text.matchAll(BARE_PATH)) found.push({ index: match.index, path: match[1]!.replace(/\\ /g, " ") });
+  for (const match of text.matchAll(UNIX_BARE_PATH)) found.push({ index: match.index, path: match[1]!.replace(/\\ /g, " ") });
+  for (const match of text.matchAll(WINDOWS_BARE_PATH)) found.push({ index: match.index, path: match[1]!.replace(/\x60 /g, " ") });
   const seen = new Set<string>();
   return found.sort((a, b) => a.index - b.index).map(item => item.path).filter(path => !seen.has(path) && !!seen.add(path));
 }
@@ -77,7 +85,9 @@ export function readImage(path: string, maxBytes = MAX_IMAGE_BYTES): ChatImage |
   const name = basename(path);
   try {
     const stat = lstatSync(path);
-    if (!stat.isFile()) return undefined;
+    // `lstat` does not follow the last component: a symbolic link is not a regular file. On Windows Node also reports as links the junctions and the other reparse points that redirect (`isSymbolicLink`), so they
+    // are refused too; the placeholders of a cloud service are plain files to Node, which cannot tell them apart, and redirect nowhere.
+    if (stat.isSymbolicLink() || !stat.isFile()) return undefined;
     const header = Buffer.alloc(8);
     const descriptor = openSync(path, "r");
     try { readSync(descriptor, header, 0, header.length, 0); } finally { closeSync(descriptor); }

@@ -2183,6 +2183,30 @@ test("Codex UI: an image Codex viewed or generated is drawn as a card with the i
   }
 });
 
+/**
+ * U2-r2 with Codex: a pasted path (Orca pastes a screenshot as the path of its file) is a message to Codex, not a command; real commands stay commands.
+ */
+test("Codex UI: a pasted path is sent to Codex as a message, and real commands stay commands", async () => {
+  const unknown = (name: string) => getCatalog("en").chat.unknownCommand({ name });
+  const sent = (h: ReturnType<typeof codexUi>) => h.rpc.calls.filter(call => call.method === "turn/start").map(call => (call.params.input as { text: string }[])[0]!.text);
+  const h = codexUi("en", rpc => threadReplies(rpc), undefined, 220);
+  try {
+    await tick();
+    const texts = ["/var/folders/py/x/T/orca-paste-1792014790450-4d52d7ff.png", "/Users/ana/captura.png mira esto"];
+    for (const [index, text] of texts.entries()) {
+      h.terminal.output = ""; h.enter(text); await tick(); await tick();
+      expect(sent(h)).toHaveLength(index + 1);
+      expect(sent(h)[index]).toContain(text);
+      expect(h.plain()).not.toContain(unknown(text.split(" ")[0]!));
+      h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } }); await tick();
+    }
+    // A real command is still a command: nothing goes to Codex.
+    h.terminal.output = ""; h.enter("/nada-de-nada"); await tick(); await tick();
+    expect(h.plain()).toContain(unknown("/nada-de-nada"));
+    expect(sent(h)).toHaveLength(texts.length);
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
+
 /** With nothing said yet there is no history: `/recap` says so and asks Codex for nothing. */
 test("/recap before any message says there is no history and calls nothing", async () => {
   const h = codexUi("en", rpc => threadReplies(rpc), undefined, 220);
