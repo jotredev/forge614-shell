@@ -160,6 +160,25 @@ function Assert-ApprovedUri([string]$UriString, [string]$OfficialUri, [bool]$All
     throw "Only the official Forge614 URL or an HTTP loopback test fixture is permitted: $UriString"
 }
 
+# Calcula el SHA-256 de un archivo con .NET, en hexadecimal y en minúsculas. No usa el cmdlet de hash de archivos
+# del módulo Microsoft.PowerShell.Utility porque, si powershell.exe 5.1 se abre desde PowerShell 7, hereda su
+# PSModulePath y no encuentra ese cmdlet ("The term ... is not recognized"): pasa justo con el comando que documenta
+# Engram (powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1) escrito en Windows Terminal con
+# PowerShell 7, y Shell no se instalaba. Las clases de .NET están siempre, sin importar de dónde se abrió.
+function Get-Sha256Hex([string]$Path) {
+    $stream = $null
+    $sha = $null
+    try {
+        # OpenRead usa el directorio actual del proceso, que puede no ser el de PowerShell: se resuelve antes.
+        $stream = [IO.File]::OpenRead((Resolve-Path -LiteralPath $Path).ProviderPath)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        return ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '').ToLowerInvariant()
+    } finally {
+        if ($null -ne $sha) { $sha.Dispose() }
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+}
+
 # Exige una sola línea de huella para el nombre descargado, sin aceptar otro asset.
 function Assert-ArchiveChecksum([string]$ArchivePath, [string]$ChecksumPath, [string]$AssetName) {
     $lines = @((Get-Content -LiteralPath $ChecksumPath -Raw) -split "`r?`n" | Where-Object { $_ -ne "" })
@@ -170,7 +189,7 @@ function Assert-ArchiveChecksum([string]$ArchivePath, [string]$ChecksumPath, [st
     if (-not $checksumMatch.Success -or $checksumMatch.Groups[2].Value -cne $AssetName) {
         throw (Get-Message -Key "checksum_failed")
     }
-    $actualHash = (Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualHash = Get-Sha256Hex $ArchivePath
     if ($checksumMatch.Groups[1].Value -cne $actualHash) {
         throw (Get-Message -Key "checksum_failed")
     }
@@ -364,7 +383,10 @@ function Ensure-Engines {
         throw (Get-Message -Key "engines_download_failed")
     }
 
-    $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { "pwsh" } else { "powershell.exe" }
+    # El instalador de Engines se corre con el mismo ejecutable de PowerShell que ya está corriendo este script
+    # (pwsh o powershell.exe, con su ruta completa), no con el que se encuentre en el PATH: así nunca se abre una
+    # versión distinta a la actual, que heredaría un PSModulePath ajeno y no encontraría sus propios cmdlets.
+    $psExe = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
 
     $prevHome = $env:FORGE614_HOME
     $env:FORGE614_HOME = $forgeHome

@@ -224,6 +224,12 @@ jobs:
             & pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Archive $archiveFile
             if ($LASTEXITCODE -ne 0) { throw "install.ps1 falló en la repetición idempotente" }
 
+            # 5b. Instalación desde -Archive con powershell.exe (5.1) lanzado desde este paso en pwsh (7): hereda el PSModulePath de PowerShell 7
+            #     y no encuentra los cmdlets que 5.1 trae por su cuenta. Es el caso de quien escribe el comando documentado por Engram en Windows
+            #     Terminal con PowerShell 7 (Engram, Verify 38616906739: «The term ... is not recognized»); el instalador no debe depender de ellos.
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Archive $archiveFile
+            if ($LASTEXITCODE -ne 0) { throw "install.ps1 -Archive falló al lanzarlo como powershell.exe desde pwsh" }
+
             $pathAfterRepeat = [Environment]::GetEnvironmentVariable("Path", "User")
             $targetBin = Join-Path $testHome "shell\bin"
             $occurrences = ($pathAfterRepeat -split ';' | Where-Object { $_ -ieq $targetBin }).Count
