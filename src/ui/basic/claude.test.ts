@@ -371,7 +371,14 @@ else {
     expect(JSON.parse(readFileSync(marker, "utf8"))).toMatchObject({ behavior: "allow", updatedInput: { answers: { "¿Qué hago con la nave?": "Girarla" } } });
   } finally {
     terminal.input("\x1b"); enter("/f614:quit"); await ui;
-    await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+    for (let attempt = 0; ; attempt++) {
+      try { await rm(root, { recursive: true, force: true }); break; }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (attempt === 49 || (code !== "EPERM" && code !== "EBUSY" && code !== "ENOTEMPTY")) throw error;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
     if (previousForgeHome === undefined) delete process.env.FORGE614_HOME; else process.env.FORGE614_HOME = previousForgeHome;
     if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
     if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
