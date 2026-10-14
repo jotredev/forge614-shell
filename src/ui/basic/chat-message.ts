@@ -1,7 +1,7 @@
-import { Container, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Container } from "@earendil-works/pi-tui";
 import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
 import type { ChatLinks, LinkView } from "./chat-links.ts";
-import { ChatText, foreground, muted } from "./theme.ts";
+import { ChatText, accent, foreground, hardWrap, muted } from "./theme.ts";
 import type { CodeBlockUi } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
@@ -25,34 +25,34 @@ export function messageStamp(name: string, at?: number | null): string {
 }
 
 /**
- * A message of the person, in the same style as the agent's answers but on the right: a quiet line over it with «Human · time» (the same format and color as the agent's name line, aligned to the right margin), and the
- * text under it with no background and no drawn border, as a block of at most two thirds of the width ending at the right margin, two columns from the edge. The text is cut inside that block and keeps its line
- * breaks. With `links` a path in the text that exists on disk is a link, like in the agent's answers.
+ * A message of the person, drawn like the agent's answers: on the left, with the two columns of margin and at most `MAX_READING_WIDTH` columns of text, no background and no drawn border, and a quiet line over it with
+ * «Human · time». To tell at a glance who speaks, the word «Human» is in the accent color and the time in gray, while the agent's name line is all gray. The text is plain text, not Markdown — what a person types is not
+ * always Markdown, and a `#` or a `-` of theirs must not change shape — cut at the last space that fits (`hardWrap`, which keeps the indent and the spaces of what was pasted, and adds none to the rows that continue a line),
+ * with its line breaks and blank lines kept; it is never cut off, however long. With `links` a path in the text that exists on disk is a link, like in the agent's answers.
  */
 export class UserBubble implements Component {
   private readonly linkView?: LinkView;
   /** Present only when the message has `links`: it reports the pointer over one of its links, and never takes the event. */
   handleMouse?: (event: TuiMouseEvent) => undefined;
-  private readonly stamp: string;
+  private readonly name: string;
+  private readonly time: string;
   private readonly links?: ChatLinks;
 
   constructor(private readonly text: string, options: { locale: Locale; at?: number | null; links?: ChatLinks }) {
     this.links = options.links;
-    this.stamp = messageStamp(getCatalog(options.locale).chatRoles.human, options.at);
+    this.name = getCatalog(options.locale).chatRoles.human;
+    this.time = messageStamp(this.name, options.at).slice(this.name.length);
     if (this.links) { this.linkView = this.links.view(); this.handleMouse = event => this.linkView!.pointer(event); }
   }
 
   invalidate(): void {}
 
   render(width: number): string[] {
-    const margin = Math.min(MARGIN, Math.max(0, width - 1));
-    const blockMax = Math.max(1, Math.floor((width * 2) / 3));
-    const lines = this.text.split("\n").flatMap(line => line === "" ? [""] : wrapTextWithAnsi(line, blockMax));
-    const inner = Math.max(1, ...lines.map(line => visibleWidth(line)));
-    const left = " ".repeat(Math.max(0, width - margin - inner));
-    const rows = lines.map(line => line === "" ? "" : `${left}${this.links ? this.links.linkify(line, foreground) : foreground(line)}${" ".repeat(inner - visibleWidth(line))}`);
-    const stamp = " ".repeat(Math.max(0, width - margin - visibleWidth(this.stamp))) + muted(this.stamp);
-    const out = ["", stamp, ...rows];
+    const margin = " ".repeat(Math.min(MARGIN, Math.max(0, width - 1)));
+    const textWidth = Math.max(1, Math.min(width, MAX_READING_WIDTH + MARGIN * 2) - MARGIN * 2);
+    const rows = this.text.split("\n").flatMap(line => hardWrap(line, textWidth, 0))
+      .map(line => line === "" ? "" : `${margin}${this.links ? this.links.linkify(line, foreground) : foreground(line)}`);
+    const out = ["", `${margin}${accent(this.name)}${this.time ? muted(this.time) : ""}`, ...rows];
     return this.linkView ? this.linkView.decorate(out) : out;
   }
 }
