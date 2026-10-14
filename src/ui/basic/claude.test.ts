@@ -1484,7 +1484,33 @@ test("Claude UI: the notice Claude Code gives on resuming («N background agents
     for (let i = 0; i < 60 && !h.plain().includes(text); i++) await tick();
     expect(h.plain()).toContain(t.backgroundActivity.noticeTitle);
     expect(h.plain()).toContain(text);
-    expect(h.plain()).not.toContain(t.chatRoles.you);
+    // A notice is a card, not an answer of the agent: no name line, no «Copy» under it.
+    expect(h.plain()).not.toContain(t.chatCopy.copy);
+  } finally { await h.finish(); }
+});
+
+/**
+ * U1-r1: an answer arrives in parts and is drawn on the left under the agent's name; «Copy» appears under it only when Claude Code delivers the finished message, never while it is being written. The person's own message
+ * is a bubble, with no «YOU» header.
+ */
+test("Claude UI: «Copy» appears under an answer only once it is finished, and the person's message has no header", async () => {
+  const h = await claudeUi();
+  try {
+    const t = getCatalog("en");
+    const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const delta = (text: string, n: number) => ({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }, parent_tool_use_id: null, session_id: "s-copy", uuid: uuid(n) });
+    h.terminal.output = "";
+    h.emit({ type: "stream_event", event: { type: "message_start", message: {} }, parent_tool_use_id: null, session_id: "s-copy", uuid: uuid(1) }, delta("First part of the answer", 2));
+    for (let i = 0; i < 60 && !h.plain().includes("First part of the answer"); i++) await tick();
+    expect(h.plain()).toContain("First part of the answer");
+    expect(h.plain()).toContain("Claude");
+    expect(h.plain()).not.toContain(t.chatCopy.copy);
+    expect(h.plain()).not.toContain("##");
+    h.terminal.output = "";
+    h.emit({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "First part of the answer, and the rest." }] }, parent_tool_use_id: null, session_id: "s-copy", uuid: uuid(3) });
+    for (let i = 0; i < 60 && !h.plain().includes(t.chatCopy.copy); i++) await tick();
+    expect(h.plain()).toContain("and the rest.");
+    expect(h.plain()).toContain(t.chatCopy.copy);
   } finally { await h.finish(); }
 });
 

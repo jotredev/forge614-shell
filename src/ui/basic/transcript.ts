@@ -3,8 +3,6 @@ import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
 import type { ChatLinks, LinkView } from "./chat-links.ts";
 import { accent as cyan, added, addedBackground, muted, fit, removed, removedBackground, surface } from "./theme.ts";
 import type { DiffLine } from "./diff.ts";
-import { getCatalog } from "../../i18n/index.ts";
-import type { Locale } from "../../i18n/index.ts";
 
 const MAX_DIFF_LINES_SHOWN = 60;
 
@@ -15,18 +13,6 @@ const MAX_DIFF_LINES_SHOWN = 60;
  */
 export const TOOL_INDENT = 4;
 
-
-/**
- * A chat message: a header with the role and the time, then the text. `at` is the time of a message replayed from a saved
- * conversation (milliseconds since the epoch); `null` means the time is not known, and the header shows none rather than a
- * false one; left out (a live message) it takes the time of now.
- */
-export function chatMessage(role: "user" | "assistant" | "system", content: string, locale: Locale = "en", at?: number | null): string {
-  const t = getCatalog(locale).chatRoles;
-  const label = role === "user" ? t.you : role === "assistant" ? t.assistant : t.system;
-  const time = at === null ? "" : ` · ${new Date(at ?? Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-  return `## ${label}${time}\n\n${content}`;
-}
 
 /**
  * Activity line for a real tool event emitted by an engine.

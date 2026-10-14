@@ -1,21 +1,28 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
 import { resetCapabilitiesCache, setCapabilityOverrides } from "@earendil-works/pi-tui";
-import { ActivityCard, chatMessage } from "./transcript.ts";
-import { ChatText } from "./theme.ts";
+import { ActivityCard } from "./transcript.ts";
+import { AssistantMessage, messageStamp } from "./chat-message.ts";
 import { lineDiff } from "./diff.ts";
-import { getCatalog } from "../../i18n/index.ts";
 import { ChatLinks } from "./chat-links.ts";
 
 /** These tests read exact RGB codes (the surface and the diff backgrounds), so they pin true color instead of depending on the terminal that runs the suite. */
 beforeAll(() => setCapabilityOverrides({ trueColor: true }));
 afterAll(() => resetCapabilitiesCache());
 
-test("chat messages render a role label separate from their content", () => {
-  const message = stripVTControlCharacters(chatMessage("assistant", "I will inspect the workspace."));
+/** An answer of the agent as the chat draws it, finished, for the tests that only read its rows. */
+function answer(text: string, agent = "Claude") {
+  const message = new AssistantMessage({ agent, locale: "en", at: null, copy: async () => true, onChange: () => {} });
+  message.setText(text);
+  return message;
+}
 
-  expect(message).toContain("ASSISTANT");
+test("an answer shows the agent's name on a quiet line, separate from its content", () => {
+  const message = stripVTControlCharacters(answer("I will inspect the workspace.").render(60).join("\n"));
+
+  expect(message).toContain("Claude");
   expect(message).toContain("I will inspect the workspace.");
+  expect(message).not.toContain("##");
   expect(message).not.toContain("Claude:");
 });
 
@@ -126,8 +133,8 @@ test("a stable tool card does not rescan its preview for links on every frame", 
 /** Owner's point 15: grey tool lines used to touch the chat's left edge, further out than the assistant's «ASSISTANT · time» header and text, so they did not read as sub-tasks of that message. They must start further in than both, and the `└` preview further in than the bullet. */
 test("tool lines are indented deeper than the assistant header and text they belong to", () => {
   const leading = (line: string) => line.length - line.trimStart().length;
-  const message = new ChatText(chatMessage("assistant", "I will inspect the workspace.")).render(60).map(stripVTControlCharacters);
-  const header = message.find(line => line.includes("ASSISTANT"))!;
+  const message = answer("I will inspect the workspace.").render(60).map(stripVTControlCharacters);
+  const header = message.find(line => line.includes("Claude"))!;
   const body = message.find(line => line.includes("I will inspect"))!;
 
   const tool = new ActivityCard("Bash", "Completed · 17.7s", "merge=0").render(60).map(stripVTControlCharacters);
@@ -153,13 +160,11 @@ test("an indent of zero keeps the bullet at the edge and indented lines still fi
  * its own (11:52…). A message from a saved conversation is drawn with the time the protocol gave for it, and with none when it
  * gave none; only a live message (no time passed) takes the time of now.
  */
-test("a message header shows the time it is given, no time when it is unknown, and now only when none is passed", () => {
+test("a message's name line shows the time it is given, no time when it is unknown, and now only when none is passed", () => {
   const at = new Date(2026, 8, 29, 11, 52).getTime();
-  const you = getCatalog("en").chatRoles.you;
-  const header = (text: string) => stripVTControlCharacters(text).split("\n")[0];
-  expect(header(chatMessage("user", "hello", "en", at))).toBe(`## ${you} · ${new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
-  expect(header(chatMessage("user", "hello", "en", at))).toContain("11:52");
-  expect(header(chatMessage("user", "hello", "en", null))).toBe(`## ${you}`);
-  expect(header(chatMessage("user", "hello", "en"))).toBe(`## ${you} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
-  expect(chatMessage("user", "hello", "en", null)).toBe(`## ${you}\n\nhello`);
+  const clock = (time: number) => new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  expect(messageStamp("Codex", at)).toBe(`Codex · ${clock(at)}`);
+  expect(messageStamp("Codex", at)).toContain("11:52");
+  expect(messageStamp("Codex", null)).toBe("Codex");
+  expect(messageStamp("Codex")).toBe(`Codex · ${clock(Date.now())}`);
 });

@@ -19,7 +19,8 @@ import type { WorkModeControl } from "../../engines/work-mode.ts";
 import { ShellStatusBar } from "./status-bar.ts";
 import { StatusPanels, attachStatusPanels } from "./status-panel.ts";
 import type { EcosystemVersions } from "../../infrastructure/ecosystem-versions.ts";
-import { ActivityCard, chatMessage } from "./transcript.ts";
+import { ActivityCard } from "./transcript.ts";
+import { AssistantMessage, UserBubble } from "./chat-message.ts";
 import { effortDescription, effortLabel } from "./metrics.ts";
 import { ChatText, danger, warning } from "./theme.ts";
 import { ChatLinks, enableTerminalLinks, realChatLinkTools } from "./chat-links.ts";
@@ -37,7 +38,7 @@ import { workingStatus } from "./duration.ts";
 import { detourHeader, detourStatus, detourTitle } from "./detour.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
-import { describeError } from "../../shell-error.ts";
+import { ShellError, describeError } from "../../shell-error.ts";
 
 const clean = (text: string) => stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
 
@@ -72,7 +73,7 @@ export async function runNativeUI(
       return { ...(version ? { shell: version } : {}), ...versions, ...(memoryInUse === undefined ? {} : { memoryInUse }) };
     },
   }, locale);
-  const { surface, tui } = chatScreen(terminal, links, panels, { locale });
+  const { surface, tui, copy } = chatScreen(terminal, links, panels, { locale });
   const composer = createComposer(tui, locale);
   const transcript = new Container();
   let transcriptScroll!: IndependentScrollView;
@@ -108,7 +109,7 @@ export async function runNativeUI(
   let closed = false; let ready = false; let commandBusy = false;
   let finish!: () => void;
   const exited = new Promise<void>(resolve => { finish = resolve; });
-  const streaming = new Map<string, { component: ChatText; text: string }>();
+  const streaming = new Map<string, { component: AssistantMessage; text: string }>();
   const approvals: { description: string; answer: (allow: boolean) => void }[] = [];
   let sessions: NativeSessionInfo[] = [];
   let session: NativeSession;
@@ -119,19 +120,39 @@ export async function runNativeUI(
   const writeWarning = (text: string) => { const component = new ChatText(clean(text), warning, links); transcript.addChild(component); tui.requestRender(); return component; };
   /** A Node process warning, as a normal Shell notice: one muted row with the catalog's prefix (see `takeNodeWarnings`). */
   const writeNodeWarning = (message: string) => { transcript.addChild(nodeWarningRow(clean(t.nodeWarning({ message })))); tui.requestRender(); };
-  /** `at` is the time of a message replayed from history (`null`: unknown, no time shown); a live message leaves it out and takes the time of now. */
-  const writeChat = (role: "user" | "assistant" | "system", text: string, at?: number | null) => write(chatMessage(role, clean(text), locale, at));
+  /** A message of the person: a bubble on the right (see `UserBubble`). `at` is the time of a message replayed from history (`null`: unknown, no time shown); a live message leaves it out and takes the time of now. */
+  const writeUser = (text: string, at?: number | null): void => {
+    transcript.addChild(new UserBubble(clean(text), { links, ...(at === undefined ? {} : { at }) }));
+    tui.requestRender();
+  };
+  /** An answer of the agent, on the left; it gets its «Copy» button when `complete()` is called on it (see `AssistantMessage`). `at` as in `writeUser`. */
+  const writeAssistant = (text: string, at?: number | null): AssistantMessage => {
+    const message = new AssistantMessage({
+      agent: engineLabel, locale, links, copy, ...(at === undefined ? {} : { at }), onChange: () => tui.requestRender(),
+      onCopyFailed: () => writeWarning(describeError(new ShellError("clipboard-unavailable"), locale)),
+    });
+    message.setText(clean(text));
+    transcript.addChild(message);
+    tui.requestRender();
+    return message;
+  };
+  /** Marks every answer still being written as finished, so each gets its «Copy» button: the turn ended, or Codex started another message. */
+  const completeStreaming = () => { for (const entry of streaming.values()) entry.component.complete(); };
   const writeActivity = (title: string, detail: string, expanded = false) => {
     const card = new ActivityCard(title, "", clean(detail), expanded, undefined, undefined, undefined, links);
     transcript.addChild(card); tui.requestRender();
     return card;
   };
   const writeEngineText = (text: string, at?: number | null) => {
-    if (text.startsWith("You: ")) writeChat("user", text.slice(5), at);
+    if (text.startsWith("You: ")) writeUser(text.slice(5), at);
     else if (text.startsWith("Tool:")) {
       const [title, ...detail] = text.slice(5).trim().split("\n");
       writeActivity(title || tc.toolFallbackTitle, detail.join("\n") || tc.toolFallbackDetail);
-    } else writeChat("assistant", text, at);
+    } else {
+      const message = writeAssistant(text, at);
+      // Only an answer replayed from a saved conversation (it carries `at`, a time or `null`) can be copied; the notices Shell itself sends as text (connected, disconnected…) have none and get no button.
+      if (at !== undefined) message.complete();
+    }
   };
   const refresh = () => {
     if (!session || closed) return;
@@ -223,8 +244,8 @@ export async function runNativeUI(
     else if (event.type === "delta") {
       const key = event.id ?? "message";
       let entry = streaming.get(key);
-      if (!entry) { entry = { component: writeChat("assistant", ""), text: "" }; streaming.set(key, entry); }
-      entry.text += event.text; entry.component.setText(chatMessage("assistant", clean(entry.text), locale));
+      if (!entry) { completeStreaming(); entry = { component: writeAssistant(""), text: "" }; streaming.set(key, entry); }
+      entry.text += event.text; entry.component.setText(clean(entry.text));
     }
     refresh();
   };
@@ -277,10 +298,10 @@ export async function runNativeUI(
   /** Sends a message of the person (typed, or sent for them by `/init` and `/plan text`) and, when the turn ends with a plan, offers to implement it. */
   const sendMessage = (value: string) => {
     chatLogo.dismiss();
-    streaming.clear(); writeChat("user", value);
+    completeStreaming(); streaming.clear(); writeUser(value);
     beginTurn();
     void session.send(value).catch(error => { if (!closed) writeError(t.turnStopped({ message: describeError(error, locale) })); })
-      .finally(() => { endTurn(); refresh(); offerPlan(); });
+      .finally(() => { endTurn(); completeStreaming(); refresh(); offerPlan(); });
     refresh();
   };
   /**
