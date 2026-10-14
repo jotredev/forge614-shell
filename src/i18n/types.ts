@@ -429,6 +429,8 @@ export interface Catalog {
     unnamed: string;
     /** The title of the card for an image the assistant looked at or made. */
     viewedTitle: string;
+    /** What a tool card says for an image block of a result («PNG image», `format` in capitals), before the size when it is known. */
+    kind: (params: { format: string }) => string;
   };
   /** The one short line a tool card shows for a result that is JSON (see `summarizeToolText`). */
   toolSummary: {

@@ -408,6 +408,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     more: ({ count }) => `+${count} ${count === 1 ? "image" : "images"}`,
     unnamed: "image",
     viewedTitle: "Image",
+    kind: ({ format }) => `${format} image`,
   },
   toolSummary: {
     results: ({ count, titles }) => `${count} ${count === 1 ? "result" : "results"}${titles ? `: ${titles}` : ""}`,

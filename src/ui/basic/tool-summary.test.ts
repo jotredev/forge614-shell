@@ -51,9 +51,25 @@ test("un bloque de imagen sigue resumido, sin los bytes, junto al texto de su mi
   const data = "IMAGE_BASE64_" + "A/".repeat(500);
   const line = toolResultPreview([{ type: "text", text: "vista" }, { type: "image", source: { type: "base64", media_type: "image/png", data } }], es);
   expect(line).toContain("vista");
-  expect(line).toContain("image/png");
+  expect(line).toBe("vista · imagen PNG"); // legible, no el JSON {"type":"image","media_type":…}
+  expect(line).not.toContain("{");
   expect(line).not.toContain("IMAGE_BASE64_");
   expect(line).not.toContain("\n");
+});
+
+test("un bloque de imagen se resume como «imagen PNG · 1600×1400», con sus medidas si se leen, en el idioma del catálogo", () => {
+  const png = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0);
+  png.writeUInt32BE(13, 8); png.write("IHDR", 12); png.writeUInt32BE(1600, 16); png.writeUInt32BE(1400, 20);
+  const block = (mime: string, data: string) => [{ type: "image", source: { type: "base64", media_type: mime, data } }];
+  expect(toolResultPreview(block("image/png", png.toString("base64")), es)).toBe("imagen PNG · 1600×1400");
+  expect(toolResultPreview(block("image/png", png.toString("base64")), en)).toBe("PNG image · 1600×1400");
+  // Sin medidas legibles (datos que no son la cabecera de un PNG), o de un tipo del que no se leen: solo el tipo.
+  expect(toolResultPreview(block("image/png", "AAAA"), es)).toBe("imagen PNG");
+  expect(toolResultPreview(block("image/webp", "AAAA"), es)).toBe("imagen WEBP");
+  expect(toolResultPreview(block("image/jpeg", "AAAA"), en)).toBe("JPEG image");
+  // Un bloque sin tipo ni datos: la palabra «imagen».
+  expect(toolResultPreview([{ type: "image" }], es)).toBe("imagen");
 });
 
 test("los códigos de control se quitan y el largo se limita", () => {

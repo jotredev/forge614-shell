@@ -5,7 +5,7 @@ import type { ChatImage } from "./chat-images.ts";
 import type { Catalog } from "../../i18n/index.ts";
 
 /** The words a summary needs, from the catalog. */
-type SummaryText = Pick<Catalog, "toolSummary">;
+type SummaryText = Pick<Catalog, "toolSummary" | "chatImages">;
 
 /** The most titles a summary of results names, and the most `key: value` pairs a summary of any other object shows. */
 const MAX_TITLES = 3;
@@ -71,18 +71,25 @@ export function toolResultImages(content: unknown, t: Pick<Catalog, "chatImages"
   });
 }
 
+/** An image block as one readable phrase — «PNG image · 1600×1400» —, never its bytes nor its JSON: the format from its media type, and its size when the header says it (PNG and JPEG). */
+function describeImageBlock(block: Record<string, unknown>, t: SummaryText): string {
+  const source = isRecord(block.source) ? block.source : undefined;
+  const mime = typeof source?.media_type === "string" ? source.media_type : undefined;
+  if (!mime) return t.chatImages.unnamed;
+  const dimensions = typeof source?.data === "string" ? getImageDimensions(source.data, mime) : null;
+  return [t.chatImages.kind({ format: mime.replace(/^image\//, "").toUpperCase() }), ...(dimensions ? [`${dimensions.widthPx}×${dimensions.heightPx}`] : [])].join(" · ");
+}
+
 /**
- * The line a tool card shows under its title for a result Claude Code delivers (`tool_result.content`): a string, or an array of blocks. The `text` blocks are summarized (`summarizeToolText`); any other block —
- * an image— is summarized as before, without its bytes, keeping only its type and media type; the parts go on one line joined by « · ». Control codes are removed and the length is limited.
+ * The line a tool card shows under its title for a result Claude Code delivers (`tool_result.content`): a string, or an array of blocks. The `text` blocks are summarized (`summarizeToolText`); an image block says what
+ * it is in words («PNG image · 1600×1400», `describeImageBlock`), without its bytes; the parts go on one line joined by « · ». Control codes are removed and the length is limited.
  */
 export function toolResultPreview(content: unknown, t: SummaryText): string {
   const parts = Array.isArray(content) ? content.map(block => {
     if (!isRecord(block)) return typeof block === "string" ? summarizeToolText(block, t) : JSON.stringify(block ?? "");
     if (block.type === "text" && typeof block.text === "string") return summarizeToolText(block.text, t);
     if (block.type !== "image") return JSON.stringify(block);
-    const source = block.source;
-    const mediaType = isRecord(source) ? source.media_type : undefined;
-    return JSON.stringify(typeof mediaType === "string" ? { type: "image", media_type: mediaType } : { type: "image" });
+    return describeImageBlock(block, t);
   }) : [typeof content === "string" ? summarizeToolText(content, t) : JSON.stringify(content ?? "")];
   return clean(parts.join(" · ")).slice(0, 3000);
 }

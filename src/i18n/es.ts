@@ -408,6 +408,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     more: ({ count }) => `+${count} ${count === 1 ? "imagen" : "imágenes"}`,
     unnamed: "imagen",
     viewedTitle: "Imagen",
+    kind: ({ format }) => `imagen ${format}`,
   },
   toolSummary: {
     results: ({ count, titles }) => `${count} ${count === 1 ? "resultado" : "resultados"}${titles ? `: ${titles}` : ""}`,
