@@ -405,9 +405,12 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     dateTime: ({ month, day, time }) => `el ${day} ${month}, ${time}`,
   },
   chatRoles: {
-    you: "TÚ",
-    assistant: "ASISTENTE",
-    system: "SISTEMA",
+    assistant: "Asistente",
+    system: "Sistema",
+  },
+  chatCopy: {
+    copy: "Copiar",
+    copied: "Copiado",
   },
   jumpToLatest: {
     label: " ↓ Mensajes nuevos · ir al final ",

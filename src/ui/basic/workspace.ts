@@ -190,18 +190,18 @@ class ChatScreen extends TuiAltScreen {
 /**
  * The alternate screen of the chat, the same for Codex and Claude Code: the session-local terminal (`workspaceTerminal`) with the mouse on, and the clicks on links sent to `links`,
  * which also draws the hover and asks for the hand pointer through that terminal. With `panels`, the bottom bar's panels are closed by Esc and by a click anywhere else before the screen sees
- * either (see `StatusPanels.intercept`). The screen keeps a mouse selection on its text while the chat scrolls (see `ChatScreen`). Returns the terminal to build the layout on and the screen.
+ * either (see `StatusPanels.intercept`). The screen keeps a mouse selection on its text while the chat scrolls (see `ChatScreen`). Returns the terminal to build the layout on, the screen and the `copy` it uses for a selection, which the «Copy» button under an answer uses too.
  * What is selected is copied with `options.copySelection`, by default the system's clipboard (`copySelectionText`, with OSC 52 written to the terminal as a fallback): without a clipboard of its
  * own pi-tui writes OSC 52, which macOS Terminal does not understand. `options.locale` is the language of the copy notice.
  */
 export function chatScreen(
   terminal: Terminal, links: ChatLinks, panels?: StatusPanels, options: { copySelection?: (text: string) => Promise<boolean>; locale?: Locale } = {},
-): { surface: Terminal; tui: TuiAltScreen } {
+): { surface: Terminal; tui: TuiAltScreen; copy: (text: string) => Promise<boolean> } {
   const surface = workspaceTerminal(terminal, links, panels);
   const copySelection = options.copySelection ?? ((text: string) => copySelectionText(text, { write: data => surface.write(data) }));
   const tui = new ChatScreen(getCatalog(options.locale ?? "en").chatSelection, surface, true, undefined, { mouse: true, openUrl: url => links.open(url), copySelection });
   links.bind({ requestRender: () => tui.requestRender(), write: data => surface.write(data) });
-  return { surface, tui };
+  return { surface, tui, copy: copySelection };
 }
 
 /**

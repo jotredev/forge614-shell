@@ -416,9 +416,13 @@ export interface Catalog {
     dateTime: (params: { month: string; day: string; time: string }) => string;
   };
   chatRoles: {
-    you: string;
     assistant: string;
     system: string;
+  };
+  /** The grey action under each finished answer of the assistant, and what it says for a moment after copying. */
+  chatCopy: {
+    copy: string;
+    copied: string;
   };
   jumpToLatest: {
     label: string;

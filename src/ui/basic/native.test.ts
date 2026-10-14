@@ -910,12 +910,13 @@ test("/resume draws each old message with the time of its turn and no time when 
     const before = h.terminal.output.length;
     h.enter("/resume old"); await tick(); await tick();
     const shown = stripVTControlCharacters(h.terminal.output.slice(before));
-    const roles = getCatalog("en").chatRoles;
-    expect(shown).toContain(`${roles.you} · ${new Date(startedAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+    // The person's message is a bubble with its own time under it; the answer has Codex's name line with no time (the protocol gave none) and a «Copy» button, as it is a finished message.
     expect(shown).toContain("Plan a hello.sh script");
+    expect(shown).toContain(new Date(startedAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
     expect(shown).toContain("Here is the plan");
-    expect(shown).toContain(roles.assistant);
-    expect(shown).not.toContain(`${roles.assistant} · `);
+    expect(shown).toContain("Codex");
+    expect(shown).not.toContain("Codex · ");
+    expect(shown).toContain(getCatalog("en").chatCopy.copy);
   } finally { h.enter("/f614:quit"); await h.ui; }
 });
 
@@ -2060,6 +2061,29 @@ async function converseUi(h: CommandHarness): Promise<void> {
   await tick();
 }
 const asked = (h: CommandHarness, method: string) => h.rpc.calls.filter(call => call.method === method);
+
+/**
+ * U1-r1 with Codex: the answer arrives in `agentMessage/delta` parts and is drawn on the left under «Codex»; «Copy» appears under it only once the turn is over, never while it is being written, and the person's own
+ * message is a bubble with no header.
+ */
+test("Codex UI: «Copy» appears under an answer only when the turn ends, and the person's message has no header", async () => {
+  const h = codexUi("en", rpc => threadReplies(rpc), undefined, 220);
+  try {
+    const copy = getCatalog("en").chatCopy.copy;
+    await tick(); h.enter("hello"); await tick();
+    h.terminal.output = "";
+    h.rpc.onNotification("item/agentMessage/delta", { threadId: "t", turnId: "u", itemId: "m1", delta: "Answer in parts" });
+    await tick();
+    expect(h.plain()).toContain("Answer in parts");
+    expect(h.plain()).toContain("Codex");
+    expect(h.plain()).not.toContain(copy);
+    expect(h.plain()).not.toContain("##");
+    h.terminal.output = "";
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } });
+    await tick(); await tick();
+    expect(h.plain()).toContain(copy);
+  } finally { h.enter("/f614:quit"); await h.ui; }
+});
 
 /**
  * `/recap` through the screen: the box shows Codex's «Generating conversation recap» (translated) while the temporary thread works, then the summary in its

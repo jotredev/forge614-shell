@@ -28,7 +28,8 @@ import { ShellStatusBar } from "./status-bar.ts";
 import { StatusPanels, attachStatusPanels } from "./status-panel.ts";
 import type { EcosystemVersions } from "../../infrastructure/ecosystem-versions.ts";
 import { effortDescription, effortLabel, isDisplayableUsage } from "./metrics.ts";
-import { ActivityCard, chatMessage } from "./transcript.ts";
+import { ActivityCard } from "./transcript.ts";
+import { AssistantMessage, UserBubble } from "./chat-message.ts";
 import { lineDiff } from "./diff.ts";
 import { engramToolLabel, parseClaudeMcpToolName } from "../../engines/mcp-labels.ts";
 import { ChatText, PanelText, danger, warning } from "./theme.ts";
@@ -159,7 +160,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     mcp: () => shellState.snapshot().mcpServers,
     forge614: () => ({ ...(version ? { shell: version } : {}), ...versions, ...(session.memoryInUse() === undefined ? {} : { memoryInUse: session.memoryInUse()! }) }),
   }, locale);
-  const { surface, tui } = chatScreen(terminal ?? new ProcessTerminal(), links, panels, { locale });
+  const { surface, tui, copy } = chatScreen(terminal ?? new ProcessTerminal(), links, panels, { locale });
   const composer = createComposer(tui, locale);
   const transcript = new Container();
   let transcriptScroll!: IndependentScrollView;
@@ -196,7 +197,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   const exited = new Promise<void>(resolve => { resolveExit = resolve; });
   const approvals: { label: string; finish: (allowed: boolean) => void }[] = [];
   let sessions: ResumeEntry[] = [];
-  let streaming: ChatText | undefined;
+  let streaming: AssistantMessage | undefined;
   let streamedText = "";
   const toolTracker = new ToolTracker(card => { transcript.addChild(card); tui.requestRender(); }, tc);
   // Remembers the person's own /model and /effort picks across Shell restarts — the native `claude`
@@ -272,7 +273,22 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     transcript.addChild(nodeWarningRow(clean(t.nodeWarning({ message }))));
     tui.requestRender();
   };
-  const writeChat = (role: "user" | "assistant" | "system", text: string): ChatText => write(chatMessage(role, clean(text), locale));
+  /** A message of the person: a bubble on the right (see `UserBubble`). */
+  const writeUser = (text: string, at?: number | null): void => {
+    transcript.addChild(new UserBubble(clean(text), { links, ...(at === undefined ? {} : { at }) }));
+    tui.requestRender();
+  };
+  /** An answer of the agent, on the left; it gets its «Copy» button when `complete()` is called on it (see `AssistantMessage`). `at: null` is a message replayed from a saved conversation, whose time is not known. */
+  const writeAssistant = (text: string, at?: number | null): AssistantMessage => {
+    const message = new AssistantMessage({
+      agent: "Claude", locale, links, copy, ...(at === undefined ? {} : { at }), onChange: () => tui.requestRender(),
+      onCopyFailed: () => writeWarning(describeError(new ShellError("clipboard-unavailable"), locale)),
+    });
+    message.setText(clean(text));
+    transcript.addChild(message);
+    tui.requestRender();
+    return message;
+  };
   const writeActivity = (title: string, detail: string, expanded = false, status = ""): ActivityCard => {
     const card = new ActivityCard(title, status, clean(detail), expanded, undefined, undefined, undefined, links);
     transcript.addChild(card); tui.requestRender();
@@ -334,7 +350,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
    */
   const syncTurn = () => {
     if (session.busy && turnStartedAt === undefined) beginTurn();
-    else if (!session.busy && turnStartedAt !== undefined) { endTurn(); streaming = undefined; }
+    else if (!session.busy && turnStartedAt !== undefined) { endTurn(); streaming?.complete(); streaming = undefined; }
   };
   const shutdown = async () => {
     if (closed) return;
@@ -392,18 +408,19 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     if (event.type === "system" && event.subtype === "init") accountConnected = true;
     if (event.type === "system" && event.subtype === "commands_changed") syncCommandGroups();
     if (event.type === "stream_event" && !event.parent_tool_use_id) {
-      if (event.event.type === "message_start") { streaming = undefined; streamedText = ""; }
+      if (event.event.type === "message_start") { streaming?.complete(); streaming = undefined; streamedText = ""; }
       if (event.event.type === "content_block_delta" && event.event.delta.type === "text_delta") {
         streamedText += event.event.delta.text;
-        streaming ??= writeChat("assistant", "");
-        streaming.setText(chatMessage("assistant", clean(streamedText), locale));
+        streaming ??= writeAssistant("");
+        streaming.setText(clean(streamedText));
       }
     }
     if (event.type === "assistant") {
       const text = event.message.content.filter(block => block.type === "text").map(block => block.text).join("\n");
       if (!event.parent_tool_use_id && text) {
-        if (streaming) streaming.setText(chatMessage("assistant", clean(text), locale));
-        else writeChat("assistant", text);
+        const message = streaming ?? writeAssistant("");
+        message.setText(clean(text));
+        message.complete();
         streaming = undefined; streamedText = "";
       }
       // As in Claude Code itself, what a subagent does inside (its tool calls, with a `parent_tool_use_id`) is not drawn in the main chat; the helper's own «Agent» line is the main assistant's call.
@@ -455,7 +472,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
    */
   const sendMessage = (value: string) => {
     chatLogo.dismiss();
-    writeChat("user", value);
+    writeUser(value);
     if (!session.busy) telemetry = { ...emptyTelemetry(), quotas: telemetry.quotas };
     const turn: Promise<void> = session.send(value).catch(messageFailed).finally(() => { turns.delete(turn); refresh(); });
     turns.add(turn);
@@ -646,7 +663,9 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
           const message = entry.message as { content?: unknown };
           const content = message?.content;
           const text = typeof content === "string" ? content : Array.isArray(content) ? content.filter(block => block.type === "text").map(block => block.text).join("\n") : "";
-          if (text) write(`${entry.type}: ${text}`);
+          if (!text) continue;
+          if (entry.type === "user") writeUser(text, null);
+          else writeAssistant(text, null).complete();
         }
         write(t.historyRestored);
       }

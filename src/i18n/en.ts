@@ -405,9 +405,12 @@ The selected engine's project settings and permissions apply. This is not a sand
     dateTime: ({ month, day, time }) => `${month} ${day}, ${time}`,
   },
   chatRoles: {
-    you: "YOU",
-    assistant: "ASSISTANT",
-    system: "SYSTEM",
+    assistant: "Assistant",
+    system: "System",
+  },
+  chatCopy: {
+    copy: "Copy",
+    copied: "Copied",
   },
   jumpToLatest: {
     label: " ↓ New messages · jump to latest ",
