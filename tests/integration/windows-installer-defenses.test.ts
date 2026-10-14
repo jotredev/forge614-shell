@@ -62,9 +62,18 @@ test("install.ps1 implements strict defenses for checksum, engines preservation,
   expect(script).toContain("IsPathRooted");
   expect(script).toContain("IsNullOrWhiteSpace");
 
-  // Verificación de checksum SHA256 antes de extraer
-  expect(script).toContain("Get-FileHash");
-  expect(script).toContain("SHA256");
+  // Verificación de checksum SHA256 antes de extraer, calculada con .NET: powershell.exe 5.1 abierto desde PowerShell 7 hereda su PSModulePath y
+  // no encuentra el cmdlet de hash de archivos (Verify 38616906739 de Engram), así que el instalador no puede depender de él.
+  expect(script).toContain("[System.Security.Cryptography.SHA256]::Create()");
+  expect(script).toContain("[IO.File]::OpenRead(");
+  expect(script).toContain("ToLowerInvariant()");
+  expect(script).toContain("$actualHash = Get-Sha256Hex $ArchivePath");
+  expect(script).toMatch(/finally \{\s*if \(\$null -ne \$sha\) \{ \$sha\.Dispose\(\) \}\s*if \(\$null -ne \$stream\) \{ \$stream\.Dispose\(\) \}/); // se cierran los dos
+  // Nada escrito solo para PowerShell 7: ni estos comandos, que 5.1 no trae o no encuentra.
+  expect(script).not.toMatch(/Get-FileHash|New-TemporaryFile|Format-Hex|Import-PowerShellDataFile|Expand-Archive/);
+  // El instalador de Engines corre con el mismo ejecutable de PowerShell que ya corre este script, no con el que haya en el PATH.
+  expect(script).toContain("$psExe = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName");
+  expect(script).not.toMatch(/Get-Command pwsh/);
 
   // Comprobación de compatibilidad de Engines antes de modificar Shell
   expect(script).toContain("schemaVersion");
