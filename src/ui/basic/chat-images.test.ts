@@ -8,7 +8,7 @@ import { decodePng } from "./png-strip.ts";
 import { Container, getCapabilities, getCellDimensions, getImageDimensions, resetCapabilitiesCache, setCapabilities, setCapabilityOverrides, visibleWidth } from "@earendil-works/pi-tui";
 import { ChatLinks } from "./chat-links.ts";
 import { ImageStrip, MAX_THUMBNAILS, THUMBNAIL_COLUMNS, THUMBNAIL_GAP, THUMBNAIL_MAX_BYTES, THUMBNAIL_ROWS, thumbnailLayout, enableTerminalImages, findImagePaths, formatBytes, imageLine, imagesInText, readImage } from "./chat-images.ts";
-import { UserBubble } from "./chat-message.ts";
+import { AssistantMessage, UserBubble } from "./chat-message.ts";
 import { ActivityCard } from "./transcript.ts";
 import { toolResultImages } from "./tool-summary.ts";
 import { createComposer } from "./composer.ts";
@@ -195,6 +195,31 @@ test("FORGE614_SHELL_IMAGES fuerza kitty, iterm2 o off, en cualquier terminal, y
 const kittyOf = (rows: string[]) => rows.join("").match(KITTY) ?? [];
 const sizeOf = (sequence: string) => ({ columns: Number(/[,;]c=(\d+)/.exec(sequence)![1]), rows: Number(/[,;]r=(\d+)/.exec(sequence)![1]) });
 
+test("a 180 columnas persona y agente usan todo el chat, la tira conserva 4 cajas de 22×7, y a 80 no cambia", async () => {
+  const long = Array(12).fill("Una frase larga comprueba que el chat deja de cortarse en cien columnas.").join(" ");
+  const human180 = plain(new UserBubble(long, { locale: "es", at: null }).render(180)).filter(row => row.trim() !== "" && !row.includes("Humano"));
+  expect(Math.max(...human180.map(row => row.length - 2))).toBe(176);
+
+  const answer = new AssistantMessage({ agent: "Claude", locale: "es", at: null, copy: async () => true, onChange: () => {} });
+  answer.setText(long); answer.complete();
+  const agent180 = plain(answer.render(180)).filter(row => row.trim() !== "" && !row.includes("Claude"));
+  expect(Math.max(...agent180.map(row => row.trimEnd().length - 2))).toBe(176);
+
+  const paths = Array.from({ length: 4 }, (_, i) => file(`ancho180-${i}.png`, realPng(160 + i, 120, i + 1)));
+  const bubble = new UserBubble(paths.join(" "), { locale: "es", at: null });
+  await until(() => imagesDrawn(bubble.render(180)) > 0, 10_000);
+  const rows = bubble.render(180);
+  expect(imagesDrawn(rows)).toBe(1);
+  const { columns, rows: height } = sizeOf(kittyOf(rows)[0]!);
+  expect(columns).toBe(4 * THUMBNAIL_COLUMNS + 3 * THUMBNAIL_GAP); // 4 cajas de 22 y 3 separaciones de 2
+  expect(height).toBeLessThanOrEqual(THUMBNAIL_ROWS); // cada caja conserva su máximo de 7 renglones
+
+  const human80 = plain(new UserBubble(long, { locale: "es", at: null }).render(80)).filter(row => row.trim() !== "" && !row.includes("Humano"));
+  expect(Math.max(...human80.map(row => row.length - 2))).toBe(76);
+  const agent80 = plain(answer.render(80)).filter(row => row.trim() !== "" && !row.includes("Claude"));
+  expect(Math.max(...agent80.map(row => row.trimEnd().length - 2))).toBe(76);
+});
+
 test("la miniatura de un mensaje cabe en 22 columnas y 7 renglones, a la izquierda con el margen de 2, debajo del texto y con su línea gris debajo", () => {
   const path = file("grande-1600.png", png(1600, 1400));
   const rows = new UserBubble(`mira ${path}`, { locale: "es", at: null }).render(100);
@@ -230,7 +255,7 @@ test("hasta 4 miniaturas por mensaje van en UN renglón, como UNA sola imagen ki
   expect(rows.slice(at).filter(row => row.includes("\x1b_G"))).toHaveLength(1); // solo una fila lleva la imagen
   const { columns, rows: height } = sizeOf(kittyOf(rows)[0]!);
   expect(columns).toBeGreaterThan(THUMBNAIL_COLUMNS * 3); // se ven las cuatro: ocupan más de 3 cajas...
-  expect(columns).toBeLessThanOrEqual(4 * THUMBNAIL_COLUMNS + 3 * THUMBNAIL_GAP); // ...y no más de 4 cajas con sus separaciones (94 columnas: caben en el ancho de lectura de 100)
+  expect(columns).toBeLessThanOrEqual(4 * THUMBNAIL_COLUMNS + 3 * THUMBNAIL_GAP); // ...y no más de 4 cajas con sus separaciones (94 columnas)
   expect(height).toBeLessThanOrEqual(THUMBNAIL_ROWS);
   // Debajo de la tira, una línea gris por imagen, en el orden de la tira; y «+2 imágenes».
   const grays = plain(rows).filter(row => row.includes("🖼"));

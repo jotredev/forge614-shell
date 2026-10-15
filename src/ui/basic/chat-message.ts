@@ -7,8 +7,6 @@ import { ImageStrip, imagesInText } from "./chat-images.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
-/** The widest an answer is drawn, in columns of text (the two columns of margin on each side come on top): a line longer than this is hard to read. */
-export const MAX_READING_WIDTH = 100;
 /** Columns of margin between the chat's edge and a message, on the side the message is not aligned to. */
 const MARGIN = 2;
 /** How long the button says «Copied» before it goes back to «Copy». */
@@ -26,7 +24,7 @@ export function messageStamp(name: string, at?: number | null): string {
 }
 
 /**
- * A message of the person, drawn like the agent's answers: on the left, with the two columns of margin and at most `MAX_READING_WIDTH` columns of text, no background and no drawn border, and a quiet line over it with
+ * A message of the person, drawn like the agent's answers: on the left, with two columns of margin on each side, no background and no drawn border, and a quiet line over it with
  * «Human · time». To tell at a glance who speaks, the word «Human» is in the accent color and the time in gray, while the agent's name line is all gray. The text is plain text, not Markdown — what a person types is not
  * always Markdown, and a `#` or a `-` of theirs must not change shape — cut at the last space that fits (`hardWrap`, which keeps the indent and the spaces of what was pasted, and adds none to the rows that continue a line),
  * with its line breaks and blank lines kept; it is never cut off, however long. With `links` a path in the text that exists on disk is a link, like in the agent's answers.
@@ -54,22 +52,21 @@ export class UserBubble implements Component {
 
   render(width: number): string[] {
     const margin = " ".repeat(Math.min(MARGIN, Math.max(0, width - 1)));
-    const textWidth = Math.max(1, Math.min(width, MAX_READING_WIDTH + MARGIN * 2) - MARGIN * 2);
+    const textWidth = Math.max(1, width - MARGIN * 2);
     const rows = this.text.split("\n").flatMap(line => hardWrap(line, textWidth, 0))
       .map(line => line === "" ? "" : `${margin}${this.links ? this.links.linkify(line, foreground) : foreground(line)}`);
     const out = ["", `${margin}${accent(this.name)}${this.time ? muted(this.time) : ""}`, ...rows];
     // The image rows come after the link handling: they are never turned into links, cut or padded as text.
-    return [...(this.linkView ? this.linkView.decorate(out) : out), ...(this.strip?.render(Math.min(width, MAX_READING_WIDTH + MARGIN * 2)) ?? [])];
+    return [...(this.linkView ? this.linkView.decorate(out) : out), ...(this.strip?.render(width) ?? [])];
   }
 }
 
-/** Draws `child` no wider than the reading width plus its margins, and hands it the mouse at that width. */
-class ReadingColumn implements Component {
+/** Draws `child` at the chat's full width and forwards mouse events at that width. */
+class MouseForwarder implements Component {
   constructor(private readonly child: ChatText) {}
-  private cap(width: number) { return Math.min(width, MAX_READING_WIDTH + MARGIN * 2); }
   invalidate(): void { this.child.invalidate(); }
-  render(width: number): string[] { return this.child.render(this.cap(width)); }
-  handleMouse(event: TuiMouseEvent) { return this.child.handleMouse({ ...event, width: this.cap(event.width) }); }
+  render(width: number): string[] { return this.child.render(width); }
+  handleMouse(event: TuiMouseEvent) { return this.child.handleMouse(event); }
 }
 
 /** The grey line over an answer with the agent's name and the time, one blank row above it. */
@@ -97,7 +94,7 @@ export interface AssistantMessageOptions {
 }
 
 /**
- * An answer of the agent: on the left, without a bubble, with a quiet line of name and time over it, the text drawn as Markdown with two columns of margin and at most `MAX_READING_WIDTH` columns of text. Its text
+ * An answer of the agent: on the left, without a bubble, with a quiet line of name and time over it, the text drawn as Markdown with two columns of margin on each side. Its text
  * arrives in parts (`setText` replaces it). The answer itself has no «Copy»: what the agents put in a fenced code block — a prompt, a command, code, a text for somewhere else — is what is meant to be copied and pasted, so
  * each such block carries its own grey «Copy» on the right of its first row (see `CodeBlockUi`). A block still being written has none until it closes or the answer is complete (`complete`). A click copies exactly the block's
  * original content — no fences, no language, none of the cuts Shell makes to fit lines — and its label says «Copied» for `COPIED_MS`.
@@ -114,7 +111,7 @@ export class AssistantMessage extends Container {
     this.body = new ChatText("", options.baseColor, options.links, 0, this.ui);
     this.body.onCopyBlock = (index, code) => void this.copyBlock(index, code);
     this.addChild(new MessageStamp(messageStamp(options.agent, options.at)));
-    this.addChild(new ReadingColumn(this.body));
+    this.addChild(new MouseForwarder(this.body));
   }
 
   /** The answer as it is now, replacing what was there; `text` is exactly what the agent sent (the caller has only removed terminal control codes). */
