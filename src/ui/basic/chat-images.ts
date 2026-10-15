@@ -21,8 +21,6 @@ export const THUMBNAIL_GAP = 2;
 export const THUMBNAIL_MIN_COLUMNS = 14;
 /** Thumbnails are made with this many pixels per pixel of the terminal's cells, for Retina screens. */
 const RETINA = 2;
-/** The width a row of thumbnails may take at most, as the reading width of the chat (see `MAX_READING_WIDTH` in chat-message.ts), the margin included. */
-const READING_WIDTH = 100;
 /** The most a thumbnail's data weigh, as PNG in base64: in Orca every placement carries them, so a row of thumbnails costs about its bytes in each frame. */
 export const THUMBNAIL_MAX_BYTES = 140_000;
 /** The most a whole row of thumbnails weighs, as PNG in base64 (four thumbnails of `THUMBNAIL_MAX_BYTES` at the very most, and room left in the frame for its text): if it weighs more, its pixels are reduced, never its format. */
@@ -280,7 +278,7 @@ export function shortenName(name: string, room: number): string {
 
 /**
  * The images of one message or tool card, drawn under its text: up to `MAX_THUMBNAILS` thumbnails laid out in rows, each row ONE image (pi-tui's `Image`) after a blank row and indented by `indent` columns: a lone
- * thumbnail is drawn as it is and several are composed side by side (`composeStrip`). As many go in a row as fit in the chat's reading width (`READING_WIDTH`) with `THUMBNAIL_GAP` columns between them, each in a box of
+ * thumbnail is drawn as it is and several are composed side by side (`composeStrip`). As many go in a row as fit in the chat width with `THUMBNAIL_GAP` columns between them, each in a box of
  * `THUMBNAIL_COLUMNS` × `THUMBNAIL_ROWS` cells; in a narrow window the ones that do not fit go to the next row. Under the rows there is one gray line (`imageLine`) per image, in the same order — one each so that each
  * name is its own link to its file, and so that each says its own size and weight — and a line «+N images» for the rest. Where the terminal shows no images (see `enableTerminalImages`), or while the thumbnails are being made,
  * only the gray lines are drawn. The rows of an image are kept apart from the text's: they are never cut, padded or turned into links.
@@ -335,7 +333,7 @@ export class ImageStrip implements Component {
     // Thumbnails are laid out only once every one of them is settled (made, or known to be missing): meanwhile there are only the gray lines.
     if (states.length && !states.includes("pending")) {
       const ready = states.flatMap(state => state !== "pending" && state !== "none" ? [state] : []);
-      const available = Math.max(1, Math.min(width, READING_WIDTH) - margin.length);
+      const available = Math.max(1, width - margin.length);
       const { perRow, columns } = thumbnailLayout(ready.length, available);
       for (let first = 0; first < ready.length; first += perRow) {
         const image = this.rowImage(ready.slice(first, first + perRow), columns);

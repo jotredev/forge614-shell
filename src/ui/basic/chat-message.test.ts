@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
 import { Container, resetCapabilitiesCache, setCapabilityOverrides } from "@earendil-works/pi-tui";
 import type { TuiMouseEvent } from "@earendil-works/pi-tui";
-import { AssistantMessage, UserBubble, MAX_READING_WIDTH } from "./chat-message.ts";
+import { AssistantMessage, UserBubble } from "./chat-message.ts";
 import { ChatLinks } from "./chat-links.ts";
 
 /** Estas pruebas leen códigos RGB exactos (el fondo de superficie), así que fijan el color verdadero en vez de depender de la terminal que corre la suite. */
@@ -34,8 +34,8 @@ function assistant(text: string, options: { copy?: (text: string) => Promise<boo
 const human = (text: string, at: number | null = null, locale: "es" | "en" = "es") => new UserBubble(text, { at, locale });
 const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-for (const width of [60, 100, 160]) {
-  test(`el mensaje del propietario va a la izquierda, sin fondo, con margen de 2 y el mismo ancho de lectura que el del agente, con «Humano · hora» arriba (ancho ${width})`, () => {
+for (const width of [60, 80, 100, 160, 180]) {
+  test(`el mensaje del propietario va a la izquierda, sin fondo, con margen de 2 y el mismo ancho que el del agente, con «Humano · hora» arriba (ancho ${width})`, () => {
     const at = new Date(2026, 9, 14, 13, 43).getTime();
     const long = Array(5).fill(LONG).join(" ");
     const rows = human(long, at).render(width);
@@ -44,15 +44,15 @@ for (const width of [60, 100, 160]) {
     for (const row of text) expect(row.length).toBeLessThanOrEqual(width);
     // La primera fila con texto es la línea «Humano · hora», en la columna 2, a la izquierda.
     expect(lines[0]).toBe(`  Humano · ${clock(at)}`);
-    // El texto empieza en la columna 2 (margen), llena el ancho de lectura (el mismo que el del agente) y nunca más.
+    // El texto empieza en la columna 2 y usa todo el ancho disponible, con 2 columnas de margen a cada lado.
     const body = lines.slice(1);
     expect(body.length).toBeGreaterThan(1);
     for (const row of body) {
       expect(row.startsWith("  ")).toBe(true);
       expect(row[2]).not.toBe(" ");
-      expect(row.length - 2).toBeLessThanOrEqual(Math.min(width - 4, MAX_READING_WIDTH));
+      expect(row.length - 2).toBeLessThanOrEqual(width - 4);
     }
-    expect(Math.max(...body.map(row => row.length - 2))).toBeGreaterThan(Math.min(width - 4, MAX_READING_WIDTH) - 25); // aprovecha el ancho, no un tercio
+    expect(Math.max(...body.map(row => row.length - 2))).toBeGreaterThan(width - 29); // aprovecha el ancho, no un tercio
     // Mismo ancho que el del agente: el texto parte donde parte el del agente.
     const agent = assistant(long).message.render(width).map(row => stripVTControlCharacters(row)).filter(row => row.trim() !== "" && !row.includes("Claude"));
     expect(body.map(row => row.trimEnd())).toEqual(agent.map(row => row.trimEnd()));
@@ -116,14 +116,14 @@ test("en la línea del propietario la palabra «Humano» va en el color de acent
   expect(stripVTControlCharacters(line).indexOf("Claude")).toBe(stripVTControlCharacters(user).indexOf("Humano"));
 });
 
-test("la respuesta del agente va a la izquierda, con margen de 2 columnas y un ancho de lectura máximo", () => {
+test("la respuesta del agente va a la izquierda, con margen de 2 columnas y todo el ancho disponible", () => {
   const { message } = assistant(LONG.repeat(6));
   const rows = plain(message.render(200));
   const body = rows.filter(row => row.trim() !== "" && !row.includes("Claude"));
   expect(body.length).toBeGreaterThan(1);
   for (const row of body) {
     expect(row.startsWith("  ")).toBe(true);
-    expect(row.trimEnd().length).toBeLessThanOrEqual(MAX_READING_WIDTH + 4);
+    expect(row.trimEnd().length).toBeLessThanOrEqual(200);
   }
   // Sin burbuja: ninguna fila lleva el fondo de superficie.
   expect(message.render(200).join("")).not.toContain(SURFACE);
@@ -218,11 +218,11 @@ test("una celda larga se parte dentro de su columna, sin pasar del ancho y sin c
   expect(words.replace(/\s+/g, " ")).toContain("larga larga");
 });
 
-test("una tabla más ancha que el ancho de lectura se reparte en el ancho de lectura, sin líneas", () => {
+test("una tabla más ancha que el chat se reparte en el ancho disponible, sin líneas", () => {
   const wide = `| ${Array.from({ length: 6 }, (_, i) => `Encabezado${i}`).join(" | ")} |\n|${"---|".repeat(6)}\n| ${Array.from({ length: 6 }, () => "palabra palabra palabra palabra").join(" | ")} |\n`;
   const { message } = assistant(wide);
   const rows = plain(message.render(200));
-  for (const row of rows) expect(row.trimEnd().length).toBeLessThanOrEqual(MAX_READING_WIDTH + 4);
+  for (const row of rows) expect(row.trimEnd().length).toBeLessThanOrEqual(200);
   expect(rows.some(row => BOX.test(row))).toBe(false);
   expect(rows.join(" ")).toContain("Encabezado5");
 });

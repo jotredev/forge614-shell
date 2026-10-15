@@ -107,7 +107,7 @@ test("un código en línea partido entre dos renglones: el fondo cubre las dos p
 
 test("el encabezado de una tabla y los bloques de código cubren su ancho y no se derraman a lo que sigue", async () => {
   const text = "Antes\n\n| Plazo | Qué cambia |\n|---|---|\n| corto | `código` y texto normal |\n\n```ts\nconst a = 1;\n```\n\nDespués con `código` y más texto normal al final.";
-  const columns = 200; // más ancho que el ancho de lectura, para que haya celdas a la derecha del bloque
+  const columns = 200; // chat ancho, para que haya celdas a la derecha del bloque
   const { rows, panel, code, pill } = await chatCells(text, columns, { trueColor: true, links: true });
   // El único otro fondo permitido es el de la píldora de «Copiar» del bloque, y solo en sus celdas.
   expect(rows.flatMap(row => row.filter(cell => cell.bg !== panel && cell.bg !== code && cell.bg !== pill))).toHaveLength(0);
@@ -119,7 +119,7 @@ test("el encabezado de una tabla y los bloques de código cubren su ancho y no s
   expect(header.at(-1)!.bg).toBe(panel);
   const block = rows.find(row => row.map(cell => cell.ch).join("").includes("const a = 1;"))!;
   expect(block.filter(cell => cell.bg === code).length).toBeGreaterThan("const a = 1;".length);
-  expect(block.at(-1)!.bg).toBe(panel);
+  expect(block.at(-1)!.bg).toBe(code); // el bloque ahora cubre el ancho completo del chat
   // El renglón de después: solo el código lleva fondo, hasta el borde el resto es del panel.
   const after = rows.find(row => row.map(cell => cell.ch).join("").includes("Después"))!;
   expect(after.filter(cell => cell.bg === code).map(cell => cell.ch).join("")).toBe("código");
