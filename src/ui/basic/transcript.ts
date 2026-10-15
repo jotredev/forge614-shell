@@ -93,17 +93,13 @@ export class ActivityCard implements Component {
 
   render(width: number): string[] {
     if (this.cachedWidth !== width || !this.cachedRows) {
-      this.cachedRows = this.rows(width);
+      this.cachedRows = this.ownRows(width);
       this.cachedWidth = width;
     }
-    const rows = this.cachedRows;
+    // The image rows go last and untouched (not cut to the width or turned into links like the card's text) and are never kept with the rest: a thumbnail is made after the card is first drawn (see `thumbnailOf`)
+    // and must show up in the next frame, so they are asked for every time.
+    const rows = this.images ? [...this.cachedRows, ...this.images.render(width)] : this.cachedRows;
     return this.linkView ? this.linkView.decorate(rows) : rows;
-  }
-
-  private rows(width: number): string[] {
-    const own = this.ownRows(width);
-    // The image rows go last and untouched: they are not cut to the width or turned into links like the card's text.
-    return this.images ? [...own, ...this.images.render(width)] : own;
   }
 
   private ownRows(width: number): string[] {

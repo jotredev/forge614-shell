@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Container, resetCapabilitiesCache, setCapabilities, visibleWidth } from "@earendil-works/pi-tui";
 import { ChatLinks } from "./chat-links.ts";
 import { ImageStrip, enableTerminalImages } from "./chat-images.ts";
+import { realPng, screenshotPng } from "./png-fixtures.ts";
 import { ImagePlacer } from "./image-placement.ts";
 import { UserBubble } from "./chat-message.ts";
 import { ActivityCard } from "./transcript.ts";
@@ -38,13 +39,14 @@ afterEach(() => { enableTerminalImages({}); resetCapabilitiesCache(); });
 const file = (name: string, content: Buffer) => { const path = join(dir, name); writeFileSync(path, content); return path; };
 
 interface Placed { id: number; row: number; col: number; columns: number; rows: number; covered: Set<string> }
-interface Violation { frame: number; kind: "erased" | "swept" | "no-data"; id: number; row: number; col: number }
+interface Violation { frame: number; kind: "erased" | "swept" | "no-data" | "bad-format"; id: number; row: number; col: number }
 
 /**
  * Plays `output` on a terminal that behaves like Orca's (read in its renderer, `addon-image-CObGlVRp.js`, Orca 1.4.224):
  * 1. `_handleDelete`: `case "a": case "A": … deleteAll()` — `a=d` with `d=a` or `d=A` deletes the images' data and their placements; `d=i`/`d=I` deletes one image's.
  * 2. `_handlePlacement`: `a=p` looks the data up (`getImage(id)`); with none it answers `ENOENT:image not found` (silent with `q=2`) and draws nothing.
  * 3. `addImage`: when text covers every cell of a placed image (`tileCount < 1`) the next `addImage` of any image sweeps it and `onImageDeleted` deletes its data; only the image being placed is spared.
+ * 4. `_createBitmap`: `e.mime!=="image/png"` throws a `RangeError`: data sent with `f=100` that do not start with a PNG's signature (`89 50 4E 47`, `iVBORw0KGgo` in base64) draw nothing, and say nothing.
  * Besides, a character (or the erase of a line) over a cell of an image erases that piece. At each end of a synchronized frame (`ESC[?2026l`) it notes the violations: an image placed but erased, one swept and not placed
  * again, and (as they happen) a placement with no data.
  */
@@ -55,7 +57,7 @@ function emulate(output: string) {
   const violations: Violation[] = [];
   const written: { frame: number; row: number; col: number; id: number }[] = [];
   const frameBytes: number[] = [];
-  let pending: { action: string; id: number; controls: Map<string, string> } | undefined;
+  let pending: { action: string; id: number; controls: Map<string, string>; payload: string } | undefined;
   let row = 0; let col = 0; let saved = { row: 0, col: 0 }; let frame = 0; let placements = 0; let frameStart = 0;
   const cover = (r: number, from: number, to: number, record: boolean) => {
     for (const placed of live.values()) {
@@ -106,15 +108,23 @@ function emulate(output: string) {
         const body = output.slice(i + 3, end);
         const controls = new Map(body.split(";")[0]!.split(",").map(item => [item.split("=")[0]!, item.split("=")[1] ?? ""] as const));
         const more = controls.get("m") === "1";
+        const payload = body.includes(";") ? body.slice(body.indexOf(";") + 1) : "";
+        // Rule 4 (`_createBitmap`): a transmission with `f=100` whose data do not start with a PNG's signature is refused (it throws a `RangeError`) and nothing is drawn.
+        const complete = (action: string, id: number, first: Map<string, string>, data64: string) => {
+          if (first.get("f") === "100" && !data64.startsWith("iVBORw0KGgo")) { violations.push({ frame, kind: "bad-format", id, row, col }); return; }
+          data.add(id);
+          if (action === "T") place(id, first);
+        };
         if (pending && !controls.has("a")) {
           // A later chunk of a transmission in pieces: the last one (`m=0`) completes it.
-          if (!more) { data.add(pending.id); if (pending.action === "T") place(pending.id, pending.controls); pending = undefined; }
+          pending.payload += payload;
+          if (!more) { complete(pending.action, pending.id, pending.controls, pending.payload); pending = undefined; }
         } else {
           const action = controls.get("a");
           const id = Number(controls.get("i") ?? 0);
           if (action === "t" || action === "T") {
-            if (more) pending = { action, id, controls };
-            else { data.add(id); if (action === "T") place(id, controls); }
+            if (more) pending = { action, id, controls, payload };
+            else complete(action, id, controls, payload);
           } else if (action === "p") place(id, controls);
           else if (action === "d") {
             const mode = controls.get("d");
@@ -165,7 +175,7 @@ const filler = (lines: number) => Array.from({ length: lines }, (_, i) => `líne
 
 test("el modelo de Orca: escribir encima borra, d=a borra los datos, a=p sin datos no dibuja y una imagen tapada por completo se barre", () => {
   const frame = (body: string) => `\x1b[?2026h${body}\x1b[?2026l`;
-  const send = (id: number, c = 10, r = 3) => `\x1b_Ga=T,f=100,q=2,C=1,c=${c},r=${r},i=${id};AAAA\x1b\\`;
+  const send = (id: number, c = 10, r = 3) => `\x1b_Ga=T,f=100,q=2,C=1,c=${c},r=${r},i=${id};iVBORw0KGgoAAAA\x1b\\`;
   const place = (id: number, c = 10, r = 3) => `\x1b_Ga=p,q=2,C=1,c=${c},r=${r},i=${id}\x1b\\`;
   const erased = (output: string) => emulate(output).violations.filter(violation => violation.kind === "erased");
   // Escribir sobre la imagen la borra; colocarla después la deja entera.
@@ -183,6 +193,13 @@ test("el modelo de Orca: escribir encima borra, d=a borra los datos, a=p sin dat
   const cover = (row: number) => `\x1b[${row};1H${" ".repeat(10)}`;
   const swept = emulate(frame(`\x1b[1;1H${send(1)}\x1b[5;1H${send(2)}`) + frame(`${cover(5)}${cover(6)}${cover(7)}\x1b[1;1H${place(1)}`));
   expect(swept.violations.map(violation => violation.kind)).toContain("swept");
+  // Regla 4: f=100 con datos que no son un PNG (un JPEG empieza con /9j/, ffd8) no se dibuja, ni lo avisa.
+  const jpeg = emulate(frame(`\x1b[2;3H\x1b_Ga=T,f=100,q=2,C=1,c=10,r=3,i=5;/9j/4AAQSkZJRg\x1b\\`));
+  expect(jpeg.violations.map(violation => violation.kind)).toEqual(["bad-format"]);
+  expect(jpeg.live.size).toBe(0);
+  // También en trozos: la firma se mira en los datos completos.
+  expect(emulate(frame(`\x1b[2;3H\x1b_Ga=T,f=100,q=2,C=1,c=10,r=3,i=5,m=1;iVBORw0KGgo\x1b\\\x1b_Gm=0;AAAA\x1b\\`)).violations).toEqual([]);
+  expect(emulate(frame(`\x1b[2;3H\x1b_Ga=T,f=100,q=2,C=1,c=10,r=3,i=5,m=1;/9j/4AAQ\x1b\\\x1b_Gm=0;AAAA\x1b\\`)).violations.map(violation => violation.kind)).toEqual(["bad-format"]);
   // Y mandando los datos de la segunda en el mismo cuadro, después, las dos quedan.
   const both = emulate(frame(`\x1b[1;1H${send(1)}\x1b[5;1H${send(2)}`) + frame(`${cover(5)}${cover(6)}${cover(7)}\x1b[1;1H${send(1)}\x1b[5;1H${send(2)}`));
   expect(both.violations).toEqual([]);
@@ -341,6 +358,119 @@ test("U2-r5: costo de un cuadro de desplazamiento con 4 miniaturas visibles (min
   const heaviest = Math.max(...result.frameBytes);
   console.log(`U2-r5 bytes por cuadro con 4 miniaturas: máximo ${heaviest}, cuadros ${JSON.stringify(result.frameBytes.slice(-6))}`);
   expect(heaviest).toBeLessThan(650_000);
+  s.stop();
+});
+
+// ── The format of what is sent (U2-r6) ─────────────────────────────────────────────────────
+
+/** A test that reduces real screenshots with Photon: slower than the default 5 s on a slow machine (windows-latest). */
+const slowTest = (name: string, body: () => Promise<void>) => test(name, body, { timeout: 30_000 });
+
+/** Waits until the emulated screen has placed at least `images` different images, and gives what it shows. */
+async function untilShown(s: Awaited<ReturnType<typeof scene>>, images: number) {
+  const end = Date.now() + 20_000;
+  while (new Set([...emulate(s.all()).live.values()].map(placed => placed.id)).size < images && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 40));
+  await s.settle();
+  return emulate(s.all());
+}
+/** Every transmission with `f=100` in `output` carries a PNG: its data, joined, start with the signature (what kitty's protocol asks, and Orca refuses to draw without a word). */
+function transmissions(output: string) {
+  const starts = [...output.matchAll(/\x1b_Ga=[Tt],[^;\x1b]*;([^\x1b]*)\x1b\\/g)];
+  return starts.map(match => match[1]!);
+}
+
+slowTest("U2-r6: una captura grande (más de 140 000 en base64 al reducirla) se manda como PNG de verdad, no como JPEG con f=100", async () => {
+  const path = file("grande-real.png", realPng(1683, 1047));
+  const s = await scene(container => container.addChild(new UserBubble(`mira ${path}`, { locale: "es", at: null })));
+  const result = await untilShown(s, 1);
+  expect(result.live.size, report(result)).toBeGreaterThan(0);
+  expect(result.violations.filter(violation => violation.kind === "bad-format"), report(result)).toEqual([]);
+  expect(result.violations, report(result)).toEqual([]);
+  for (const data of transmissions(s.all())) expect(data.startsWith("iVBORw0KGgo")).toBe(true);
+  expect(transmissions(s.all()).length).toBeGreaterThan(0);
+  s.stop();
+});
+
+slowTest("U2-r6: dos capturas en un mensaje se ven las dos, en una sola imagen PNG", async () => {
+  const paths = [1, 2].map(n => file(`par-${n}.png`, screenshotPng(1683, 1047, n)));
+  const s = await scene(container => container.addChild(new UserBubble(`Que diferencia vez? ${paths.join(" ")}`, { locale: "es", at: null })));
+  const result = await untilShown(s, 1);
+  expect(result.live.size, report(result)).toBe(1); // una sola imagen kitty: la tira con las dos miniaturas
+  expect(result.violations, report(result)).toEqual([]);
+  for (const data of transmissions(s.all())) expect(data.startsWith("iVBORw0KGgo")).toBe(true);
+  s.stop();
+});
+
+slowTest("U2-r6: cuatro capturas en un mensaje van en una tira PNG, cada línea con una sola imagen kitty, y la tira pesa menos de 600 KB por cuadro", async () => {
+  const paths = [1, 2, 3, 4].map(n => file(`cuatro-${n}.png`, screenshotPng(1683, 1047, n)));
+  // Una terminal ancha: con la barra lateral el chat mide ~36 columnas menos, y en una de 120 caben 3 por renglón (otra prueba mira las ventanas angostas).
+  const s = await scene(container => container.addChild(new UserBubble(`mira ${paths.join(" ")}`, { locale: "es", at: null })), { rows: 60, columns: 160 });
+  const result = await untilShown(s, 1);
+  expect(result.live.size, report(result)).toBe(1);
+  expect(result.violations, report(result)).toEqual([]);
+  for (const data of transmissions(s.all())) expect(data.startsWith("iVBORw0KGgo")).toBe(true);
+  // Cada línea que escribe la pantalla lleva a lo más una imagen kitty (pi-tui solo trata la primera de cada línea).
+  for (const line of s.all().split(/\x1b\[\d+;1H/)) expect((line.match(/\x1b_Ga=T,/g) ?? []).length).toBeLessThanOrEqual(1);
+  // Cuadros de desplazamiento con la tira visible.
+  for (const top of [0, 2, 0, 3]) { s.scroll.scrollTo(top); s.tui.requestRender(); await s.settle(); }
+  const final = emulate(s.all());
+  expect(final.violations, report(final)).toEqual([]);
+  const heaviest = Math.max(...final.frameBytes);
+  console.log(`U2-r6 bytes por cuadro con la tira de 4 capturas de 1683×1047: máximo ${heaviest}, cuadros ${JSON.stringify(final.frameBytes.slice(-6))}`);
+  expect(heaviest).toBeLessThan(600_000);
+  s.stop();
+});
+
+slowTest("U2-r6: un .jpg pegado, aunque pese poco, se manda como PNG", async () => {
+  const { resizeImage } = await import("@earendil-works/pi-coding-agent");
+  // Un JPEG ligero de verdad: `resizeImage` lo prefiere al PNG cuando el tope es chico.
+  const made = await resizeImage(realPng(800, 500, 3), "image/png", { maxWidth: 800, maxHeight: 500, maxBytes: 80_000 });
+  expect(made?.mimeType).toBe("image/jpeg");
+  const jpeg = Buffer.from(made!.data, "base64");
+  expect(jpeg.length).toBeLessThan(80_000);
+  const path = file("pegada.jpg", jpeg);
+  const s = await scene(container => container.addChild(new UserBubble(`mira ${path}`, { locale: "es", at: null })));
+  const result = await untilShown(s, 1);
+  expect(result.live.size, report(result)).toBeGreaterThan(0);
+  expect(result.violations, report(result)).toEqual([]);
+  for (const data of transmissions(s.all())) expect(data.startsWith("iVBORw0KGgo")).toBe(true);
+  s.stop();
+});
+
+slowTest("U2-r6: la tarjeta Read manda PNG, venga el bloque como PNG pesado o como JPEG ligero", async () => {
+  const { resizeImage } = await import("@earendil-works/pi-coding-agent");
+  const heavy = screenshotPng(1683, 1047, 9).toString("base64");
+  const light = (await resizeImage(realPng(600, 400, 5), "image/png", { maxWidth: 600, maxHeight: 400, maxBytes: 60_000 }))!;
+  expect(light.mimeType).toBe("image/jpeg");
+  for (const block of [{ media_type: "image/jpeg", data: light.data }, { media_type: "image/png", data: heavy }]) {
+    const images = toolResultImages([{ type: "image", source: { type: "base64", ...block } }], getCatalog("es"));
+    const s = await scene(container => {
+      container.addChild(new UserBubble("relleno", { locale: "es", at: null }));
+      const card = new ActivityCard("Read · captura", "Completado · 0s", "imagen");
+      card.setImages(new ImageStrip(images, { locale: "es", indent: 6 }));
+      container.addChild(card);
+    });
+    const result = await untilShown(s, 1);
+    expect(result.live.size, `${block.media_type}: ${report(result)}`).toBeGreaterThan(0);
+    expect(result.violations, `${block.media_type}: ${report(result)}`).toEqual([]);
+    for (const data of transmissions(s.all())) expect(data.startsWith("iVBORw0KGgo")).toBe(true);
+    s.stop();
+  }
+});
+
+slowTest("U2-r6: medición al salir la imagen por arriba y por abajo del chat con la caja de 7 filas (no fija el comportamiento: lo anota)", async () => {
+  const path = file("salida.png", screenshotPng(900, 560, 4));
+  const s = await scene(container => { container.addChild(new UserBubble(filler(25), { locale: "es", at: null })); container.addChild(new UserBubble(`mira ${path}`, { locale: "es", at: null })); container.addChild(new UserBubble(filler(90), { locale: "es", at: null })); });
+  await untilShown(s, 1);
+  const seen: string[] = [];
+  for (let top = 8; top <= 44; top++) {
+    s.scroll.scrollTo(top); s.tui.requestRender(); await s.settle();
+    const live = [...emulate(s.all()).live.values()];
+    seen.push(`${top}:${live.length ? live.map(placed => `${placed.rows}@${placed.row}`).join("+") : "-"}`);
+  }
+  const final = emulate(s.all());
+  expect(final.violations, report(final)).toEqual([]);
+  console.log(`U2-r6 imagen (filas visibles@fila de pantalla) según el desplazamiento: ${seen.join(" ")}`);
   s.stop();
 });
 
