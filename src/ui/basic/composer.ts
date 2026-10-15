@@ -3,6 +3,7 @@ import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { accent as cyan, background, danger, elevated, faint, fit, magenta, mix, muted, palette, paint, planning, purple, success, surface, warning } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
+import { pasteImageKey } from "../../infrastructure/clipboard.ts";
 import type { NativeCollaborationMode, NativeWorkMode } from "../../engines/types.ts";
 
 /**
@@ -333,9 +334,12 @@ export class ForgeComposer extends Editor {
     if (mention) return this.fileSuggestions(mention[1]!);
     return [];
   }
+  /** Called when the key that pastes the clipboard's image is pressed (see `pasteImageKey`); the chat screens set it (see `attachImagePaste`). Without it the key is the editor's own. */
+  onPasteImage?: () => void;
   handleInput(data: string): void {
     if (this.textPrompt) { this.handleTextPromptInput(data); return; }
     if (this.picker?.searchable) { this.handleSearchInput(data); return; }
+    if (this.onPasteImage && !this.picker && matchesKey(data, pasteImageKey())) { this.onPasteImage(); return; }
     if (this.picker && (data.startsWith("/") || this.getText().startsWith("/")) && !matchesKey(data, "escape")) {
       super.handleInput(data);
       this.repaint();

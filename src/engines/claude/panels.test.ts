@@ -153,7 +153,7 @@ const rows = [
  * and only the shortcuts Shell itself handles (Enter, Shift+Enter, Shift+Tab, Tab and Esc in the menu, Ctrl+C and Ctrl+D), plus where Shell's own commands are.
  */
 test("the /help panel lists the menu's commands and only the shortcuts Shell respects, word for word in English and Spanish", () => {
-  expect(claudeHelpLines(rows, "en")).toEqual([
+  expect(claudeHelpLines(rows, "en", undefined, "darwin")).toEqual([
     "Claude Code help",
     "Commands (type / to open the menu):",
     "/model    Select model",
@@ -163,12 +163,13 @@ test("the /help panel lists the menu's commands and only the shortcuts Shell res
     "Shortcuts:",
     "Enter          Send the message",
     "Shift+Enter    New line",
+    "Ctrl+V         Paste the clipboard's image (writes its path in the box)",
     "Shift+Tab      Cycle permission modes",
     "Tab            Accept the highlighted command in the / menu",
     "Esc            Close a menu (on a permission question it answers «No»)",
     "Ctrl+C, Ctrl+D Leave Shell (asks first while work is in progress; with a permission question open, answer it first)",
   ]);
-  expect(claudeHelpLines(rows, "es")).toEqual([
+  expect(claudeHelpLines(rows, "es", undefined, "darwin")).toEqual([
     "Ayuda de Claude Code",
     "Comandos (escribe / para abrir el menú):",
     "/model    Select model",
@@ -178,6 +179,7 @@ test("the /help panel lists the menu's commands and only the shortcuts Shell res
     "Atajos:",
     "Enter          Enviar el mensaje",
     "Shift+Enter    Nueva línea",
+    "Ctrl+V         Pegar la imagen del portapapeles (escribe su ruta en la caja)",
     "Shift+Tab      Cambiar el modo de permisos",
     "Tab            Aceptar el comando marcado en el menú /",
     "Esc            Cerrar un menú (en una pregunta de permiso responde «No»)",
@@ -187,8 +189,13 @@ test("the /help panel lists the menu's commands and only the shortcuts Shell res
 
 /** No shortcut of Claude Code that Shell does not handle is listed (Ctrl+R, Ctrl+O, Ctrl+B, Option+P…): a list that promises keys that do nothing is worse than a short one. */
 test("the /help panel does not promise shortcuts Shell does not have", () => {
-  const text = claudeHelpLines(rows, "en").join("\n");
-  for (const key of ["Ctrl+R", "Ctrl+O", "Ctrl+B", "Ctrl+T", "Ctrl+L", "Option+", "Alt+", "Ctrl+G", "Ctrl+V"]) expect(text, key).not.toContain(key);
+  const text = claudeHelpLines(rows, "en", undefined, "darwin").join("\n");
+  for (const key of ["Ctrl+R", "Ctrl+O", "Ctrl+B", "Ctrl+T", "Ctrl+L", "Option+", "Alt+", "Ctrl+G"]) expect(text, key).not.toContain(key);
+  // Ctrl+V (Alt+V on Windows, where Windows Terminal keeps Ctrl+V to paste text) pastes the clipboard's image since U2-r7, and is listed with the key of each system only.
+  expect(text).toContain("Ctrl+V");
+  const windows = claudeHelpLines(rows, "en", undefined, "win32").join("\n");
+  expect(windows).toContain("Alt+V          Paste the clipboard's image");
+  expect(windows).not.toContain("Ctrl+V");
 });
 
 /** A command list with control characters in a description (a skill's own text) is shown clean. */

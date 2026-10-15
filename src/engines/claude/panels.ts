@@ -1,6 +1,7 @@
 import { stripVTControlCharacters } from "node:util";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
+import { pasteImageKeyLabel } from "../../infrastructure/clipboard.ts";
 import { memorySourceLine } from "../memory-source.ts";
 
 /** Text that comes from outside (the SDK, an account, a skill) shown as plain text: escape sequences and control characters cannot move the cursor or repaint the screen. */
@@ -131,11 +132,11 @@ function mcpGroupLines(servers: { name: string; status: string }[], locale: Loca
  * Option+P…) are not, because a key that does nothing here would be a promise Shell cannot keep. One line says where Shell's own `/f614:` commands are.
  * With `width` (the columns the text has) a description that does not fit continues under its own column, in both lists (see `columns`); without it every row is one line.
  */
-export function claudeHelpLines(commands: { value: string; label: string }[], locale: Locale = "en", width?: number): string[] {
+export function claudeHelpLines(commands: { value: string; label: string }[], locale: Locale = "en", width?: number, platform: NodeJS.Platform = process.platform): string[] {
   const t = getCatalog(locale).claudePanels;
   const column = Math.max(0, ...commands.map(command => clean(command.value).length)) + 2;
   const keys: [string, string][] = [
-    ["Enter", t.keySend], ["Shift+Enter", t.keyNewLine], ["Shift+Tab", t.keyCycleModes], ["Tab", t.keyAcceptCommand], ["Esc", t.keyCloseMenu], ["Ctrl+C, Ctrl+D", t.keyLeave],
+    ["Enter", t.keySend], ["Shift+Enter", t.keyNewLine], [pasteImageKeyLabel(platform), t.keyPasteImage], ["Shift+Tab", t.keyCycleModes], ["Tab", t.keyAcceptCommand], ["Esc", t.keyCloseMenu], ["Ctrl+C, Ctrl+D", t.keyLeave],
   ];
   const keyWidth = Math.max(...keys.map(([key]) => key.length)) + 1;
   return [

@@ -388,7 +388,7 @@ export interface Catalog {
     mcpNone: string; mcpGroupConnected: string; mcpGroupConnecting: string; mcpGroupNeedsSignIn: string; mcpGroupFailed: string; mcpGroupDisabled: string; mcpGroupOther: string;
     statusAfterFirstMessage: string;
     helpTitle: string; helpCommands: string; helpShellCommands: string; helpShortcuts: string;
-    keySend: string; keyNewLine: string; keyCycleModes: string; keyAcceptCommand: string; keyCloseMenu: string; keyLeave: string;
+    keySend: string; keyNewLine: string; keyCycleModes: string; keyAcceptCommand: string; keyCloseMenu: string; keyLeave: string; keyPasteImage: string;
   };
   telemetry: {
     notReported: string;
@@ -431,6 +431,11 @@ export interface Catalog {
     viewedTitle: string;
     /** What a tool card says for an image block of a result («PNG image», `format` in capitals), before the size when it is known. */
     kind: (params: { format: string }) => string;
+    /** The notices of pasting an image from the clipboard (Ctrl+V, Alt+V on Windows): nothing there, the program that reads the clipboard is missing (`tools`, what to install or have), too big, or it failed. */
+    pasteEmpty: string;
+    pasteMissingTool: (params: { tools: string }) => string;
+    pasteTooBig: string;
+    pasteFailed: string;
   };
   /** The one short line a tool card shows for a result that is JSON (see `summarizeToolText`). */
   toolSummary: {
