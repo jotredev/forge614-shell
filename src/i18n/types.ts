@@ -436,6 +436,7 @@ export interface Catalog {
   toolSummary: {
     results: (params: { count: number; titles: string }) => string;
     session: (params: { id: string }) => string;
+    toolsLoaded: (params: { names: string }) => string;
   };
   /** The grey action under each finished answer of the assistant, and what it says for a moment after copying. */
   chatCopy: {

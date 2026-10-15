@@ -413,6 +413,7 @@ The selected engine's project settings and permissions apply. This is not a sand
   toolSummary: {
     results: ({ count, titles }) => `${count} ${count === 1 ? "result" : "results"}${titles ? `: ${titles}` : ""}`,
     session: ({ id }) => `session ${id}`,
+    toolsLoaded: ({ names }) => `tools loaded: ${names}`,
   },
   chatRoles: {
     human: "Human",

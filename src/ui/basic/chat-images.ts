@@ -1,6 +1,6 @@
 import { closeSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { basename } from "node:path";
-import { Image, getCapabilities, getImageDimensions, setCapabilities } from "@earendil-works/pi-tui";
+import { Image, getCapabilities, getCellDimensions, getImageDimensions, setCapabilities } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { ChatLinks } from "./chat-links.ts";
 import { setPlacingLast } from "./image-placement.ts";
@@ -15,6 +15,10 @@ export const MAX_THUMBNAILS = 4;
 /** The largest a thumbnail is drawn, in terminal columns and rows. */
 export const THUMBNAIL_COLUMNS = 40;
 export const THUMBNAIL_ROWS = 14;
+/** The most a thumbnail's data weigh, as base64 (what `resizeImage`'s `maxBytes` counts): in Orca every placement carries them, so four thumbnails in view cost about 4 × this in each frame. */
+export const THUMBNAIL_MAX_BYTES = 140_000;
+/** The heaviest original that is drawn as it is when it cannot be reduced (Photon did not load); a heavier one is shown only as its gray line. */
+export const THUMBNAIL_FALLBACK_BYTES = 256 * 1024;
 
 /** What Shell knows about one image it may draw: where it came from (`path`, for the link), its pixels as base64 (`base64`, absent when it was not read), and what the gray line says (`widthPx`, `heightPx`, `bytes`). */
 export interface ChatImage {
@@ -122,6 +126,48 @@ export const imagesInText = (text: string): ChatImage[] => findImagePaths(text).
 
 // ── Drawing them ───────────────────────────────────────────────────────────────────────────
 
+/** What is drawn of an image: its data (base64), the type and, when they are known, the size in pixels the data really have. */
+interface Thumbnail { base64: string; mime: string; widthPx?: number; heightPx?: number }
+/** The state of each image's thumbnail: ready, `pending` while it is being reduced (the gray line is drawn meanwhile) or `none` when there is nothing to draw. */
+const thumbnails = new WeakMap<ChatImage, Thumbnail | "pending" | "none">();
+let thumbnailReady: (() => void) | undefined;
+
+/** Sets what is done when a thumbnail that was being reduced is ready (the screen repaints). One per running screen. */
+export function onThumbnailReady(listener: (() => void) | undefined): void { thumbnailReady = listener; }
+
+/**
+ * The copy of an image that is drawn. One that weighs `THUMBNAIL_MAX_BYTES` or less is drawn as it is, at once. A heavier one is reduced with Photon (`resizeImage` of pi-coding-agent, in a worker thread, which is
+ * why it is not waited for: `readImage` and the screen's rendering are synchronous and writing in the box must never stop): until it is ready the gray line is drawn, and then the screen is asked to repaint. The size
+ * is that of the thumbnail's box (`THUMBNAIL_COLUMNS` × `THUMBNAIL_ROWS` cells) in pixels, twice over for Retina screens, and the data stay under `THUMBNAIL_MAX_BYTES`. If Photon does not load or cannot do it, an
+ * original of `THUMBNAIL_FALLBACK_BYTES` or less is drawn as it is and a heavier one only as its gray line. The original's data are let go once the reduction is ready.
+ */
+function thumbnailOf(image: ChatImage): Thumbnail | "pending" | "none" {
+  const known = thumbnails.get(image);
+  if (known) return known;
+  if (!image.base64) return "none";
+  const original: Thumbnail = { base64: image.base64, mime: image.mime, ...(image.widthPx && image.heightPx ? { widthPx: image.widthPx, heightPx: image.heightPx } : {}) };
+  if (image.base64.length <= THUMBNAIL_MAX_BYTES) { thumbnails.set(image, original); return original; }
+  thumbnails.set(image, "pending");
+  void reduce(original).then(result => {
+    thumbnails.set(image, result);
+    if (result !== "none" && result !== original) delete image.base64;
+    thumbnailReady?.();
+  });
+  return "pending";
+}
+
+async function reduce(original: Thumbnail): Promise<Thumbnail | "none"> {
+  try {
+    const { resizeImage } = await import("@earendil-works/pi-coding-agent");
+    const cell = getCellDimensions();
+    const resized = await resizeImage(Buffer.from(original.base64, "base64"), original.mime, {
+      maxWidth: THUMBNAIL_COLUMNS * cell.widthPx * 2, maxHeight: THUMBNAIL_ROWS * cell.heightPx * 2, maxBytes: THUMBNAIL_MAX_BYTES,
+    });
+    if (resized) return { base64: resized.data, mime: resized.mimeType, widthPx: resized.width, heightPx: resized.height };
+  } catch { /* Photon did not load: the original or nothing, below. */ }
+  return (original.base64.length * 3) / 4 <= THUMBNAIL_FALLBACK_BYTES ? original : "none";
+}
+
 /** `266 KB`, `1.4 MB`: a file's size for the gray line. */
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -154,11 +200,12 @@ export class ImageStrip implements Component {
     const rows: string[] = [];
     for (const image of this.images.slice(0, MAX_THUMBNAILS)) {
       rows.push("");
-      if (!getCapabilities().images || !image.base64) { rows.push(`${margin}${imageLine(image, this.options.links)}`); continue; }
+      const drawn = getCapabilities().images ? thumbnailOf(image) : "none";
+      if (drawn === "none" || drawn === "pending") { rows.push(`${margin}${imageLine(image, this.options.links)}`); continue; }
       let thumbnail = this.thumbnails.get(image);
       if (!thumbnail) {
-        thumbnail = new Image(image.base64, image.mime, { fallbackColor: muted }, { maxWidthCells: THUMBNAIL_COLUMNS, maxHeightCells: THUMBNAIL_ROWS, filename: image.name },
-          image.widthPx && image.heightPx ? { widthPx: image.widthPx, heightPx: image.heightPx } : undefined);
+        thumbnail = new Image(drawn.base64, drawn.mime, { fallbackColor: muted }, { maxWidthCells: THUMBNAIL_COLUMNS, maxHeightCells: THUMBNAIL_ROWS, filename: image.name },
+          drawn.widthPx && drawn.heightPx ? { widthPx: drawn.widthPx, heightPx: drawn.heightPx } : undefined);
         this.thumbnails.set(image, thumbnail);
       }
       const lines = thumbnail.render(Math.max(1, width - margin.length));

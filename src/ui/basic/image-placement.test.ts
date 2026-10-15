@@ -16,12 +16,12 @@ import { IndependentScrollView, chatScreen, workspaceLayout } from "./workspace.
 import { getCatalog } from "../../i18n/index.ts";
 
 /**
- * U2-r4. In Orca (xterm.js and its image addon) any character written on a cell an image covers erases that piece of the image — spaces and the erase of a line (`ESC[2K`) included. pi-tui draws the image and then
- * writes the rows under it (the whole screen on a redraw, only the rows that changed otherwise), so the image was gone in the same frame. These tests play the bytes the screen writes on a small model of such a terminal
- * and ask the one thing that matters: at the end of every frame, is every image that was placed still whole?
+ * U2-r4 and U2-r5. In Orca (xterm.js and its image addon) an image lives only while it is shown: any character written on a cell it covers erases that piece (spaces and the erase of a line, `ESC[2K`, included), its data are
+ * deleted with any `a=d` (even `d=a`, «keep the data»), and a placement with no data draws nothing. pi-tui draws the image and then writes the rows under it, and sends only `a=p` once an image is uploaded. These tests play
+ * the bytes the screen writes on a small model of such a terminal and ask the one thing that matters: at the end of every frame, is every image that was placed still whole?
  */
 
-/** A PNG with only the part pi-tui reads (signature and size): enough to be drawn as a thumbnail. */
+/** A PNG with only the part pi-tui reads (signature and size): enough to be drawn as a thumbnail. `extra` bytes of filler make it as heavy as a real capture. */
 const png = (width: number, height: number, extra = 0) => {
   const bytes = Buffer.alloc(33 + extra, 7);
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes, 0);
@@ -37,23 +37,43 @@ afterEach(() => { enableTerminalImages({}); resetCapabilitiesCache(); });
 
 const file = (name: string, content: Buffer) => { const path = join(dir, name); writeFileSync(path, content); return path; };
 
-interface Placed { id: number; row: number; col: number; columns: number; rows: number; erased: boolean }
-interface Violation { frame: number; id: number; row: number; col: number }
+interface Placed { id: number; row: number; col: number; columns: number; rows: number; covered: Set<string> }
+interface Violation { frame: number; kind: "erased" | "swept" | "no-data"; id: number; row: number; col: number }
 
 /**
- * Plays `output` on a terminal that behaves like xterm.js with its image addon: a kitty placement (`a=T` or `a=p`) puts an image of `c` × `r` cells at the cursor; any character written on one of those cells, or the
- * erase of a line or of the screen over them, erases that piece; `a=d` takes images away. At each end of a synchronized frame (`ESC[?2026l`) it notes the images that are placed but erased: those are the violations.
+ * Plays `output` on a terminal that behaves like Orca's (read in its renderer, `addon-image-CObGlVRp.js`, Orca 1.4.224):
+ * 1. `_handleDelete`: `case "a": case "A": … deleteAll()` — `a=d` with `d=a` or `d=A` deletes the images' data and their placements; `d=i`/`d=I` deletes one image's.
+ * 2. `_handlePlacement`: `a=p` looks the data up (`getImage(id)`); with none it answers `ENOENT:image not found` (silent with `q=2`) and draws nothing.
+ * 3. `addImage`: when text covers every cell of a placed image (`tileCount < 1`) the next `addImage` of any image sweeps it and `onImageDeleted` deletes its data; only the image being placed is spared.
+ * Besides, a character (or the erase of a line) over a cell of an image erases that piece. At each end of a synchronized frame (`ESC[?2026l`) it notes the violations: an image placed but erased, one swept and not placed
+ * again, and (as they happen) a placement with no data.
  */
 function emulate(output: string) {
   const live = new Map<string, Placed>();
+  const data = new Set<number>();
+  const swept = new Set<string>();
   const violations: Violation[] = [];
-  const written: { frame: number; row: number; col: number; id: number; afterPlacement: boolean }[] = [];
-  let row = 0; let col = 0; let saved = { row: 0, col: 0 }; let frame = 0; let placements = 0;
-  const hit = (r: number, from: number, to: number, why?: string) => {
-    for (const placed of live.values()) if (r >= placed.row && r < placed.row + placed.rows && to > placed.col && from < placed.col + placed.columns) {
-      if (why && !placed.erased) written.push({ frame, row: r, col: from, id: placed.id, afterPlacement: true });
-      placed.erased = true;
+  const written: { frame: number; row: number; col: number; id: number }[] = [];
+  const frameBytes: number[] = [];
+  let pending: { action: string; id: number; controls: Map<string, string> } | undefined;
+  let row = 0; let col = 0; let saved = { row: 0, col: 0 }; let frame = 0; let placements = 0; let frameStart = 0;
+  const cover = (r: number, from: number, to: number, record: boolean) => {
+    for (const placed of live.values()) {
+      if (r < placed.row || r >= placed.row + placed.rows) continue;
+      for (let c = Math.max(from, placed.col); c < Math.min(to, placed.col + placed.columns); c++) {
+        if (record && placed.covered.size === 0) written.push({ frame, row: r, col: c, id: placed.id });
+        placed.covered.add(`${r},${c}`);
+      }
     }
+  };
+  const place = (id: number, controls: Map<string, string>) => {
+    if (!data.has(id)) { violations.push({ frame, kind: "no-data", id, row, col }); return; }
+    // Rule 3: any other image whose every cell is covered is swept, and its data go with it.
+    for (const [key, other] of [...live]) if (other.id !== id && other.covered.size >= other.columns * other.rows) { live.delete(key); data.delete(other.id); swept.add(key); }
+    placements++;
+    const key = `${id}:${row}:${col}`;
+    swept.delete(key);
+    live.set(key, { id, row, col, columns: Number(controls.get("c") ?? 1), rows: Number(controls.get("r") ?? 1), covered: new Set() });
   };
   let i = 0;
   while (i < output.length) {
@@ -66,9 +86,14 @@ function emulate(output: string) {
         const [whole, params, , final] = match;
         const numbers = params!.split(";").map(part => Number(part) || 0);
         if (final === "H") { row = Math.max(1, numbers[0] || 1) - 1; col = Math.max(1, numbers[1] || 1) - 1; }
-        else if (final === "K") { if (numbers[0] === 2) hit(row, 0, 1e6, "erase"); else hit(row, col, 1e6, "erase"); }
-        else if (final === "J" && numbers[0] === 2) for (const placed of live.values()) placed.erased = true;
-        else if (final === "l" && params === "?2026") { frame++; for (const placed of live.values()) if (placed.erased) violations.push({ frame, id: placed.id, row: placed.row, col: placed.col }); }
+        else if (final === "K") { if (numbers[0] === 2) cover(row, 0, 1e6, true); else cover(row, col, 1e6, true); }
+        else if (final === "J" && numbers[0] === 2) for (let r = 0; r < 500; r++) cover(r, 0, 1e6, false);
+        else if (final === "l" && params === "?2026") {
+          frame++;
+          for (const placed of live.values()) if (placed.covered.size > 0) violations.push({ frame, kind: "erased", id: placed.id, row: placed.row, col: placed.col });
+          for (const key of swept) { const [id, r, c] = key.split(":").map(Number); violations.push({ frame, kind: "swept", id: id!, row: r!, col: c! }); }
+          frameBytes.push(i + whole!.length - frameStart); frameStart = i + whole!.length;
+        }
         else if (final === "C") col += numbers[0] || 1;
         else if (final === "D") col = Math.max(0, col - (numbers[0] || 1));
         else if (final === "A") row = Math.max(0, row - (numbers[0] || 1));
@@ -80,16 +105,22 @@ function emulate(output: string) {
         const end = output.indexOf("\x1b\\", i + 2);
         const body = output.slice(i + 3, end);
         const controls = new Map(body.split(";")[0]!.split(",").map(item => [item.split("=")[0]!, item.split("=")[1] ?? ""] as const));
-        const action = controls.get("a");
-        const id = Number(controls.get("i") ?? 0);
-        if (action === "T" || action === "p") {
-          placements++;
-          const placed: Placed = { id, row, col, columns: Number(controls.get("c") ?? 1), rows: Number(controls.get("r") ?? 1), erased: false };
-          live.set(`${id}:${row}:${col}`, placed);
-        } else if (action === "d") {
-          const mode = controls.get("d");
-          if (mode === "a" || mode === "A") live.clear();
-          else if (mode === "i" || mode === "I") for (const key of [...live.keys()]) if (live.get(key)!.id === id) live.delete(key);
+        const more = controls.get("m") === "1";
+        if (pending && !controls.has("a")) {
+          // A later chunk of a transmission in pieces: the last one (`m=0`) completes it.
+          if (!more) { data.add(pending.id); if (pending.action === "T") place(pending.id, pending.controls); pending = undefined; }
+        } else {
+          const action = controls.get("a");
+          const id = Number(controls.get("i") ?? 0);
+          if (action === "t" || action === "T") {
+            if (more) pending = { action, id, controls };
+            else { data.add(id); if (action === "T") place(id, controls); }
+          } else if (action === "p") place(id, controls);
+          else if (action === "d") {
+            const mode = controls.get("d");
+            if (mode === "a" || mode === "A") { live.clear(); data.clear(); swept.clear(); }
+            else if (mode === "i" || mode === "I") { for (const key of [...live.keys()]) if (live.get(key)!.id === id) live.delete(key); data.delete(id); }
+          }
         }
         i = end + 2; continue;
       }
@@ -100,23 +131,23 @@ function emulate(output: string) {
     if (ch === "\r" || ch === "\n" || ch === "\x07") { i++; continue; }
     // A run of printable text: each grapheme takes as many cells as it is wide.
     let end = i; while (end < output.length && output[end] !== "\x1b" && output[end] !== "\r" && output[end] !== "\n" && output[end] !== "\x07") end++;
-    for (const { segment } of new Intl.Segmenter().segment(output.slice(i, end))) { const width = Math.max(1, visibleWidth(segment)); hit(row, col, col + width, "text"); col += width; }
+    for (const { segment } of new Intl.Segmenter().segment(output.slice(i, end))) { const width = Math.max(1, visibleWidth(segment)); cover(row, col, col + width, true); col += width; }
     i = end;
   }
-  return { violations, written, placements, frames: frame, live };
+  return { violations, written, placements, frames: frame, live, frameBytes };
 }
 
 /** Draws `children` in the real layout (sidebar, status bar, writing box) as the app does, in Orca (kitty images on, the way `enableTerminalImages` turns them on there). */
-async function scene(children: (container: Container) => void, options: { orca?: boolean; columns?: number; rows?: number } = {}) {
+async function scene(children: (container: Container) => void, options: { columns?: number; rows?: number } = {}) {
   setCapabilities({ images: null, trueColor: true, hyperlinks: false });
-  enableTerminalImages(options.orca === false ? { FORGE614_SHELL_IMAGES: "kitty" } : { TERM_PROGRAM: "Orca", TERM: "xterm-256color" });
+  enableTerminalImages({ TERM_PROGRAM: "Orca", TERM: "xterm-256color" });
   let output = "";
   const terminal = { columns: options.columns ?? 120, rows: options.rows ?? 50, kittyProtocolActive: false, start() {}, stop() {}, async drainInput() {}, write(data: string) { output += data; }, moveBy() {}, hideCursor() {}, showCursor() {}, clearLine() {}, clearFromCursor() {}, clearScreen() {}, setTitle() {}, setProgress() {} };
   const { surface, tui } = chatScreen(terminal as never, new ChatLinks({ cwd: process.cwd() }), undefined, { copySelection: async () => true });
   const transcript = new Container();
   children(transcript);
   const scroll = new IndependentScrollView(transcript, { follow: "none", primary: true, scrollbar: "hidden" });
-  // The sidebar reads this each frame: «Weekly 74%» and the context change as a turn goes on, like the «Trabajando · 40s» counter.
+  // The sidebar reads this each frame: «Weekly 74%» and the context change as a turn goes on.
   const state = { used: 1, percent: 74 };
   const snapshot = () => ({ account: "connected" as const, provider: "Claude Code", model: "claude-opus", reasoning: "High", context: { used: state.used, window: 100 }, usage: [{ label: "Weekly", usedPercent: state.percent }] });
   const { input } = createComposer(tui);
@@ -124,40 +155,73 @@ async function scene(children: (container: Container) => void, options: { orca?:
   tui.setFocus(input); tui.start();
   const settle = () => new Promise(resolve => setTimeout(resolve, 60));
   await settle();
-  return { scroll, tui, state, settle, all: () => output, stop: () => tui.stop({ preserveScreen: true }) };
+  return { scroll, tui, state, composer: input, settle, all: () => output, stop: () => tui.stop({ preserveScreen: true }) };
 }
 
-const report = (result: ReturnType<typeof emulate>) => JSON.stringify({ frames: result.frames, placements: result.placements, violations: result.violations.slice(0, 3), firstWrites: result.written.slice(0, 3) });
+const report = (result: ReturnType<typeof emulate>) => JSON.stringify({ frames: result.frames, placements: result.placements, violations: result.violations.slice(0, 3), firstWrites: result.written.slice(0, 2) });
+const filler = (lines: number) => Array.from({ length: lines }, (_, i) => `línea ${i + 1} de relleno`).join("\n");
 
-test("la terminal modelo borra una imagen cuando se escribe encima, y no cuando se coloca después", () => {
-  const place = "\x1b_Ga=p,q=2,i=5,C=1,c=10,r=3\x1b\\";
+// ── The model itself ───────────────────────────────────────────────────────────────────────
+
+test("el modelo de Orca: escribir encima borra, d=a borra los datos, a=p sin datos no dibuja y una imagen tapada por completo se barre", () => {
   const frame = (body: string) => `\x1b[?2026h${body}\x1b[?2026l`;
-  expect(emulate(frame(`\x1b[2;3H${place}\x1b[3;1H\x1b[2K sidebar`)).violations).toHaveLength(1);
-  expect(emulate(frame(`\x1b[2;3H${place}\x1b[3;5H texto`)).violations).toHaveLength(1);
-  expect(emulate(frame(`\x1b[2;3H${place}\x1b[3;20H texto`)).violations).toHaveLength(0);
-  expect(emulate(frame(`\x1b[3;1H\x1b[2K sidebar\x1b7\x1b[2;3H${place}\x1b8`)).violations).toHaveLength(0);
+  const send = (id: number, c = 10, r = 3) => `\x1b_Ga=T,f=100,q=2,C=1,c=${c},r=${r},i=${id};AAAA\x1b\\`;
+  const place = (id: number, c = 10, r = 3) => `\x1b_Ga=p,q=2,C=1,c=${c},r=${r},i=${id}\x1b\\`;
+  const erased = (output: string) => emulate(output).violations.filter(violation => violation.kind === "erased");
+  // Escribir sobre la imagen la borra; colocarla después la deja entera.
+  expect(erased(frame(`\x1b[2;3H${send(5)}\x1b[3;1H\x1b[2K sidebar`))).toHaveLength(1);
+  expect(erased(frame(`\x1b[2;3H${send(5)}\x1b[3;5H texto`))).toHaveLength(1);
+  expect(erased(frame(`\x1b[2;3H${send(5)}\x1b[3;20H texto`))).toHaveLength(0);
+  expect(emulate(frame(`\x1b[3;1H\x1b[2K sidebar\x1b7\x1b[2;3H${send(5)}\x1b8`)).violations).toHaveLength(0);
+  // Regla 1: d=a (también) borra los datos; una colocación sola, después, no dibuja nada.
+  const gone = emulate(frame(`\x1b[2;3H${send(5)}`) + frame(`\x1b_Ga=d,d=a,q=2\x1b\\\x1b[2;3H${place(5)}`));
+  expect(gone.violations.map(violation => violation.kind)).toEqual(["no-data"]);
+  // Regla 2: sin datos no hay dibujo; con ellos en el mismo cuadro sí.
+  expect(emulate(frame(`\x1b[2;3H${place(9)}`)).violations.map(violation => violation.kind)).toEqual(["no-data"]);
+  expect(emulate(frame(`\x1b_Ga=d,d=a,q=2\x1b\\\x1b[2;3H${send(5)}`)).violations).toEqual([]);
+  // Regla 3: con dos imágenes, si el texto tapa toda la segunda, colocar la primera la barre (y pierde sus datos).
+  const cover = (row: number) => `\x1b[${row};1H${" ".repeat(10)}`;
+  const swept = emulate(frame(`\x1b[1;1H${send(1)}\x1b[5;1H${send(2)}`) + frame(`${cover(5)}${cover(6)}${cover(7)}\x1b[1;1H${place(1)}`));
+  expect(swept.violations.map(violation => violation.kind)).toContain("swept");
+  // Y mandando los datos de la segunda en el mismo cuadro, después, las dos quedan.
+  const both = emulate(frame(`\x1b[1;1H${send(1)}\x1b[5;1H${send(2)}`) + frame(`${cover(5)}${cover(6)}${cover(7)}\x1b[1;1H${send(1)}\x1b[5;1H${send(2)}`));
+  expect(both.violations).toEqual([]);
 });
 
-test("ImagePlacer reescribe un cuadro con los bytes exactos: transmite sin colocar, coloca al final y devuelve el cursor", () => {
+// ── The bytes of ImagePlacer ───────────────────────────────────────────────────────────────
+
+test("ImagePlacer reescribe un cuadro con los bytes exactos: los datos y la colocación van juntos al final, y el cursor se devuelve", () => {
   const begin = "\x1b[?2026h"; const end = "\x1b[?2026l";
   const placer = new ImagePlacer();
+  const chunks = (controls: string) => `\x1b_Ga=T,${controls},m=1;AAAA\x1b\\\x1b_Gm=0;BBBB\x1b\\`;
   // Cuadro completo: la imagen llega como la manda pi-tui (a=T, en dos trozos) tras 2 columnas de margen, y las filas de abajo escriben sobre ella.
-  const first = `${begin}\x1b[1;1H\x1b[2K  \x1b_Ga=T,f=100,q=2,C=1,c=30,r=3,i=77,m=1;AAAA\x1b\\\x1b_Gm=0;BBBB\x1b\\\x1b[2;1H\x1b[2K side\x1b[3;1H\x1b[2K\x1b[5;4H\x1b[?25h${end}`;
+  const first = `${begin}\x1b[1;1H\x1b[2K  ${chunks("f=100,q=2,C=1,c=30,r=3,i=77")}\x1b[2;1H\x1b[2K side\x1b[3;1H\x1b[2K\x1b[5;4H\x1b[?25h${end}`;
   expect(placer.frame(first)).toBe(
-    `${begin}\x1b[1;1H\x1b[2K  \x1b_Ga=t,f=100,q=2,i=77,m=1;AAAA\x1b\\\x1b_Gm=0;BBBB\x1b\\\x1b[2;1H\x1b[2K side\x1b[3;1H\x1b[2K\x1b[5;4H\x1b[?25h`
-    + `\x1b7\x1b[1;3H\x1b_Ga=p,q=2,C=1,c=30,r=3,i=77\x1b\\\x1b8${end}`);
-  // Un cuadro que solo reescribe la fila 2 (la barra lateral): la imagen cubre esa fila, así que se coloca de nuevo, sin datos.
+    `${begin}\x1b[1;1H\x1b[2K  \x1b[2;1H\x1b[2K side\x1b[3;1H\x1b[2K\x1b[5;4H\x1b[?25h`
+    + `\x1b7\x1b[1;3H${chunks("C=1,c=30,r=3,f=100,q=2,i=77")}\x1b8${end}`);
+  // Un cuadro que solo reescribe la fila 2 (la barra lateral): la imagen cubre esa fila, así que se manda de nuevo con sus datos y su colocación.
   expect(placer.frame(`${begin}\x1b[2;1H\x1b[2K side 2\x1b[5;4H\x1b[?25l${end}`)).toBe(
-    `${begin}\x1b[2;1H\x1b[2K side 2\x1b[5;4H\x1b[?25l\x1b7\x1b[1;3H\x1b_Ga=p,q=2,C=1,c=30,r=3,i=77\x1b\\\x1b8${end}`);
-  // Una fila que la imagen no cubre: el cuadro llega tal cual.
+    `${begin}\x1b[2;1H\x1b[2K side 2\x1b[5;4H\x1b[?25l\x1b7\x1b[1;3H${chunks("C=1,c=30,r=3,f=100,q=2,i=77")}\x1b8${end}`);
+  // Una fila que la imagen no cubre: el cuadro llega tal cual, sin datos de imagen.
   const far = `${begin}\x1b[9;1H\x1b[2K otra cosa\x1b[5;4H\x1b[?25l${end}`;
   expect(placer.frame(far)).toBe(far);
-  // pi-tui, con las imágenes ya subidas, manda solo la colocación (con recorte): se mueve al final igual.
+  // pi-tui, con la imagen ya subida, manda solo la colocación (con recorte): los datos guardados salen con ella.
   const again = `${begin}\x1b[1;1H\x1b[2K  \x1b_Ga=p,q=2,C=1,c=30,i=77,x=0,y=10,w=20,h=30,r=2\x1b\\\x1b[2;1H\x1b[2K side${end}`;
-  expect(placer.frame(again)).toBe(`${begin}\x1b[1;1H\x1b[2K  \x1b[2;1H\x1b[2K side\x1b7\x1b[1;3H\x1b_Ga=p,q=2,C=1,c=30,i=77,x=0,y=10,w=20,h=30,r=2\x1b\\\x1b8${end}`);
-  // Lo que no es un cuadro de filas (un borrado, un aviso del puntero) pasa tal cual.
+  expect(placer.frame(again)).toBe(`${begin}\x1b[1;1H\x1b[2K  \x1b[2;1H\x1b[2K side\x1b7\x1b[1;3H${chunks("C=1,c=30,x=0,y=10,w=20,h=30,r=2,f=100,q=2,i=77")}\x1b8${end}`);
+  // Lo que no es un cuadro de filas (un aviso del puntero) pasa tal cual.
   expect(placer.frame("\x1b]22;pointer\x1b\\")).toBe("\x1b]22;pointer\x1b\\");
+  // Una colocación de una imagen de la que no hay copia (nunca se vio con datos) no se manda: sin datos Orca no la dibuja, y así tampoco se cuela un a=p suelto.
+  const unknown = new ImagePlacer().frame(`${begin}\x1b[1;1H\x1b[2K \x1b_Ga=p,q=2,C=1,c=30,i=99,r=2\x1b\\${end}`);
+  expect(unknown).toBe(`${begin}\x1b[1;1H\x1b[2K ${end}`);
+  // d=A (y salir de la pantalla alterna) suelta las copias; d=a (solo colocaciones) y d=i de otra imagen no.
+  const keeper = new ImagePlacer();
+  keeper.frame(`${begin}\x1b[1;1H\x1b[2K${chunks("f=100,q=2,C=1,c=30,r=3,i=77")}${end}`);
+  expect(keeper.frame(`${begin}\x1b_Ga=d,d=a,q=2\x1b\\\x1b[1;1H\x1b[2K\x1b_Ga=p,q=2,C=1,c=30,r=3,i=77\x1b\\${end}`)).toContain("m=0;BBBB");
+  keeper.frame(`${begin}\x1b_Ga=d,d=I,i=77,q=2\x1b\\${end}`);
+  expect(keeper.frame(`${begin}\x1b[1;1H\x1b[2K\x1b_Ga=p,q=2,C=1,c=30,r=3,i=77\x1b\\${end}`)).not.toContain("a=T");
 });
+
+// ── The screen, in Orca ────────────────────────────────────────────────────────────────────
 
 test("una imagen bajo un mensaje no se borra: ningún carácter se escribe sobre ella después de su última colocación en el cuadro", async () => {
   // La fila donde empieza la imagen se barre sobre 8 posiciones: en alguna la barra lateral tiene texto a la altura de la miniatura.
@@ -171,25 +235,52 @@ test("una imagen bajo un mensaje no se borra: ningún carácter se escribe sobre
   }
 });
 
-test("una imagen en una tarjeta Read no se borra", async () => {
+test("U2-r5: tras colocar una imagen, un cuadro con a=d,d=a y reescritura completa (desplazar) la deja visible", async () => {
+  const path = file("desplazada.png", png(1600, 1400, 4000));
+  const s = await scene(container => { container.addChild(new UserBubble(filler(20), { locale: "es", at: null })); container.addChild(new UserBubble(`mira ${path}`, { locale: "es", at: null })); container.addChild(new UserBubble(filler(60), { locale: "es", at: null })); });
+  const before = s.all().length;
+  s.scroll.scrollTo(6); s.tui.requestRender(); await s.settle();
+  // El cuadro de desplazar lleva el borrado de pi-tui y reescribe toda la pantalla; la imagen se ve al final.
+  const frame = s.all().slice(before);
+  expect(frame).toContain("\x1b_Ga=d,d=a");
+  const result = emulate(s.all());
+  expect(result.live.size, report(result)).toBeGreaterThan(0);
+  expect(result.violations, report(result)).toEqual([]);
+  s.stop();
+});
+
+test("U2-r5: dos imágenes visibles con sus filas reescritas en el mismo cuadro se ven las dos", async () => {
+  const one = file("una.png", png(1600, 1400, 4000));
+  const two = file("dos.png", png(1500, 1000, 4000));
+  const s = await scene(container => { container.addChild(new UserBubble(`primera ${one}`, { locale: "es", at: null })); container.addChild(new UserBubble(`segunda ${two}`, { locale: "es", at: null })); container.addChild(new UserBubble(filler(30), { locale: "es", at: null })); }, { rows: 60 });
+  for (const top of [0, 3, 0, 5, 2]) { s.scroll.scrollTo(top); s.tui.requestRender(); await s.settle(); }
+  const result = emulate(s.all());
+  expect(new Set([...result.live.values()].map(placed => placed.id)).size, report(result)).toBe(2);
+  expect(result.violations, report(result)).toEqual([]);
+  s.stop();
+});
+
+test("U2-r5: una imagen en una tarjeta Read se ve después de varios desplazamientos seguidos", async () => {
   const data = png(1200, 900, 4000).toString("base64");
   const images = toolResultImages([{ type: "image", source: { type: "base64", media_type: "image/png", data } }], getCatalog("es"));
   const s = await scene(container => {
-    for (let i = 0; i < 3; i++) container.addChild(new UserBubble(`relleno ${i}`, { locale: "es", at: null }));
+    container.addChild(new UserBubble(filler(12), { locale: "es", at: null }));
     const card = new ActivityCard("Read · captura.png", "Completado · 0s", "imagen PNG · 1200×900");
     card.setImages(new ImageStrip(images, { locale: "es", indent: 6 }));
     container.addChild(card);
+    container.addChild(new UserBubble(filler(40), { locale: "es", at: null }));
   });
+  for (const top of [0, 4, 8, 12, 16, 20, 24, 20, 16, 12, 8, 4, 0]) { s.scroll.scrollTo(top); s.tui.requestRender(); await s.settle(); }
   const result = emulate(s.all());
-  expect(result.placements).toBeGreaterThan(0);
+  expect(result.placements).toBeGreaterThan(5);
+  expect(result.live.size, report(result)).toBeGreaterThan(0);
   expect(result.violations, report(result)).toEqual([]);
   s.stop();
 });
 
 test("al desplazar el chat, la imagen entera o recortada sigue entera en cada cuadro", async () => {
   const path = file("desplazar.png", png(1600, 1400, 4000));
-  const filler = Array.from({ length: 70 }, (_, i) => `línea ${i + 1} de relleno`).join("\n");
-  const s = await scene(container => { container.addChild(new UserBubble(filler, { locale: "es", at: null })); container.addChild(new UserBubble(`mira ${path}`, { locale: "es", at: null })); container.addChild(new UserBubble(filler, { locale: "es", at: null })); });
+  const s = await scene(container => { container.addChild(new UserBubble(filler(70), { locale: "es", at: null })); container.addChild(new UserBubble(`mira ${path}`, { locale: "es", at: null })); container.addChild(new UserBubble(filler(70), { locale: "es", at: null })); });
   for (const top of [0, 10, 20, 28, 32, 36, 40, 44, 48, 52, 56, 60, 70, 40, 20]) { s.scroll.scrollTo(top); s.tui.requestRender(); await s.settle(); }
   const result = emulate(s.all());
   expect(result.frames).toBeGreaterThan(10);
@@ -198,7 +289,7 @@ test("al desplazar el chat, la imagen entera o recortada sigue entera en cada cu
   s.stop();
 });
 
-test("cuando cambia la barra lateral (un contador que se reescribe cada segundo), la imagen sigue entera", async () => {
+test("cuando cambia la barra lateral (un valor que se reescribe cada segundo), la imagen sigue entera", async () => {
   const path = file("contador.png", png(1600, 1400, 4000));
   for (const lead of [0, 2, 5]) {
     const s = await scene(container => container.addChild(new UserBubble(`${"\n".repeat(lead)}mira ${path}`, { locale: "es", at: null })));
@@ -210,23 +301,50 @@ test("cuando cambia la barra lateral (un contador que se reescribe cada segundo)
   }
 });
 
-test("los datos de la imagen se transmiten una sola vez (a=t) y cada cuadro solo la coloca de nuevo (a=p)", async () => {
-  const path = file("una-vez.png", png(1600, 1400, 9000));
+test("U2-r5: en este modo ningún a=p llega sin sus datos en el mismo cuadro, y un cuadro que solo cambia «Trabajando · Ns» no manda datos de imagen", async () => {
+  const path = file("datos.png", png(1600, 1400, 9000));
   const s = await scene(container => container.addChild(new UserBubble(`mira ${path}`, { locale: "es", at: null })));
-  for (let tick = 0; tick < 4; tick++) { s.state.used += 7; s.tui.requestRender(); await s.settle(); }
+  s.scroll.scrollTo(0);
+  // Los cuadros que solo cambian el contador de la barra de estado (abajo, lejos de la imagen): sin colocaciones ni datos de imagen.
+  for (let seconds = 1; seconds <= 4; seconds++) {
+    const from = s.all().length;
+    s.composer.setStatus(`${getCatalog("es").chat.statusWorking} · ${seconds}s`);
+    s.tui.requestRender(); await s.settle();
+    const frame = s.all().slice(from);
+    expect(frame.length, `el contador de ${seconds}s se escribió`).toBeGreaterThan(0);
+    expect(frame, `contador ${seconds}s`).not.toMatch(/\x1b_Ga=[Tpt]/);
+  }
+  // Cada colocación del cuadro va con datos (a=T, ningún a=p suelto) y con C=1.
   const all = s.all();
-  // Una transmisión (el primer trozo lleva a=t y los datos), nunca a=T (transmitir y colocar a la vez), y colocaciones sueltas.
-  expect(all.match(/\x1b_Ga=t,/g) ?? []).toHaveLength(1);
-  expect(all).not.toContain("\x1b_Ga=T");
-  expect((all.match(/\x1b_Ga=p,/g) ?? []).length).toBeGreaterThanOrEqual(4);
-  // Cada colocación va con el cursor puesto sobre la imagen y el cursor se devuelve (guardar y restaurar), sin mover el cursor al colocar.
-  for (const placement of all.match(/\x1b_Ga=p,[^\x1b]*\x1b\\/g)!) expect(placement).toMatch(/,C=1,|,C=1$/);
+  expect(all).not.toMatch(/\x1b_Ga=p/);
+  expect(all).not.toMatch(/\x1b_Ga=t/);
+  for (const first of all.match(/\x1b_Ga=T,[^;\x1b]*/g)!) expect(first).toMatch(/,C=1,/);
   expect(all).toContain("\x1b7");
   expect(all).toContain("\x1b8");
+  // Una vez al hacer el cambio de barra lateral (la imagen tiene una fila escrita): vuelve con sus datos.
+  const from = all.length;
+  s.state.used += 3; s.tui.requestRender(); await s.settle();
+  const emulated = emulate(s.all());
+  expect(emulated.violations).toEqual([]);
+  expect(s.all().slice(from)).toMatch(/\x1b_Ga=T/);
   s.stop();
 });
 
-test("fuera de Orca (sin imágenes que se borren) el cuadro de pi-tui llega tal cual, sin guardar ni restaurar el cursor", async () => {
+test("U2-r5: costo de un cuadro de desplazamiento con 4 miniaturas visibles (miniaturas de unos 150 KB)", async () => {
+  // Cada miniatura pesa ~133 000 caracteres en base64, justo bajo el tope de la miniatura (140 000): se dibuja tal cual, sin reducir.
+  const paths = [1, 2, 3, 4].map(n => file(`costo-${n}.png`, png(1600 + n, 1000, 100_000)));
+  const s = await scene(container => { paths.forEach(path => container.addChild(new UserBubble(`foto ${path}`, { locale: "es", at: null }))); container.addChild(new UserBubble(filler(40), { locale: "es", at: null })); }, { rows: 100 });
+  for (const top of [0, 2, 0, 3, 1]) { s.scroll.scrollTo(top); s.tui.requestRender(); await s.settle(); }
+  const result = emulate(s.all());
+  expect(result.violations, report(result)).toEqual([]);
+  expect(new Set([...result.live.values()].map(placed => placed.id)).size).toBe(4);
+  const heaviest = Math.max(...result.frameBytes);
+  console.log(`U2-r5 bytes por cuadro con 4 miniaturas: máximo ${heaviest}, cuadros ${JSON.stringify(result.frameBytes.slice(-6))}`);
+  expect(heaviest).toBeLessThan(650_000);
+  s.stop();
+});
+
+test("fuera de Orca el cuadro de pi-tui llega tal cual, sin guardar ni restaurar el cursor", async () => {
   setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
   const path = file("kitty.png", png(1600, 1400, 4000));
   let output = "";

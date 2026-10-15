@@ -3,6 +3,7 @@ import type { Component, OverlayHandle, OverlayOptions, TUI, Terminal, TuiMouseE
 import { accent, elevated, fit, foreground, surface, warning, workspaceBackground, workspaceColors } from "./theme.ts";
 import { DEFAULT_POINTER, GRIP_WIDTH, LINK_POINTER, RESIZE_POINTER, SidebarLayout } from "./sidebar-layout.ts";
 import type { ChatLinks } from "./chat-links.ts";
+import { onThumbnailReady } from "./chat-images.ts";
 import { restoreImageRows } from "./image-rows.ts";
 import { ImagePlacer, placesImagesLast } from "./image-placement.ts";
 import type { LayoutFrameLike } from "./image-rows.ts";
@@ -210,6 +211,8 @@ export function chatScreen(
   const copySelection = options.copySelection ?? ((text: string) => copySelectionText(text, { write: data => surface.write(data) }));
   const tui = new ChatScreen(getCatalog(options.locale ?? "en").chatSelection, surface, true, undefined, { mouse: true, openUrl: url => links.open(url), copySelection });
   links.bind({ requestRender: () => tui.requestRender(), write: data => surface.write(data) });
+  // A thumbnail that was being reduced (see `thumbnailOf`) is drawn the moment it is ready.
+  onThumbnailReady(() => tui.requestRender());
   return { surface, tui, copy: copySelection };
 }
 
