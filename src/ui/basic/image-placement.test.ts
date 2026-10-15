@@ -338,13 +338,38 @@ test("U2-r5: en este modo ningún a=p llega sin sus datos en el mismo cuadro, y 
   for (const first of all.match(/\x1b_Ga=T,[^;\x1b]*/g)!) expect(first).toMatch(/,C=1,/);
   expect(all).toContain("\x1b7");
   expect(all).toContain("\x1b8");
-  // Una vez al hacer el cambio de barra lateral (la imagen tiene una fila escrita): vuelve con sus datos.
-  const from = all.length;
-  s.state.used += 3; s.tui.requestRender(); await s.settle();
-  const emulated = emulate(s.all());
-  expect(emulated.violations).toEqual([]);
-  expect(s.all().slice(from)).toMatch(/\x1b_Ga=T/);
+  expect(emulate(all).violations).toEqual([]);
   s.stop();
+});
+
+/**
+ * U2-r7. This was the last assertion of the test above and it failed on ubuntu-latest and windows-latest (Verify 38676984055) while it passed on a Mac: it took for granted that the sidebar's changing text shares rows with the
+ * image. Where the image is depends on how many rows the message takes, and the message holds the temporary file's path, which is long and wraps on a Mac (`/var/folders/…`) and is not on Linux (`/tmp/…`) or Windows
+ * (`C:\Users\…\Temp\…` is long again, differently): there the frame rewrote rows 15-22 (the gray line of the image among them) and none of the image's, so no image data went out, which is right. The image is now moved over the
+ * sidebar's rows (0 to 13 blank lines before the text) and, from its real rows and the ones the frame wrote, it asks what each case must do: a frame that writes a row of the image sends its data again; one that does not
+ * sends no image command at all. Both cases must happen in the sweep, or the test says where the image was and where the frame wrote.
+ */
+test("U2-r7: al cambiar la barra lateral, la imagen vuelve con sus datos si el cuadro escribe una de sus filas y no manda nada de imagen si no, con la imagen en cualquier posición", async () => {
+  const path = file("datos-barra.png", png(1600, 1400, 9000));
+  const causes: string[] = [];
+  let touching = 0; let apart = 0;
+  for (let lead = 0; lead < 14; lead++) {
+    const s = await scene(container => container.addChild(new UserBubble(`${"\n".repeat(lead)}mira ${path}`, { locale: "es", at: null })));
+    const placed = [...emulate(s.all()).live.values()][0]!;
+    const from = s.all().length;
+    s.state.used += 3; s.tui.requestRender(); await s.settle();
+    const frame = s.all().slice(from);
+    const written = [...frame.matchAll(/\x1b\[(\d+);1H\x1b\[2K/g)].map(match => Number(match[1]));
+    // The image covers the rows `placed.row + 1` to `placed.row + placed.rows` (the frame counts rows from 1).
+    const touches = written.some(row => row > placed.row && row <= placed.row + placed.rows);
+    const cause = `${lead} líneas antes: la imagen cubre las filas ${placed.row + 1}-${placed.row + placed.rows}; el cuadro escribió ${written.join(",") || "ninguna"}; ${touches ? "toca la imagen" : "no la toca"}`;
+    causes.push(cause);
+    if (touches) { touching++; expect(frame, cause).toMatch(/\x1b_Ga=T/); } else { apart++; expect(frame, cause).not.toMatch(/\x1b_Ga=[Ttp]/); }
+    expect(emulate(s.all()).violations, cause).toEqual([]);
+    s.stop();
+  }
+  expect(touching, `ninguna posición tocó la imagen:\n${causes.join("\n")}`).toBeGreaterThan(0);
+  expect(apart, `todas las posiciones tocaron la imagen:\n${causes.join("\n")}`).toBeGreaterThan(0);
 });
 
 test("U2-r5: costo de un cuadro de desplazamiento con 4 miniaturas visibles (miniaturas de unos 150 KB)", async () => {

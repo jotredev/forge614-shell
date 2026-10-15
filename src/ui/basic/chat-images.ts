@@ -17,6 +17,8 @@ export const MAX_THUMBNAILS = 4;
 export const THUMBNAIL_COLUMNS = 22;
 export const THUMBNAIL_ROWS = 7;
 export const THUMBNAIL_GAP = 2;
+/** The narrowest a thumbnail's box may get so that four fit in a row: with less room, the ones that do not fit at 14 columns each go to the next row. */
+export const THUMBNAIL_MIN_COLUMNS = 14;
 /** Thumbnails are made with this many pixels per pixel of the terminal's cells, for Retina screens. */
 const RETINA = 2;
 /** The width a row of thumbnails may take at most, as the reading width of the chat (see `MAX_READING_WIDTH` in chat-message.ts), the margin included. */
@@ -196,27 +198,49 @@ async function reduce(base64: string, mime: string): Promise<Thumbnail | "none">
   return mime === "image/png" && isPngBase64(base64) && (base64.length * 3) / 4 <= THUMBNAIL_FALLBACK_BYTES ? { base64 } : "none";
 }
 
-/** A row of thumbnails composed as one PNG (see `composeStrip`), with the columns it takes. */
-interface Composed extends Thumbnail { columns: number }
+/** A row of thumbnails composed as one PNG (see `composeStrip`), with the columns and rows of cells it takes. */
+interface Composed extends Thumbnail { columns: number; rows: number }
 
 /**
- * Lays `thumbnails` side by side as ONE PNG — `THUMBNAIL_GAP` columns apart, each in its box of `columns` × `THUMBNAIL_ROWS` cells — so that the row has a single kitty image: pi-tui treats only the first image of a line
- * (`getKittyImagePlacement`, `cropKittyImageLine`), so a second one on the same line would not be cropped when it scrolls out at the bottom, would be drawn over the writing box and would not enter pi-tui's cache. The
- * canvas has the proportion of the cells it takes, and if its PNG weighs more than `STRIP_MAX_BYTES` its pixels are reduced (never its format; the floor is one pixel per Retina pixel, so the cells it takes stay the
- * same). A thumbnail that cannot be decoded is left out of the row.
+ * Lays `thumbnails` side by side as ONE PNG — `THUMBNAIL_GAP` columns apart, each in a box `columns` cells wide — so that the row has a single kitty image: pi-tui treats only the first image of a line
+ * (`getKittyImagePlacement`, `cropKittyImageLine`), so a second one on the same line would not be cropped when it scrolls out at the bottom, would be drawn over the writing box and would not enter pi-tui's cache. A thumbnail
+ * that cannot be decoded is left out of the row.
+ *
+ * The strip is as tall as its tallest thumbnail, in whole rows of cells, with nothing left below it (no more than the part of a row the rounding up needs): each thumbnail is fitted to the box's width and its height in
+ * rows is its height in pixels over the height of a cell, rounded up, and the strip takes the largest. The cell's size in pixels is `getCellDimensions()`: pi-tui asks the terminal for it when the screen starts
+ * (`CSI 16 t`) and keeps what it answers, and while it does not answer it assumes 9×18 px. In Orca, which stretches an image to exactly the `c` × `r` cells it is given without keeping its proportion
+ * (`_decodeAndDisplay`), a cell measures about 11.5×26 px of screen: if Orca does not answer, the picture comes out ~11% narrower than it should, and there is no reliable way to know better (the size depends on the
+ * font and the zoom), so the box is chosen to waste at most one row, and that error is accepted. If the strip's PNG weighs more than `STRIP_MAX_BYTES` its pixels are reduced (never its format; the floor is one pixel per
+ * Retina pixel, so the cells it takes stay the same).
  */
 async function composeStrip(thumbnails: Thumbnail[], columns: number): Promise<Composed | "none"> {
   const cell = getCellDimensions();
   const rasters = thumbnails.flatMap(thumbnail => decodePng(Buffer.from(thumbnail.base64, "base64")) ?? []);
   if (rasters.length === 0) return "none";
-  const row = composeRow(rasters, { width: columns * cell.widthPx * RETINA, height: THUMBNAIL_ROWS * cell.heightPx * RETINA }, THUMBNAIL_GAP * cell.widthPx * RETINA);
+  const slotWidth = columns * cell.widthPx * RETINA;
+  const cellHeight = cell.heightPx * RETINA;
+  // The tallest thumbnail, fitted to the box's width, in rows of cells (never more than `THUMBNAIL_ROWS`, which is also the least height it is given when it is taller: it is fitted to that).
+  const rows = Math.max(1, Math.min(THUMBNAIL_ROWS, Math.max(...rasters.map(raster => Math.ceil((raster.height * Math.min(1, slotWidth / raster.width)) / cellHeight)))));
+  const row = composeRow(rasters, { width: slotWidth, height: rows * cellHeight }, THUMBNAIL_GAP * cell.widthPx * RETINA);
   const cells = rasters.length * columns + (rasters.length - 1) * THUMBNAIL_GAP;
   for (const factor of [1, 0.75, 0.6, 0.5]) {
     const scaled = factor === 1 ? row : scaleRaster(row, row.width * factor, row.height * factor);
     const base64 = encodePng(scaled).toString("base64");
-    if (base64.length <= STRIP_MAX_BYTES) return { base64, widthPx: scaled.width, heightPx: scaled.height, columns: cells };
+    if (base64.length <= STRIP_MAX_BYTES) return { base64, widthPx: scaled.width, heightPx: scaled.height, columns: cells, rows };
   }
   return "none";
+}
+
+/**
+ * How the `count` thumbnails to show go in rows in `available` columns: as many per row as can be (up to four) while each box is at least `THUMBNAIL_MIN_COLUMNS` wide, the box being the room left after the gaps shared
+ * out, `THUMBNAIL_COLUMNS` at the most; only when four of 14 columns do not fit, the ones that are left over go to the next row, and when not even one fits the box is what there is.
+ */
+export function thumbnailLayout(count: number, available: number): { perRow: number; columns: number } {
+  for (let perRow = Math.max(1, Math.min(count, MAX_THUMBNAILS)); perRow > 1; perRow--) {
+    const columns = Math.min(THUMBNAIL_COLUMNS, Math.floor((available - (perRow - 1) * THUMBNAIL_GAP) / perRow));
+    if (columns >= THUMBNAIL_MIN_COLUMNS) return { perRow, columns };
+  }
+  return { perRow: 1, columns: Math.max(1, Math.min(THUMBNAIL_COLUMNS, available)) };
 }
 
 /** `266 KB`, `1.4 MB`: a file's size for the gray line. */
@@ -244,7 +268,7 @@ export class ImageStrip implements Component {
   /** The composed rows by what they are made of (which thumbnails, how wide a box, the cells' size): `pending` while being composed. */
   private readonly composed = new Map<string, "pending" | Composed | "none">();
   /** pi-tui's image of each thumbnail (or composed row) by the columns it may take: the same object each time it is asked, so pi-tui's cache and its image id stay. */
-  private readonly drawn = new WeakMap<Thumbnail, Map<number, Image>>();
+  private readonly drawn = new WeakMap<Thumbnail, Map<string, Image>>();
   private readonly ids = new WeakMap<Thumbnail, number>();
   private nextId = 1;
 
@@ -265,18 +289,18 @@ export class ImageStrip implements Component {
       void composeStrip(group, columns).then(result => { this.composed.set(key, result); thumbnailReady?.(); });
       return undefined;
     }
-    return state === "pending" || state === "none" ? undefined : this.imageOf(state, state.columns);
+    return state === "pending" || state === "none" ? undefined : this.imageOf(state, state.columns, state.rows);
   }
 
-  /** pi-tui's image of `thumbnail`, at most `columns` × `THUMBNAIL_ROWS` cells. */
-  private imageOf(thumbnail: Thumbnail, columns: number): Image {
-    const byColumns = this.drawn.get(thumbnail) ?? new Map<number, Image>();
-    this.drawn.set(thumbnail, byColumns);
-    let image = byColumns.get(columns);
+  /** pi-tui's image of `thumbnail`, at most `columns` × `rows` cells. */
+  private imageOf(thumbnail: Thumbnail, columns: number, rows = THUMBNAIL_ROWS): Image {
+    const byBox = this.drawn.get(thumbnail) ?? new Map<string, Image>();
+    this.drawn.set(thumbnail, byBox);
+    let image = byBox.get(`${columns}x${rows}`);
     if (!image) {
-      image = new Image(thumbnail.base64, "image/png", { fallbackColor: muted }, { maxWidthCells: columns, maxHeightCells: THUMBNAIL_ROWS },
+      image = new Image(thumbnail.base64, "image/png", { fallbackColor: muted }, { maxWidthCells: columns, maxHeightCells: rows },
         thumbnail.widthPx && thumbnail.heightPx ? { widthPx: thumbnail.widthPx, heightPx: thumbnail.heightPx } : undefined);
-      byColumns.set(columns, image);
+      byBox.set(`${columns}x${rows}`, image);
     }
     return image;
   }
@@ -291,8 +315,7 @@ export class ImageStrip implements Component {
     if (states.length && !states.includes("pending")) {
       const ready = states.flatMap(state => state !== "pending" && state !== "none" ? [state] : []);
       const available = Math.max(1, Math.min(width, READING_WIDTH) - margin.length);
-      const columns = Math.min(THUMBNAIL_COLUMNS, available);
-      const perRow = Math.max(1, Math.min(MAX_THUMBNAILS, Math.floor((available + THUMBNAIL_GAP) / (columns + THUMBNAIL_GAP))));
+      const { perRow, columns } = thumbnailLayout(ready.length, available);
       for (let first = 0; first < ready.length; first += perRow) {
         const image = this.rowImage(ready.slice(first, first + perRow), columns);
         if (!image) continue;
