@@ -433,6 +433,8 @@ export interface Catalog {
     kind: (params: { format: string }) => string;
     /** The notices of pasting an image from the clipboard (Ctrl+V, Alt+V on Windows): nothing there, the program that reads the clipboard is missing (`tools`, what to install or have), too big, or it failed. */
     pasteEmpty: string;
+    /** The gray hint in the empty box, where the terminal does not paste an image by itself (`key` is «Ctrl+V», «Alt+V» on Windows). */
+    pasteHint: (params: { key: string }) => string;
     pasteMissingTool: (params: { tools: string }) => string;
     pasteTooBig: string;
     pasteFailed: string;

@@ -183,6 +183,9 @@ function pulseDot(now: number): string {
   return paint(mix(palette.danger, palette.surface, PULSE_DEPTH * wave))("●");
 }
 
+/** How pi-tui's editor draws the cell under its cursor on an empty line: a space in reverse video. */
+const CURSOR_CELL = "\x1b[7m \x1b[0m";
+
 /** A focused editor rendered as Forge614's primary writing surface. */
 export class ForgeComposer extends Editor {
   private status: string;
@@ -336,6 +339,8 @@ export class ForgeComposer extends Editor {
   }
   /** Called when the key that pastes the clipboard's image is pressed (see `pasteImageKey`); the chat screens set it (see `attachImagePaste`). Without it the key is the editor's own. */
   onPasteImage?: () => void;
+  /** The gray hint the empty box shows after its cursor (see `pasteHint`); it goes with the first key and is not shown while a question or a menu is open. */
+  pasteHint?: string;
   handleInput(data: string): void {
     if (this.textPrompt) { this.handleTextPromptInput(data); return; }
     if (this.picker?.searchable) { this.handleSearchInput(data); return; }
@@ -474,6 +479,11 @@ export class ForgeComposer extends Editor {
     const editor = this.textPrompt?.secret
       ? ["•".repeat(Array.from(this.getText()).length)]
       : super.render(innerWidth).slice(1, -1);
+    // An empty box (one row) shows the hint after the cursor: the row is cut where the cursor's cell (reverse video) ends, and the hint goes there, so pi-tui's cursor mark stays before it.
+    if (this.pasteHint && !this.textPrompt && !this.picker && this.getText() === "" && editor.length === 1) {
+      const cursor = editor[0]!.indexOf(CURSOR_CELL);
+      if (cursor >= 0) editor[0] = `${editor[0]!.slice(0, cursor + CURSOR_CELL.length)} ${muted(this.pasteHint)}`;
+    }
     const shown = this.shownStatus();
     const now = this.clock.now();
     this.syncRepaintTimer(now);

@@ -1,6 +1,6 @@
 import { closeSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { basename } from "node:path";
-import { Image, getCapabilities, getCellDimensions, getImageDimensions, setCapabilities } from "@earendil-works/pi-tui";
+import { Image, getCapabilities, getCellDimensions, getImageDimensions, setCapabilities, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { ChatLinks } from "./chat-links.ts";
 import { setPlacingLast } from "./image-placement.ts";
@@ -251,10 +251,31 @@ export function formatBytes(bytes: number): string {
 }
 
 /** The gray line that stands for an image where it cannot be drawn: `🖼 name.png · 1600×1400 · 266 KB`, the name a link that opens the file when the image has a path. */
-export function imageLine(image: ChatImage, links?: ChatLinks): string {
-  const name = image.path && links ? links.linkTo(image.path, image.name, muted) : muted(image.name);
+export function imageLine(image: ChatImage, links?: ChatLinks, maxWidth?: number): string {
   const facts = [image.widthPx && image.heightPx ? `${image.widthPx}×${image.heightPx}` : undefined, image.bytes !== undefined ? formatBytes(image.bytes) : undefined].filter(Boolean);
-  return `${muted("🖼 ")}${name}${facts.length ? muted(` · ${facts.join(" · ")}`) : ""}`;
+  const tail = facts.length ? ` · ${facts.join(" · ")}` : "";
+  // With a width to keep to, it is the name that gives way — the size and the weight are always whole — and the link still opens the whole path.
+  const label = maxWidth === undefined ? image.name : shortenName(image.name, maxWidth - visibleWidth("🖼 ") - visibleWidth(tail));
+  const name = image.path && links ? links.linkTo(image.path, label, muted) : muted(label);
+  return `${muted("🖼 ")}${name}${tail ? muted(tail) : ""}`;
+}
+
+/** The longest end of a name that is kept when it is shortened (the last characters hold what tells names apart and the extension). */
+const KEPT_TAIL = 12;
+
+/**
+ * `name` in `room` columns at most: whole when it fits, otherwise its start and its end with «…» in the middle (`orca-paste-17920…f1ca9.png`), the end up to `KEPT_TAIL` characters and about half of the room
+ * at most. With no room at all it is just «…».
+ */
+export function shortenName(name: string, room: number): string {
+  if (visibleWidth(name) <= room) return name;
+  const letters = Array.from(name);
+  const tail = Math.max(0, Math.min(KEPT_TAIL, Math.floor((room - 1) / 2)));
+  for (let head = Math.max(0, room - 1 - tail); head >= 0; head--) {
+    const shown = `${letters.slice(0, head).join("")}…${tail ? letters.slice(-tail).join("") : ""}`;
+    if (visibleWidth(shown) <= Math.max(1, room)) return shown;
+  }
+  return "…";
 }
 
 /**
@@ -325,7 +346,7 @@ export class ImageStrip implements Component {
       }
     }
     if (rows.length === 0) rows.push("");
-    for (const image of shown) rows.push(`${margin}${imageLine(image, this.options.links)}`);
+    for (const image of shown) rows.push(`${margin}${imageLine(image, this.options.links, Math.max(1, width - margin.length))}`);
     const more = this.images.length - MAX_THUMBNAILS;
     if (more > 0) rows.push("", `${margin}${muted(getCatalog(this.options.locale).chatImages.more({ count: more }))}`);
     return rows;

@@ -1,4 +1,4 @@
-import { pasteClipboardImage } from "../../infrastructure/clipboard.ts";
+import { pasteClipboardImage, pasteImageKeyLabel } from "../../infrastructure/clipboard.ts";
 import type { PastedImage } from "../../infrastructure/clipboard.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
@@ -16,6 +16,14 @@ export function pasteNotice(result: Exclude<PastedImage, { kind: "image" }>, loc
   return t.pasteFailed;
 }
 
+/**
+ * The gray hint of the empty box — «Ctrl+V pega una imagen», «Alt+V» on Windows — or none. In Orca there is none: it pastes an image by itself with the usual Cmd+V (it saves the image in a file and pastes its
+ * path), so the hint would be about a key nobody needs. In the macOS Terminal, in contrast, Cmd+V with an image on the clipboard sends the program nothing at all, and nobody would know there is a key for it.
+ */
+export function pasteHint(locale: Locale, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
+  return env.TERM_PROGRAM === "Orca" ? undefined : getCatalog(locale).chatImages.pasteHint({ key: pasteImageKeyLabel(platform) });
+}
+
 /** What the paste needs of the screen: to repaint and to show a transient notice. */
 export interface PasteScreen { requestRender(): void; flash?(message: string, durationMs?: number): void }
 
@@ -24,7 +32,11 @@ export interface PasteScreen { requestRender(): void; flash?(message: string, du
  * so that the path goes the way any path does (thumbnail, sent to the assistant). With no image there, a short notice is flashed and nothing is written. One paste at a time: the key pressed again while the
  * clipboard is being read does nothing. `paste` is the clipboard reader (tests give another).
  */
-export function attachImagePaste(composer: ForgeComposer, screen: PasteScreen, locale: Locale, paste: () => Promise<PastedImage> = () => pasteClipboardImage()): void {
+export function attachImagePaste(
+  composer: ForgeComposer, screen: PasteScreen, locale: Locale, paste: () => Promise<PastedImage> = () => pasteClipboardImage(),
+  where: { env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {},
+): void {
+  composer.pasteHint = pasteHint(locale, where.env ?? process.env, where.platform ?? process.platform);
   let reading = false;
   composer.onPasteImage = () => {
     if (reading) return;

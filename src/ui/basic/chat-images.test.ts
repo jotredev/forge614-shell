@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { realPng, screenshotPng } from "./png-fixtures.ts";
 import { decodePng } from "./png-strip.ts";
-import { Container, getCapabilities, getCellDimensions, getImageDimensions, resetCapabilitiesCache, setCapabilities, setCapabilityOverrides } from "@earendil-works/pi-tui";
+import { Container, getCapabilities, getCellDimensions, getImageDimensions, resetCapabilitiesCache, setCapabilities, setCapabilityOverrides, visibleWidth } from "@earendil-works/pi-tui";
 import { ChatLinks } from "./chat-links.ts";
 import { ImageStrip, MAX_THUMBNAILS, THUMBNAIL_COLUMNS, THUMBNAIL_GAP, THUMBNAIL_MAX_BYTES, THUMBNAIL_ROWS, thumbnailLayout, enableTerminalImages, findImagePaths, formatBytes, imageLine, imagesInText, readImage } from "./chat-images.ts";
 import { UserBubble } from "./chat-message.ts";
@@ -495,6 +495,37 @@ test("lo mismo con la imagen dentro de una tarjeta de herramienta (Read) y despu
   }
   expect(withImage).toBeGreaterThan(3); // la prueba mira cuadros que de verdad llevan la imagen
   s.stop();
+});
+
+// ── The gray line that does not run off (U2-r8) ────────────────────────────────────────────
+
+test("U2-r8: la línea gris con el nombre real de Orca a 76 columnas acorta el nombre con … en medio, deja el tamaño entero y el enlace apunta a la ruta completa", () => {
+  setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+  const name = "orca-paste-1792039483269-eefa0ae4-5b1e-4c8d-9a27-3f0d1c6f1ca9.png";
+  const path = file(name, png(1903, 1047));
+  const image = { ...readImage(path)!, bytes: 1_468_006 }; // 1.4 MB
+  const links = new ChatLinks({ cwd: process.cwd() });
+  // El chat mide 76 columnas y la línea lleva 2 de margen: caben 74.
+  const rows = new ImageStrip([image], { locale: "es", links, indent: 2 }).render(76);
+  const line = rows.find(row => row.includes("🖼"))!;
+  const text = stripVTControlCharacters(line);
+  expect(visibleWidth(text), text).toBeLessThanOrEqual(76);
+  expect(text.endsWith(" · 1903×1047 · 1.4 MB")).toBe(true); // el tamaño y el peso, enteros
+  const shown = /🖼 (\S+) ·/.exec(text)![1]!;
+  expect(shown).toContain("…");
+  expect(shown.startsWith("orca-paste-1792")).toBe(true);
+  expect(shown.endsWith("f1ca9.png")).toBe(true);
+  expect(shown.length).toBeLessThan(name.length);
+  // El enlace sigue apuntando al archivo completo, no al nombre acortado.
+  const target = /\x1b\]8;;([^\x1b]*)\x1b\\/.exec(line)![1]!;
+  expect(decodeURIComponent(target)).toContain(name);
+  // Con sitio de sobra el nombre va entero, y con las demás anchuras la línea nunca se sale.
+  expect(stripVTControlCharacters(new ImageStrip([image], { locale: "es", links, indent: 2 }).render(120).find(row => row.includes("🖼"))!)).toContain(name);
+  for (const width of [30, 40, 50, 60, 76, 100]) {
+    const narrow = stripVTControlCharacters(new ImageStrip([image], { locale: "es", links, indent: 2 }).render(width).find(row => row.includes("🖼"))!);
+    expect(visibleWidth(narrow), `${width} columnas: ${narrow}`).toBeLessThanOrEqual(Math.max(width, 3 + 1 + 21 + 2));
+    expect(narrow.endsWith(" · 1903×1047 · 1.4 MB"), narrow).toBe(true);
+  }
 });
 
 // ── The strip's size (U2-r7) ───────────────────────────────────────────────────────────────

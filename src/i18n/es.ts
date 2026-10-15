@@ -411,6 +411,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     viewedTitle: "Imagen",
     kind: ({ format }) => `imagen ${format}`,
     pasteEmpty: "No hay una imagen en el portapapeles",
+    pasteHint: ({ key }) => `${key} pega una imagen`,
     pasteMissingTool: ({ tools }) => `No se pudo leer el portapapeles: instala ${tools}`,
     pasteTooBig: "La imagen del portapapeles pesa más de 20 MB",
     pasteFailed: "No se pudo leer la imagen del portapapeles",
