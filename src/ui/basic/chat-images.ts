@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { Image, getCapabilities, getImageDimensions, setCapabilities } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { ChatLinks } from "./chat-links.ts";
+import { setPlacingLast } from "./image-placement.ts";
 import { muted } from "./theme.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
@@ -33,14 +34,22 @@ export interface ChatImage {
  * without it nothing changes anywhere except in Orca (`TERM_PROGRAM=Orca`, an Electron app with xterm.js whose graphics support pi-tui does not know), where `kitty` is turned on unless pi-tui already found a protocol or the
  * session runs under tmux or screen, which do not pass graphics through. Kitty is the choice because pi-tui crops a kitty image when the chat scrolls it half out of view; iTerm2's protocol cannot be cropped, and
  * pi-tui itself turns it off while the alternate screen is open (`TuiAltScreen.beforeTerminalStart`), so `iterm2` forced here gets the gray lines too. Called when a chat screen opens, before it starts.
+ * It also decides where images are placed last (`ImagePlacer`): in Orca, and with `FORGE614_SHELL_IMAGES=kitty`, whose terminals erase an image when anything is written over it.
  */
 export function enableTerminalImages(env: NodeJS.ProcessEnv = process.env): void {
   const forced = env.FORGE614_SHELL_IMAGES?.trim().toLowerCase();
+  chooseImages(env, forced);
+  // A forced `kitty` is the way to ask for this in any terminal; otherwise only Orca (where the images are turned on above) needs it. `off` and `iterm2` draw no kitty image at all.
+  setPlacingLast(getCapabilities().images === "kitty" && (forced === "kitty" || (forced !== "off" && forced !== "iterm2" && env.TERM_PROGRAM === "Orca" && !underMultiplexer(env))));
+}
+
+const underMultiplexer = (env: NodeJS.ProcessEnv) => env.TMUX !== undefined || env.STY !== undefined || /^(tmux|screen)/.test(env.TERM ?? "");
+
+function chooseImages(env: NodeJS.ProcessEnv, forced: string | undefined): void {
   const capabilities = getCapabilities();
   if (forced === "off") { if (capabilities.images) setCapabilities({ ...capabilities, images: null }); return; }
   if (forced === "kitty" || forced === "iterm2") { if (capabilities.images !== forced) setCapabilities({ ...capabilities, images: forced }); return; }
-  if (capabilities.images || env.TERM_PROGRAM !== "Orca") return;
-  if (env.TMUX !== undefined || env.STY !== undefined || /^(tmux|screen)/.test(env.TERM ?? "")) return;
+  if (capabilities.images || env.TERM_PROGRAM !== "Orca" || underMultiplexer(env)) return;
   setCapabilities({ ...capabilities, images: "kitty" });
 }
 
@@ -49,6 +58,12 @@ export function enableTerminalImages(env: NodeJS.ProcessEnv = process.env): void
 const EXTENSION = "(?:png|jpe?g)";
 /** Where an absolute path starts, on any system: `/`, a drive (`C:\` or `C:/`) or a network share (`\\server\share`). The text is read the same way everywhere: a Windows path pasted on a Mac is recognized (and found missing). */
 const ROOT = String.raw`(?:/|[A-Za-z]:[\\/]|\\\\)`;
+/**
+ * The path an engine's line `Image: <path>` announces (Codex's `item/completed`, in `src/engines/codex/session.ts`), or undefined when the text is anything else. The path is absolute on any system: the line is
+ * written where the engine runs, and on Windows that is `C:\Users\…`, which a test for a leading «/» never matched (Verify 38648343395: the card was never drawn).
+ */
+export const announcedImagePath = (text: string): string | undefined => new RegExp(String.raw`^Image: (${ROOT}[^\n]*)$`).exec(text)?.[1];
+
 /** An absolute path in single or double quotes (spaces allowed inside), as PowerShell and Windows Terminal paste them. */
 const QUOTED_PATH = new RegExp(String.raw`(["'])(${ROOT}[^"'\n]*?\.${EXTENSION})\1`, "gi");
 /** A Unix path with no quotes, whose spaces, if any, are escaped with a backslash. */

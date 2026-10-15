@@ -4,6 +4,7 @@ import { accent, elevated, fit, foreground, surface, warning, workspaceBackgroun
 import { DEFAULT_POINTER, GRIP_WIDTH, LINK_POINTER, RESIZE_POINTER, SidebarLayout } from "./sidebar-layout.ts";
 import type { ChatLinks } from "./chat-links.ts";
 import { restoreImageRows } from "./image-rows.ts";
+import { ImagePlacer, placesImagesLast } from "./image-placement.ts";
 import type { LayoutFrameLike } from "./image-rows.ts";
 import type { StatusPanels } from "./status-panel.ts";
 import { copySelectionText } from "../../infrastructure/clipboard.ts";
@@ -221,6 +222,8 @@ export function chatScreen(
 export function workspaceTerminal(terminal: Terminal, links?: ChatLinks, panels?: StatusPanels): Terminal {
   let active = false;
   let pointerRaised = false;
+  // Where the terminal erases an image when anything is written over it (Orca), the images of each frame are placed after its last row (see `ImagePlacer`).
+  const placer = new ImagePlacer();
   return new Proxy(terminal, { get(target, key) {
     if (key === "start" && (links || panels)) return (onInput: (data: string) => void, onResize: () => void) => target.start(data => {
       links?.observe(data);
@@ -228,6 +231,7 @@ export function workspaceTerminal(terminal: Terminal, links?: ChatLinks, panels?
       onInput(data);
     }, onResize);
     if (key === "write") return (data: string) => {
+      if (active && placesImagesLast()) data = placer.frame(data);
       if (data.includes(RESIZE_POINTER) || data.includes(LINK_POINTER)) pointerRaised = true;
       if (data.includes(DEFAULT_POINTER)) pointerRaised = false;
       if (data.includes("\x1b[?1049h")) active = true;

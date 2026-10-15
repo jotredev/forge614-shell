@@ -2173,18 +2173,45 @@ test("Codex UI: an image Codex viewed or generated is drawn as a card with the i
     // A file that is not there, or an image Shell cannot draw, still gets its card with the path, and no gray line.
     h.rpc.onNotification("item/completed", { threadId: "t", turnId: "u", item: { type: "imageView", id: "iv2", path: join(dir, "ya-no-esta.webp") } });
     // Waits for the three cards by time, not for a fixed number of turns: windows-latest is slower (see the timeout below).
-    await waitUntil(() => ["🖼 visto.png", "🖼 generada.png", "ya-no-esta.webp"].every(text => h.plain().includes(text)));
+    const drawn = () => ["🖼 visto.png", "🖼 generada.png", "ya-no-esta.webp"].every(text => h.plain().includes(text));
+    await waitUntil(drawn, 10_000);
+    // If the cards never come, the screen is printed (the run of Verify 38648343395 only said «timed out» and the cause, a path that did not start with «/», stayed hidden).
+    if (!drawn()) throw new Error(`The image cards were not drawn. The screen:\n${h.plain()}`);
     const screen = h.plain();
     expect(screen).toContain("🖼 visto.png · 640×480 · 33 B");
     expect(screen).toContain("🖼 generada.png · 640×480 · 33 B");
     expect(screen).toContain("ya-no-esta.webp");
     expect(screen).not.toContain("🖼 ya-no-esta");
-    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } }); await tick();
   } finally {
+    // The turn is closed before quitting: with it still open a failed assertion left `await h.ui` waiting, and the run only said «timed out» instead of what failed.
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } }); await tick();
     h.enter("/f614:quit"); await h.ui; rmSync(dir, { recursive: true, force: true }); resetCapabilitiesCache();
     if (previousImages === undefined) delete process.env.FORGE614_SHELL_IMAGES; else process.env.FORGE614_SHELL_IMAGES = previousImages;
   }
 // On windows-latest, Verify 38645400650 (03eda3c) this test ran out of the default 5 s (5002 ms): it writes three temporary files and draws three cards on a runner several times slower than a Mac.
+}, { timeout: 30_000 });
+
+/**
+ * U2-r4, the cause of Verify 38648343395 on windows-latest (the test above ran out its 30 s there): Shell took the line `Image: <path>` for an image card only when the path began with «/», and on Windows the
+ * path is `C:\Users\…`, so the card was never drawn and the test waited for nothing. Written with paths of any system, so it fails the same way on a Mac: the card, not an answer that says «Image: C:\…».
+ */
+test("Codex UI: an image's path is recognized as a card on any system (Windows drive and network paths included)", async () => {
+  const h = codexUi("en", rpc => threadReplies(rpc), undefined, 220);
+  try {
+    await tick(); h.enter("hello"); await tick();
+    h.terminal.output = "";
+    const paths = ["C:\\Users\\ana\\Pictures\\captura-win.png", "C:/Users/ana/Pictures/captura-barra.png", "\\\\servidor\\compartido\\captura-red.png", "/Users/ana/captura-unix.png"];
+    paths.forEach((path, n) => h.rpc.onNotification("item/completed", { threadId: "t", turnId: "u", item: { type: "imageView", id: `iv${n}`, path } }));
+    await waitUntil(() => h.plain().includes("captura-unix.png"), 10_000);
+    const screen = h.plain();
+    // None of them is shown as an answer that begins with «Image: »; each is a card with its path (the files are not there, so there is no thumbnail).
+    expect(screen).not.toContain("Image: ");
+    for (const path of paths) expect(screen, path).toContain(path);
+  } finally {
+    // The turn is closed before quitting: with it still open a failed assertion left `await h.ui` waiting, and the run only said «timed out» instead of what failed.
+    h.rpc.onNotification("turn/completed", { threadId: "t", turn: { id: "u", status: "completed" } }); await tick();
+    h.enter("/f614:quit"); await h.ui;
+  }
 }, { timeout: 30_000 });
 
 /**

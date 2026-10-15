@@ -24,7 +24,7 @@ import { AssistantMessage, UserBubble } from "./chat-message.ts";
 import { TurnTranscript } from "./turn-transcript.ts";
 import { isCommandText } from "./command-text.ts";
 import { summarizeToolText } from "./tool-summary.ts";
-import { ImageStrip, enableTerminalImages, readImage } from "./chat-images.ts";
+import { ImageStrip, announcedImagePath, enableTerminalImages, readImage } from "./chat-images.ts";
 import { effortDescription, effortLabel } from "./metrics.ts";
 import { ChatText, danger, warning } from "./theme.ts";
 import { ChatLinks, enableTerminalLinks, realChatLinkTools } from "./chat-links.ts";
@@ -157,9 +157,9 @@ export async function runNativeUI(
       const arguments_ = detail.join("\n");
       const summary = summarizeToolText(arguments_, getCatalog(locale));
       writeActivity(title || tc.toolFallbackTitle, (summary !== arguments_ ? `${summary}\n${arguments_}` : arguments_) || tc.toolFallbackDetail);
-    } else if (/^Image: \/[^\n]+$/.test(text)) {
-      // An image Codex looked at or made (see `item/completed` in `src/engines/codex/session.ts`): a card with its name and, where the terminal shows images, its thumbnail.
-      const path = text.slice("Image: ".length);
+    } else if (announcedImagePath(text) !== undefined) {
+      // An image Codex looked at or made (see `item/completed` in `src/engines/codex/session.ts`): a card with its name and, where the terminal shows images, its thumbnail. The path is of any system (`C:\…` too).
+      const path = announcedImagePath(text)!;
       const image = readImage(path);
       const card = writeActivity(getCatalog(locale).chatImages.viewedTitle, image?.name ?? path);
       if (image) card.setImages(new ImageStrip([image], { locale, links, indent: TOOL_INDENT + 2 }));
