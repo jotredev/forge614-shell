@@ -9,6 +9,8 @@ type SummaryText = Pick<Catalog, "toolSummary" | "chatImages">;
 
 /** The most titles a summary of results names, and the most `key: value` pairs a summary of any other object shows. */
 const MAX_TITLES = 3;
+/** The most tools a summary of what ToolSearch loaded names. */
+const MAX_TOOLS = 5;
 const MAX_PAIRS = 3;
 /** The longest a single value is shown in a summary. */
 const MAX_VALUE = 60;
@@ -85,11 +87,23 @@ function describeImageBlock(block: Record<string, unknown>, t: SummaryText): str
  * it is in words («PNG image · 1600×1400», `describeImageBlock`), without its bytes; the parts go on one line joined by « · ». Control codes are removed and the length is limited.
  */
 export function toolResultPreview(content: unknown, t: SummaryText): string {
-  const parts = Array.isArray(content) ? content.map(block => {
-    if (!isRecord(block)) return typeof block === "string" ? summarizeToolText(block, t) : JSON.stringify(block ?? "");
-    if (block.type === "text" && typeof block.text === "string") return summarizeToolText(block.text, t);
-    if (block.type !== "image") return JSON.stringify(block);
-    return describeImageBlock(block, t);
+  const references = Array.isArray(content) ? content.flatMap(block => isRecord(block) && block.type === "tool_reference" && typeof block.tool_name === "string" ? [toolName(block.tool_name)] : []) : [];
+  let referencesSaid = false;
+  const parts = Array.isArray(content) ? content.flatMap(block => {
+    if (!isRecord(block)) return [typeof block === "string" ? summarizeToolText(block, t) : JSON.stringify(block ?? "")];
+    if (block.type === "text" && typeof block.text === "string") return [summarizeToolText(block.text, t)];
+    // What ToolSearch loaded: one `tool_reference` block per tool, said once, where the first one is, as «tools loaded: a, b».
+    if (block.type === "tool_reference" && typeof block.tool_name === "string") {
+      if (referencesSaid) return [];
+      referencesSaid = true;
+      const shown = references.slice(0, MAX_TOOLS).join(", ");
+      return [t.toolSummary.toolsLoaded({ names: references.length > MAX_TOOLS ? `${shown}… (+${references.length - MAX_TOOLS})` : shown })];
+    }
+    if (block.type !== "image") return [JSON.stringify(block)];
+    return [describeImageBlock(block, t)];
   }) : [typeof content === "string" ? summarizeToolText(content, t) : JSON.stringify(content ?? "")];
   return clean(parts.join(" · ")).slice(0, 3000);
 }
+
+/** A tool's name without the server it comes from: `mcp__forge614-engram__memory_search` → `memory_search`. */
+const toolName = (name: string) => name.includes("__") ? name.slice(name.lastIndexOf("__") + 2) || name : name;

@@ -3,9 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { Container, getCapabilities, resetCapabilitiesCache, setCapabilities, setCapabilityOverrides } from "@earendil-works/pi-tui";
+import { deflateSync } from "node:zlib";
+import { Container, getCapabilities, getCellDimensions, getImageDimensions, resetCapabilitiesCache, setCapabilities, setCapabilityOverrides } from "@earendil-works/pi-tui";
 import { ChatLinks } from "./chat-links.ts";
-import { ImageStrip, MAX_THUMBNAILS, THUMBNAIL_COLUMNS, THUMBNAIL_ROWS, enableTerminalImages, findImagePaths, formatBytes, imageLine, imagesInText, readImage } from "./chat-images.ts";
+import { ImageStrip, MAX_THUMBNAILS, THUMBNAIL_COLUMNS, THUMBNAIL_MAX_BYTES, THUMBNAIL_ROWS, enableTerminalImages, findImagePaths, formatBytes, imageLine, imagesInText, readImage } from "./chat-images.ts";
 import { UserBubble } from "./chat-message.ts";
 import { ActivityCard } from "./transcript.ts";
 import { toolResultImages } from "./tool-summary.ts";
@@ -357,8 +358,8 @@ test("sin imágenes activadas (FORGE614_SHELL_IMAGES=off) el frame compuesto no 
 
 // ── The bytes the terminal gets (U2-r3) ────────────────────────────────────────────────────
 
-/** A PNG as big as a real screenshot, so its kitty sequence has dozens of `m=1` chunks (the 33-byte fixtures above fit in one and hid the defect). */
-const bigPng = (width: number, height: number, extra = 150_000) => Buffer.concat([png(width, height), Buffer.from(Array.from({ length: extra }, (_, i) => (i * 31) % 256))]);
+/** A PNG as big as a thumbnail may be (`THUMBNAIL_MAX_BYTES` as base64 allows ~105 KB), so its kitty sequence has dozens of `m=1` chunks (the 33-byte fixtures above fit in one and hid the defect). A heavier one is reduced first (see `thumbnailOf`). */
+const bigPng = (width: number, height: number, extra = 100_000) => Buffer.concat([png(width, height), Buffer.from(Array.from({ length: extra }, (_, i) => (i * 31) % 256))]);
 /** The text of a row with the graphics sequences taken out (they are zero columns wide) and the terminal's controls removed: what the person reads on that row. */
 const visible = (row: string) => stripVTControlCharacters(row.replace(KITTY, ""));
 /** Cuts the frame at each cursor move (`ESC[row;1H`): the last time each row was written. */
@@ -450,5 +451,74 @@ test("lo mismo con la imagen dentro de una tarjeta de herramienta (Read) y despu
     for (let y = 3; y < 30; y++) expect(visible(rows[y] ?? "").slice(-36), `desplazado a ${top}, fila ${y}`).toBe(sidebar[y]!);
   }
   expect(withImage).toBeGreaterThan(3); // la prueba mira cuadros que de verdad llevan la imagen
+  s.stop();
+});
+
+// ── Thumbnails reduced with Photon (U2-r5) ─────────────────────────────────────────────────
+
+const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+const crc32 = (bytes: Buffer) => { let c = 0xffffffff; for (const byte of bytes) c = crcTable[(c ^ byte) & 255]! ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+const pngChunk = (type: string, body: Buffer) => { const out = Buffer.alloc(12 + body.length); out.writeUInt32BE(body.length, 0); out.write(type, 4); body.copy(out, 8); out.writeUInt32BE(crc32(out.subarray(4, 8 + body.length)), 8 + body.length); return out; };
+/** A real PNG (Photon can decode it) of `width` × `height` pixels: a gradient with noise, as heavy as a screenshot (several MB), written with `zlib` and no library. */
+function realPng(width: number, height: number): Buffer {
+  const row = width * 3 + 1;
+  const raw = Buffer.alloc(row * height);
+  let seed = 1;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width * 3; x++) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; raw[y * row + 1 + x] = ((x * 255) / (width * 3) + (y * 255) / height + ((seed >> 16) % 64)) & 255; }
+  const header = Buffer.alloc(13); header.writeUInt32BE(width, 0); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 2;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk("IHDR", header), pngChunk("IDAT", deflateSync(raw)), pngChunk("IEND", Buffer.alloc(0))]);
+}
+const until = async (ready: () => boolean, ms = 15_000) => { const end = Date.now() + ms; while (!ready() && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 25)); };
+/** The data of the first image drawn in `output` (its chunks joined, from its first `a=T`/`a=t` to its last `m=0`). */
+function firstImageData(output: string): { base64: string; sequence: string } {
+  const chunks = output.match(KITTY) ?? [];
+  const start = chunks.findIndex(chunk => /^\x1b_Ga=[Tt],/.test(chunk));
+  const end = chunks.findIndex((chunk, index) => index >= start && !/(?:,|_G)m=1;/.test(chunk));
+  const own = chunks.slice(start, end + 1);
+  return { base64: own.map(chunk => chunk.slice(chunk.indexOf(";") + 1, -2)).join(""), sequence: own[0]! };
+}
+
+test("U2-r5: una captura de 1683×1047 se dibuja como una miniatura reducida (≤ 140 000 base64, dentro de 40×14 celdas ×2), llega sola, y la línea gris dice el original", async () => {
+  const original = realPng(1683, 1047);
+  const path = file("captura-real-1683.png", original);
+  const image = readImage(path)!;
+  expect(image).toMatchObject({ widthPx: 1683, heightPx: 1047, bytes: original.length });
+  const s = await screen(container => container.addChild(new UserBubble(`mira ${path}`, { locale: "es", at: null })), 120, 50);
+  // Al principio solo la línea gris (la miniatura se está reduciendo y escribir no se detiene); luego la miniatura aparece sola, sin que nadie pida otro cuadro.
+  expect(s.all()).not.toMatch(/\x1b_Ga=[Tpt]/);
+  await until(() => s.all().includes("\x1b_Ga=T"));
+  const { base64, sequence } = firstImageData(s.all());
+  expect(base64.length).toBeGreaterThan(1000);
+  expect(base64.length).toBeLessThanOrEqual(THUMBNAIL_MAX_BYTES);
+  expect(base64.length).toBeLessThan(original.length / 4);
+  const mime = Buffer.from(base64, "base64")[0] === 0x89 ? "image/png" : "image/jpeg";
+  const dimensions = getImageDimensions(base64, mime)!;
+  const cell = getCellDimensions();
+  expect(dimensions.widthPx).toBeLessThanOrEqual(THUMBNAIL_COLUMNS * cell.widthPx * 2);
+  expect(dimensions.heightPx).toBeLessThanOrEqual(THUMBNAIL_ROWS * cell.heightPx * 2);
+  expect(dimensions.widthPx / dimensions.heightPx).toBeCloseTo(1683 / 1047, 1);
+  expect(sizeOf(sequence).columns).toBeLessThanOrEqual(THUMBNAIL_COLUMNS);
+  expect(sizeOf(sequence).rows).toBeLessThanOrEqual(THUMBNAIL_ROWS);
+  console.log(`U2-r5 miniatura de 1683×1047 (${Math.round(original.length / 1024)} KB): ${dimensions.widthPx}×${dimensions.heightPx} px, ${Math.round((base64.length * 3) / 4 / 1024)} KB (${base64.length} base64), ${mime}, ${sizeOf(sequence).columns}×${sizeOf(sequence).rows} celdas`);
+  s.stop();
+  // La línea gris (donde no hay imágenes) sigue diciendo las medidas y el peso del original.
+  expect(plain([imageLine(image)])[0]).toContain(`1683×1047 · ${formatBytes(original.length)}`);
+});
+
+test("U2-r5: si Photon no puede reducir la imagen, un original de 256 KB o menos se dibuja tal cual y uno más pesado solo es su línea gris", async () => {
+  // Datos que Photon no decodifica (la cabecera sí es de un PNG): sin reducción posible.
+  const light = file("sin-photon-ligera.png", bigPng(1200, 900, 200 * 1024 - 33));
+  const heavy = file("sin-photon-pesada.png", bigPng(1200, 900, 300 * 1024 - 33));
+  const s = await screen(container => { container.addChild(new UserBubble(`ligera ${light}`, { locale: "es", at: null })); container.addChild(new UserBubble(`pesada ${heavy}`, { locale: "es", at: null })); }, 120, 60);
+  await until(() => s.all().includes("\x1b_Ga=T"));
+  await s.settle();
+  // Una sola imagen dibujada (la ligera, tal cual: su carga es el archivo entero) y la pesada con su línea gris.
+  const drawn = (s.all().match(/\x1b_Ga=T,/g) ?? []).length;
+  expect(drawn).toBeGreaterThan(0);
+  const { base64 } = firstImageData(s.all());
+  expect(base64).toBe(bigPng(1200, 900, 200 * 1024 - 33).toString("base64"));
+  expect(stripVTControlCharacters(s.all())).toContain("🖼 sin-photon-pesada.png · 1200×900");
+  // Solo un id de imagen se transmite: la pesada nunca se dibuja.
+  expect(new Set((s.all().match(/\x1b_Ga=T,[^;\x1b]*/g) ?? []).map(first => /i=(\d+)/.exec(first)![1])).size).toBe(1);
   s.stop();
 });

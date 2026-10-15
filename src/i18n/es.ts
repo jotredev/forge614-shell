@@ -413,6 +413,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
   toolSummary: {
     results: ({ count, titles }) => `${count} ${count === 1 ? "resultado" : "resultados"}${titles ? `: ${titles}` : ""}`,
     session: ({ id }) => `sesión ${id}`,
+    toolsLoaded: ({ names }) => `herramientas cargadas: ${names}`,
   },
   chatRoles: {
     human: "Humano",

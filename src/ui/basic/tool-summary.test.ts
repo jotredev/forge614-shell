@@ -72,6 +72,26 @@ test("un bloque de imagen se resume como «imagen PNG · 1600×1400», con sus m
   expect(toolResultPreview([{ type: "image" }], es)).toBe("imagen");
 });
 
+/** U2-r5: lo que devuelve ToolSearch (`tool_result.content`): un bloque `tool_reference` por herramienta cargada, que se veía como JSON crudo. */
+test("ToolSearch: los bloques tool_reference se resumen como «herramientas cargadas: …» sin el prefijo mcp__servidor__, en el idioma del catálogo", () => {
+  const reference = (name: string) => ({ type: "tool_reference", tool_name: name });
+  // Uno solo.
+  expect(toolResultPreview([reference("mcp__forge614-engram__memory_session_start")], es)).toBe("herramientas cargadas: memory_session_start");
+  expect(toolResultPreview([reference("mcp__forge614-engram__memory_session_start")], en)).toBe("tools loaded: memory_session_start");
+  // Varios, en orden y en una sola línea.
+  const many = [reference("mcp__forge614-engram__memory_search"), reference("mcp__forge614-engram__memory_save"), reference("Read")];
+  expect(toolResultPreview(many, es)).toBe("herramientas cargadas: memory_search, memory_save, Read");
+  // Con muchas solo se nombran las primeras y se cuenta el resto.
+  const lots = Array.from({ length: 9 }, (_, i) => reference(`mcp__s__tool_${i + 1}`));
+  expect(toolResultPreview(lots, en)).toBe("tools loaded: tool_1, tool_2, tool_3, tool_4, tool_5… (+4)");
+  // Junto a un bloque de texto, en la misma línea; nunca el JSON.
+  const mixed = toolResultPreview([{ type: "text", text: "listo" }, reference("mcp__a__b__c")], es);
+  expect(mixed).toBe("listo · herramientas cargadas: c");
+  for (const text of [toolResultPreview(many, es), toolResultPreview(lots, es), mixed]) expect(text).not.toContain("tool_reference");
+  // Un bloque con la forma pero sin nombre no rompe nada y no inventa nombres.
+  expect(toolResultPreview([{ type: "tool_reference" }], es)).not.toContain("herramientas cargadas: undefined");
+});
+
 test("los códigos de control se quitan y el largo se limita", () => {
   expect(toolResultPreview("\x1b[31mrojo\x1b[0m\x07", es)).toBe("rojo");
   expect(toolResultPreview("x".repeat(5000), es).length).toBe(3000);
