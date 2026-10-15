@@ -3,10 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { deflateSync } from "node:zlib";
+import { realPng } from "./png-fixtures.ts";
 import { Container, getCapabilities, getCellDimensions, getImageDimensions, resetCapabilitiesCache, setCapabilities, setCapabilityOverrides } from "@earendil-works/pi-tui";
 import { ChatLinks } from "./chat-links.ts";
-import { ImageStrip, MAX_THUMBNAILS, THUMBNAIL_COLUMNS, THUMBNAIL_MAX_BYTES, THUMBNAIL_ROWS, enableTerminalImages, findImagePaths, formatBytes, imageLine, imagesInText, readImage } from "./chat-images.ts";
+import { ImageStrip, MAX_THUMBNAILS, THUMBNAIL_COLUMNS, THUMBNAIL_GAP, THUMBNAIL_MAX_BYTES, THUMBNAIL_ROWS, enableTerminalImages, findImagePaths, formatBytes, imageLine, imagesInText, readImage } from "./chat-images.ts";
 import { UserBubble } from "./chat-message.ts";
 import { ActivityCard } from "./transcript.ts";
 import { toolResultImages } from "./tool-summary.ts";
@@ -194,7 +194,7 @@ test("FORGE614_SHELL_IMAGES fuerza kitty, iterm2 o off, en cualquier terminal, y
 const kittyOf = (rows: string[]) => rows.join("").match(KITTY) ?? [];
 const sizeOf = (sequence: string) => ({ columns: Number(/[,;]c=(\d+)/.exec(sequence)![1]), rows: Number(/[,;]r=(\d+)/.exec(sequence)![1]) });
 
-test("la miniatura de un mensaje cabe en 40 columnas y 14 renglones, a la izquierda con el margen de 2, debajo del texto", () => {
+test("la miniatura de un mensaje cabe en 22 columnas y 7 renglones, a la izquierda con el margen de 2, debajo del texto y con su línea gris debajo", () => {
   const path = file("grande-1600.png", png(1600, 1400));
   const rows = new UserBubble(`mira ${path}`, { locale: "es", at: null }).render(100);
   const sequences = kittyOf(rows);
@@ -207,18 +207,54 @@ test("la miniatura de un mensaje cabe en 40 columnas y 14 renglones, a la izquie
   expect(rows[at]!.startsWith("  \x1b_G")).toBe(true); // margen de 2
   expect(at).toBeGreaterThan(rows.findIndex(row => row.includes("mira"))); // debajo del texto
   expect(rows[at - 1]).toBe(""); // con aire arriba
-  expect(rows.length - 1 - at).toBe(height - 1); // el resto de las filas de la imagen: vacías
-  expect(rows.slice(at + 1).every(row => row === "")).toBe(true);
+  expect(rows.length - 1 - at).toBe(height); // el resto de las filas de la imagen (vacías) y, debajo, su línea gris
+  expect(rows.slice(at + 1, at + height).every(row => row === "")).toBe(true);
+  expect(plain(rows).at(-1)).toBe("  🖼 grande-1600.png · 1600×1400 · 33 B");
   expect(solid(rows)).toContain(path.replace(/\s+/g, "")); // el texto con la ruta, como antes
 });
 
-test("hasta 4 miniaturas por mensaje y, si hay más, una línea «+N imágenes»", () => {
-  const paths = Array.from({ length: 6 }, (_, i) => file(`m${i}.png`, png(100 + i, 80)));
-  const rows = new UserBubble(paths.join(" "), { locale: "es", at: null }).render(120);
-  expect(kittyOf(rows)).toHaveLength(MAX_THUMBNAILS);
+/** How many images a render draws (each `a=T` is one image's start; its other chunks carry no `a=`). */
+const imagesDrawn = (rows: string[]) => (rows.join("").match(/\x1b_Ga=T,/g) ?? []).length;
+
+test("hasta 4 miniaturas por mensaje van en UN renglón, como UNA sola imagen kitty, con su línea gris cada una, y si hay más, una línea «+N imágenes»", async () => {
+  const paths = Array.from({ length: 6 }, (_, i) => file(`m${i}.png`, realPng(160 + i, 120, i + 1)));
+  const bubble = new UserBubble(paths.join(" "), { locale: "es", at: null });
+  // Mientras se componen, solo las líneas grises.
+  expect(imagesDrawn(bubble.render(120))).toBe(0);
+  await until(() => imagesDrawn(bubble.render(120)) > 0, 10_000);
+  const rows = bubble.render(120);
+  expect(MAX_THUMBNAILS).toBe(4);
+  expect(imagesDrawn(rows)).toBe(1); // las 4 miniaturas, una sola imagen
+  const at = rows.findIndex(row => row.includes("\x1b_Ga=T,"));
+  expect(rows.slice(at).filter(row => row.includes("\x1b_G"))).toHaveLength(1); // solo una fila lleva la imagen
+  const { columns, rows: height } = sizeOf(kittyOf(rows)[0]!);
+  expect(columns).toBeGreaterThan(THUMBNAIL_COLUMNS * 3); // se ven las cuatro: ocupan más de 3 cajas...
+  expect(columns).toBeLessThanOrEqual(4 * THUMBNAIL_COLUMNS + 3 * THUMBNAIL_GAP); // ...y no más de 4 cajas con sus separaciones (94 columnas: caben en el ancho de lectura de 100)
+  expect(height).toBeLessThanOrEqual(THUMBNAIL_ROWS);
+  // Debajo de la tira, una línea gris por imagen, en el orden de la tira; y «+2 imágenes».
+  const grays = plain(rows).filter(row => row.includes("🖼"));
+  expect(grays).toHaveLength(4);
+  expect(grays.map(row => row.trim().split(" ")[1])).toEqual(["m0.png", "m1.png", "m2.png", "m3.png"]);
   expect(plain(rows).filter(row => row.includes("+2 imágenes"))).toEqual(["  +2 imágenes"]);
   const one = Array.from({ length: 5 }, (_, i) => file(`n${i}.png`, png(50, 50)));
   expect(plain(new UserBubble(one.join(" "), { locale: "en", at: null }).render(120)).join("\n")).toContain("+1 image");
+});
+
+test("en una ventana angosta las miniaturas que no caben bajan al renglón siguiente, cada renglón una sola imagen, y en una muy angosta van de una en una", async () => {
+  const paths = Array.from({ length: 4 }, (_, i) => file(`w${i}.png`, realPng(160 + i, 120, i + 1)));
+  const wide = new UserBubble(paths.join(" "), { locale: "es", at: null });
+  await until(() => imagesDrawn(wide.render(120)) > 0, 10_000);
+  // 60 columnas: caben 2 por renglón (22 + 2 + 22 = 46 ≤ 58) → 2 renglones de imágenes.
+  const narrow = new UserBubble(paths.join(" "), { locale: "es", at: null });
+  await until(() => imagesDrawn(narrow.render(60)) > 1, 10_000);
+  const rows = narrow.render(60);
+  expect(imagesDrawn(rows)).toBe(2);
+  for (const sequence of rows.join("").match(/\x1b_Ga=T,[^;\x1b]*/g)!) expect(sizeOf(sequence).columns).toBeLessThanOrEqual(2 * THUMBNAIL_COLUMNS + THUMBNAIL_GAP);
+  expect(plain(rows).filter(row => row.includes("🖼"))).toHaveLength(4);
+  // 30 columnas: de una en una (cada una su caja de 22), 4 imágenes.
+  const tiny = new UserBubble(paths.join(" "), { locale: "es", at: null });
+  await until(() => imagesDrawn(tiny.render(30)) > 3, 10_000);
+  expect(imagesDrawn(tiny.render(30))).toBe(4);
 });
 
 test("«Copiar» y la selección ven solo texto: la fila de la imagen no lleva texto copiable y el mensaje sigue siendo el texto", () => {
@@ -230,7 +266,8 @@ test("«Copiar» y la selección ven solo texto: la fila de la imagen no lleva t
   expect(text).not.toContain("\x1b");
   const lines = text.split("\n").filter(line => line.trim() !== "");
   expect(lines[0]!.trimEnd()).toBe("  Humano");
-  expect(lines.slice(1).join("").replace(/\s+/g, "")).toBe(`mira${path}`.replace(/\s+/g, "")); // solo el mensaje, aunque la ruta ocupe varios renglones
+  // El mensaje (aunque la ruta ocupe varios renglones) y la línea gris de la imagen, que es texto: nada de datos.
+  expect(lines.slice(1).join("").replace(/\s+/g, "")).toBe(`mira${path}🖼copia.png·300×200·33B`.replace(/\s+/g, ""));
 });
 
 // ── Image blocks in a tool result ──────────────────────────────────────────────────────────
@@ -306,10 +343,12 @@ test("al desplazar, una imagen medio fuera por abajo se recorta, y fuera de la v
   const path = file("scroll.png", png(1600, 1400));
   // Mucho texto antes y después para poder desplazar.
   const filler = Array.from({ length: 40 }, (_, i) => `línea ${i + 1} de relleno`).join("\n");
+  // Con la caja de 7 renglones la imagen es más baja: el relleno de abajo es más largo para que se pueda desplazar hasta que la imagen salga por arriba.
+  const after = Array.from({ length: 90 }, (_, i) => `línea ${i + 1} de relleno`).join("\n");
   const s = await screen(container => {
     container.addChild(new UserBubble(filler, { locale: "es", at: null }));
     container.addChild(new UserBubble(`mira ${path}`, { locale: "es", at: null }));
-    container.addChild(new UserBubble(filler, { locale: "es", at: null }));
+    container.addChild(new UserBubble(after, { locale: "es", at: null }));
   });
   // Solo las secuencias que abren una imagen o un puesto (las que traen c= y r=); los trozos de datos intermedios no.
   const heightOf = (chunk: string) => (chunk.match(KITTY) ?? []).filter(sequence => /[,;]r=\d+/.test(sequence) && /[,;]c=\d+/.test(sequence)).map(sequence => sizeOf(sequence).rows);
@@ -456,18 +495,6 @@ test("lo mismo con la imagen dentro de una tarjeta de herramienta (Read) y despu
 
 // ── Thumbnails reduced with Photon (U2-r5) ─────────────────────────────────────────────────
 
-const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
-const crc32 = (bytes: Buffer) => { let c = 0xffffffff; for (const byte of bytes) c = crcTable[(c ^ byte) & 255]! ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
-const pngChunk = (type: string, body: Buffer) => { const out = Buffer.alloc(12 + body.length); out.writeUInt32BE(body.length, 0); out.write(type, 4); body.copy(out, 8); out.writeUInt32BE(crc32(out.subarray(4, 8 + body.length)), 8 + body.length); return out; };
-/** A real PNG (Photon can decode it) of `width` × `height` pixels: a gradient with noise, as heavy as a screenshot (several MB), written with `zlib` and no library. */
-function realPng(width: number, height: number): Buffer {
-  const row = width * 3 + 1;
-  const raw = Buffer.alloc(row * height);
-  let seed = 1;
-  for (let y = 0; y < height; y++) for (let x = 0; x < width * 3; x++) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; raw[y * row + 1 + x] = ((x * 255) / (width * 3) + (y * 255) / height + ((seed >> 16) % 64)) & 255; }
-  const header = Buffer.alloc(13); header.writeUInt32BE(width, 0); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 2;
-  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk("IHDR", header), pngChunk("IDAT", deflateSync(raw)), pngChunk("IEND", Buffer.alloc(0))]);
-}
 const until = async (ready: () => boolean, ms = 15_000) => { const end = Date.now() + ms; while (!ready() && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 25)); };
 /** The data of the first image drawn in `output` (its chunks joined, from its first `a=T`/`a=t` to its last `m=0`). */
 function firstImageData(output: string): { base64: string; sequence: string } {
