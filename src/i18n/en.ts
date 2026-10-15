@@ -411,6 +411,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     viewedTitle: "Image",
     kind: ({ format }) => `${format} image`,
     pasteEmpty: "There is no image on the clipboard",
+    pasteHint: ({ key }) => `${key} pastes an image`,
     pasteMissingTool: ({ tools }) => `Could not read the clipboard: install ${tools}`,
     pasteTooBig: "The image on the clipboard is over 20 MB",
     pasteFailed: "Could not read the image on the clipboard",

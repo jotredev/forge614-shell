@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { createComposer } from "./composer.ts";
 import { attachImagePaste, pastedPathText, pasteNotice } from "./paste-image.ts";
 import { imagesInText } from "./chat-images.ts";
@@ -91,6 +92,52 @@ test("pegar es de uno en uno: la tecla pulsada de nuevo mientras se lee el porta
   expect(input.getText()).toBe("/tmp/uno.png ");
   input.handleInput(KEY);
   expect(calls).toBe(2);
+});
+
+/** The text the box draws, without colors or the cursor's marks. */
+const boxText = (input: { render(width: number): string[] }, width = 70) => input.render(width).map(row => stripVTControlCharacters(row.replace(/\x1b_[^\x07\x1b]*(?:\x07|\x1b\\)/g, ""))).join("\n");
+const screenStub = () => ({ requestRender() {}, flash() {}, terminal: { rows: 40, columns: 100 } });
+
+test("U2-r8: la caja vacía muestra la pista gris de la tecla donde la terminal no pega imágenes, y en Orca no", () => {
+  const hints = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform, locale: "es" | "en" = "es") => {
+    const screen = screenStub();
+    const { input } = createComposer(screen as never, locale);
+    input.focused = true;
+    attachImagePaste(input, screen, locale, async () => ({ kind: "empty" }), { env, platform });
+    return boxText(input);
+  };
+  // Terminal de macOS: sale; en Orca (donde Cmd+V ya pega la ruta) no.
+  expect(hints({ TERM_PROGRAM: "Apple_Terminal" }, "darwin")).toContain("Ctrl+V pega una imagen");
+  expect(hints({ TERM_PROGRAM: "Apple_Terminal" }, "darwin", "en")).toContain("Ctrl+V pastes an image");
+  expect(hints({ TERM_PROGRAM: "Orca" }, "darwin")).not.toContain("pega una imagen");
+  expect(hints({ TERM_PROGRAM: "Orca" }, "darwin", "en")).not.toContain("pastes an image");
+  // Windows: Alt+V. Linux sin variable: Ctrl+V.
+  expect(hints({ WT_SESSION: "x" }, "win32")).toContain("Alt+V pega una imagen");
+  expect(hints({}, "win32")).not.toContain("Ctrl+V");
+  expect(hints({}, "linux")).toContain("Ctrl+V pega una imagen");
+});
+
+test("U2-r8: la pista no estorba al escribir: está solo con la caja vacía, desaparece con la primera tecla y vuelve al vaciarla", () => {
+  const screen = screenStub();
+  const { input } = createComposer(screen as never, "es");
+  input.focused = true;
+  attachImagePaste(input, screen, "es", async () => ({ kind: "empty" }), { env: { TERM_PROGRAM: "Apple_Terminal" }, platform: "darwin" });
+  expect(boxText(input)).toContain("Ctrl+V pega una imagen");
+  input.handleInput("h");
+  expect(input.getText()).toBe("h");
+  expect(boxText(input)).not.toContain("pega una imagen");
+  expect(boxText(input)).toContain("h");
+  input.handleInput("\x7f"); // retroceso
+  expect(input.getText()).toBe("");
+  expect(boxText(input)).toContain("Ctrl+V pega una imagen");
+  // El cursor sigue donde estaba (la marca de pi-tui va antes de la pista): la pista no lo mueve.
+  const row = input.render(70).find(line => line.includes("Ctrl+V"))!;
+  expect(row.indexOf("\x1b_pi:c")).toBeGreaterThan(-1);
+  expect(row.indexOf("\x1b_pi:c")).toBeLessThan(row.indexOf("Ctrl+V"));
+  // Sin el gancho de pegar no hay pista (la caja de otras pantallas no cambia).
+  const plain = createComposer(screenStub() as never, "es").input;
+  plain.focused = true;
+  expect(boxText(plain)).not.toContain("pega una imagen");
 });
 
 test("sin el gancho la tecla no hace nada de esto, y en la otra tecla (Ctrl+V en Windows) el texto sigue siendo del editor", async () => {
