@@ -3,10 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { realPng } from "./png-fixtures.ts";
+import { realPng, screenshotPng } from "./png-fixtures.ts";
+import { decodePng } from "./png-strip.ts";
 import { Container, getCapabilities, getCellDimensions, getImageDimensions, resetCapabilitiesCache, setCapabilities, setCapabilityOverrides } from "@earendil-works/pi-tui";
 import { ChatLinks } from "./chat-links.ts";
-import { ImageStrip, MAX_THUMBNAILS, THUMBNAIL_COLUMNS, THUMBNAIL_GAP, THUMBNAIL_MAX_BYTES, THUMBNAIL_ROWS, enableTerminalImages, findImagePaths, formatBytes, imageLine, imagesInText, readImage } from "./chat-images.ts";
+import { ImageStrip, MAX_THUMBNAILS, THUMBNAIL_COLUMNS, THUMBNAIL_GAP, THUMBNAIL_MAX_BYTES, THUMBNAIL_ROWS, thumbnailLayout, enableTerminalImages, findImagePaths, formatBytes, imageLine, imagesInText, readImage } from "./chat-images.ts";
 import { UserBubble } from "./chat-message.ts";
 import { ActivityCard } from "./transcript.ts";
 import { toolResultImages } from "./tool-summary.ts";
@@ -244,12 +245,15 @@ test("en una ventana angosta las miniaturas que no caben bajan al renglón sigui
   const paths = Array.from({ length: 4 }, (_, i) => file(`w${i}.png`, realPng(160 + i, 120, i + 1)));
   const wide = new UserBubble(paths.join(" "), { locale: "es", at: null });
   await until(() => imagesDrawn(wide.render(120)) > 0, 10_000);
-  // 60 columnas: caben 2 por renglón (22 + 2 + 22 = 46 ≤ 58) → 2 renglones de imágenes.
+  // 60 columnas (58 libres): cuatro cajas de 14 no caben (4·14 + 3·2 = 62), pero tres de 18 sí (3·18 + 2·2 = 58) → una tira de 3 y la cuarta sola en otro renglón.
   const narrow = new UserBubble(paths.join(" "), { locale: "es", at: null });
   await until(() => imagesDrawn(narrow.render(60)) > 1, 10_000);
   const rows = narrow.render(60);
   expect(imagesDrawn(rows)).toBe(2);
-  for (const sequence of rows.join("").match(/\x1b_Ga=T,[^;\x1b]*/g)!) expect(sizeOf(sequence).columns).toBeLessThanOrEqual(2 * THUMBNAIL_COLUMNS + THUMBNAIL_GAP);
+  const widths = (rows.join("").match(/\x1b_Ga=T,[^;\x1b]*/g) ?? []).map(sequence => sizeOf(sequence).columns).sort((a, b) => b - a);
+  expect(widths[0]).toBeLessThanOrEqual(3 * 18 + 2 * THUMBNAIL_GAP);
+  expect(widths[0]).toBeGreaterThan(2 * 18 + THUMBNAIL_GAP);
+  expect(widths[1]).toBeLessThanOrEqual(18);
   expect(plain(rows).filter(row => row.includes("🖼"))).toHaveLength(4);
   // 30 columnas: de una en una (cada una su caja de 22), 4 imágenes.
   const tiny = new UserBubble(paths.join(" "), { locale: "es", at: null });
@@ -492,6 +496,72 @@ test("lo mismo con la imagen dentro de una tarjeta de herramienta (Read) y despu
   expect(withImage).toBeGreaterThan(3); // la prueba mira cuadros que de verdad llevan la imagen
   s.stop();
 });
+
+// ── The strip's size (U2-r7) ───────────────────────────────────────────────────────────────
+
+test("thumbnailLayout: hasta 4 por renglón mientras cada caja mida 14 columnas o más (22 como máximo, 2 de hueco); solo si no caben 4 de 14 bajan las que sobran", () => {
+  // Con espacio de sobra: 4 cajas de 22 (94 columnas) y menos imágenes también de 22.
+  expect(thumbnailLayout(4, 98)).toEqual({ perRow: 4, columns: 22 });
+  expect(thumbnailLayout(2, 98)).toEqual({ perRow: 2, columns: 22 });
+  expect(thumbnailLayout(1, 98)).toEqual({ perRow: 1, columns: 22 });
+  // 74 columnas libres (un chat de 76 con margen de 2): 4 cajas de 17.
+  expect(thumbnailLayout(4, 74)).toEqual({ perRow: 4, columns: 17 });
+  expect(thumbnailLayout(3, 74)).toEqual({ perRow: 3, columns: 22 });
+  // El límite: 4 de 14 ocupan 62; con 61 libres ya no caben y van 3 de 18.
+  expect(thumbnailLayout(4, 62)).toEqual({ perRow: 4, columns: 14 });
+  expect(thumbnailLayout(4, 61)).toEqual({ perRow: 3, columns: 19 });
+  expect(thumbnailLayout(4, 58)).toEqual({ perRow: 3, columns: 18 });
+  // Muy angosto: de una en una, con la caja que haya.
+  expect(thumbnailLayout(4, 28)).toEqual({ perRow: 1, columns: 22 });
+  expect(thumbnailLayout(4, 10)).toEqual({ perRow: 1, columns: 10 });
+});
+
+test("U2-r7: con 76 columnas de chat, 4 capturas de 1903×1047 quedan en UNA tira, de cajas de 17 columnas", async () => {
+  const paths = [1, 2, 3, 4].map(n => file(`tira76-${n}.png`, screenshotPng(1903, 1047, n)));
+  const bubble = new UserBubble(paths.join(" "), { locale: "es", at: null });
+  await until(() => imagesDrawn(bubble.render(76)) > 0, 15_000);
+  const rows = bubble.render(76);
+  expect(imagesDrawn(rows)).toBe(1);
+  const { columns } = sizeOf(kittyOf(rows)[0]!);
+  expect(columns).toBeGreaterThan(3 * 17); // se ven las cuatro: más de 3 cajas...
+  expect(columns).toBeLessThanOrEqual(4 * 17 + 3 * THUMBNAIL_GAP); // ...y dentro de las 74 columnas libres
+  expect(plain(rows).filter(row => row.includes("🖼"))).toHaveLength(4);
+}, { timeout: 30_000 });
+
+test("U2-r7: la tira mide lo que la miniatura más alta, en renglones reales, sin renglones vacíos de sobra debajo", async () => {
+  // Una captura ancha (1903×1047) y una vertical (600×900): la tira es tan alta como la vertical.
+  const wide = file("alta-ancha.png", screenshotPng(1903, 1047, 1));
+  const wide2 = file("alta-ancha-2.png", screenshotPng(1903, 1047, 3)); // otra ruta: la misma ruta repetida cuenta una sola vez
+  const tall = file("alta-vertical.png", screenshotPng(600, 900, 2));
+  const check = async (paths: string[], expectedRows: (cell: { widthPx: number; heightPx: number }, columns: number) => number, columns = 22, width = 120) => {
+    const bubble = new UserBubble(paths.join(" "), { locale: "es", at: null });
+    await until(() => imagesDrawn(bubble.render(width)) > 0, 15_000);
+    const rows = bubble.render(width);
+    const first = kittyOf(rows)[0]!;
+    const cell = getCellDimensions();
+    const chunks = firstImageData(rows.join(""));
+    const raster = decodePng(Buffer.from(chunks.base64, "base64"))!;
+    // El lienzo tiene alto de renglones enteros, los que toma en la terminal.
+    const rowsTaken = sizeOf(first).rows;
+    expect(raster.height, "alto del lienzo en píxeles").toBe(rowsTaken * cell.heightPx * 2);
+    expect(rowsTaken).toBe(expectedRows(cell, columns));
+    // Sin hueco de sobra: la última fila de píxeles con algo dibujado está a menos de un renglón del final.
+    let lastDrawn = -1;
+    for (let y = raster.height - 1; y >= 0 && lastDrawn < 0; y--) for (let x = 0; x < raster.width; x++) if (raster.rgba[(y * raster.width + x) * 4 + 3]! > 0) { lastDrawn = y; break; }
+    expect(raster.height - 1 - lastDrawn, "píxeles vacíos al pie").toBeLessThan(cell.heightPx * 2);
+    return rowsTaken;
+  };
+  // Dos anchas: la caja de 22 columnas da un ancho de 396 px y un alto de 396/1.8176 = 218 px → ceil(218/36) = 7 renglones.
+  const twoWide = await check([wide, wide2], (cell, columns) => Math.ceil(Math.round((columns * cell.widthPx * 2) / (1903 / 1047)) / (cell.heightPx * 2)));
+  // Una ancha y una vertical: la vertical manda y la tira llega al máximo de 7 renglones.
+  const mixed = await check([wide, tall], () => THUMBNAIL_ROWS);
+  expect(twoWide).toBeLessThanOrEqual(THUMBNAIL_ROWS);
+  expect(mixed).toBe(THUMBNAIL_ROWS);
+  // Cuatro anchas con 76 columnas de chat: cajas de 17 columnas → 306 px de ancho, 168 px de alto → 5 renglones (con la caja fija de 7 sobraban 2 vacíos, lo que se vio en Orca).
+  const extra = [file("alta-ancha-3.png", screenshotPng(1903, 1047, 4)), file("alta-ancha-4.png", screenshotPng(1903, 1047, 5))];
+  const four = await check([wide, wide2, ...extra], (cell, columns) => Math.ceil(Math.round((columns * cell.widthPx * 2) / (1903 / 1047)) / (cell.heightPx * 2)), 17, 76);
+  expect(four).toBe(5);
+}, { timeout: 30_000 });
 
 // ── Thumbnails reduced with Photon (U2-r5) ─────────────────────────────────────────────────
 
