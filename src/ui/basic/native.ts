@@ -25,6 +25,7 @@ import { TurnTranscript } from "./turn-transcript.ts";
 import { isCommandText } from "./command-text.ts";
 import { summarizeToolText } from "./tool-summary.ts";
 import { ImageStrip, announcedImagePath, enableTerminalImages, readImage } from "./chat-images.ts";
+import { attachImagePaste } from "./paste-image.ts";
 import { effortDescription, effortLabel } from "./metrics.ts";
 import { ChatText, danger, warning } from "./theme.ts";
 import { ChatLinks, enableTerminalLinks, realChatLinkTools } from "./chat-links.ts";
@@ -81,6 +82,8 @@ export async function runNativeUI(
   }, locale);
   const { surface, tui, copy } = chatScreen(terminal, links, panels, { locale });
   const composer = createComposer(tui, locale);
+  // Ctrl+V (Alt+V on Windows) pastes the clipboard's image: its path is written in the box.
+  attachImagePaste(composer.input, tui, locale);
   const transcript = new TurnTranscript();
   let transcriptScroll!: IndependentScrollView;
   const chatLogo = new ChatLogo(() => transcriptScroll.viewportRows, () => terminal.rows);

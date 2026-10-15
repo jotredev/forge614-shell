@@ -34,6 +34,7 @@ import { TurnTranscript } from "./turn-transcript.ts";
 import { isCommandText } from "./command-text.ts";
 import { toolResultImages, toolResultPreview } from "./tool-summary.ts";
 import { ImageStrip, enableTerminalImages } from "./chat-images.ts";
+import { attachImagePaste } from "./paste-image.ts";
 import { lineDiff } from "./diff.ts";
 import { engramToolLabel, parseClaudeMcpToolName } from "../../engines/mcp-labels.ts";
 import { ChatText, PanelText, danger, warning } from "./theme.ts";
@@ -155,6 +156,8 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
   }, locale);
   const { surface, tui, copy } = chatScreen(terminal ?? new ProcessTerminal(), links, panels, { locale });
   const composer = createComposer(tui, locale);
+  // Ctrl+V (Alt+V on Windows) pastes the clipboard's image: its path is written in the box.
+  attachImagePaste(composer.input, tui, locale);
   const transcript = new TurnTranscript();
   let transcriptScroll!: IndependentScrollView;
   const chatLogo = new ChatLogo(() => transcriptScroll.viewportRows, () => (terminal ?? surface).rows);

@@ -380,6 +380,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     helpShellCommands: "Los comandos propios de Shell empiezan con /f614: (/f614:commands abre su menú).",
     helpShortcuts: "Atajos:",
     keySend: "Enviar el mensaje", keyNewLine: "Nueva línea", keyCycleModes: "Cambiar el modo de permisos", keyAcceptCommand: "Aceptar el comando marcado en el menú /",
+    keyPasteImage: "Pegar la imagen del portapapeles (escribe su ruta en la caja)",
     keyCloseMenu: "Cerrar un menú (en una pregunta de permiso responde «No»)", keyLeave: "Salir de Shell (pregunta antes si hay trabajo en curso; con una pregunta de permiso abierta, contéstala primero)",
   },
   telemetry: {
@@ -409,6 +410,10 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     unnamed: "imagen",
     viewedTitle: "Imagen",
     kind: ({ format }) => `imagen ${format}`,
+    pasteEmpty: "No hay una imagen en el portapapeles",
+    pasteMissingTool: ({ tools }) => `No se pudo leer el portapapeles: instala ${tools}`,
+    pasteTooBig: "La imagen del portapapeles pesa más de 20 MB",
+    pasteFailed: "No se pudo leer la imagen del portapapeles",
   },
   toolSummary: {
     results: ({ count, titles }) => `${count} ${count === 1 ? "resultado" : "resultados"}${titles ? `: ${titles}` : ""}`,

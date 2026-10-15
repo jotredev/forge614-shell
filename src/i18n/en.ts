@@ -380,6 +380,7 @@ The selected engine's project settings and permissions apply. This is not a sand
     helpShellCommands: "Shell's own commands start with /f614: (/f614:commands opens their menu).",
     helpShortcuts: "Shortcuts:",
     keySend: "Send the message", keyNewLine: "New line", keyCycleModes: "Cycle permission modes", keyAcceptCommand: "Accept the highlighted command in the / menu",
+    keyPasteImage: "Paste the clipboard's image (writes its path in the box)",
     keyCloseMenu: "Close a menu (on a permission question it answers «No»)", keyLeave: "Leave Shell (asks first while work is in progress; with a permission question open, answer it first)",
   },
   telemetry: {
@@ -409,6 +410,10 @@ The selected engine's project settings and permissions apply. This is not a sand
     unnamed: "image",
     viewedTitle: "Image",
     kind: ({ format }) => `${format} image`,
+    pasteEmpty: "There is no image on the clipboard",
+    pasteMissingTool: ({ tools }) => `Could not read the clipboard: install ${tools}`,
+    pasteTooBig: "The image on the clipboard is over 20 MB",
+    pasteFailed: "Could not read the image on the clipboard",
   },
   toolSummary: {
     results: ({ count, titles }) => `${count} ${count === 1 ? "result" : "results"}${titles ? `: ${titles}` : ""}`,
