@@ -34,6 +34,8 @@ Remove-Item install.ps1
 
 The installer verifies cryptographic SHA-256 checksums against the `.sha256` sidecar, installs Shell under `%USERPROFILE%\.forge614\shell\<version>` (or `$env:FORGE614_HOME\shell\<version>`), ensures a compatible Forge614 Engines installation (`forge614-engines.exe` with schema 1 and a boolean `fullySupported` capability), creates the `forge614-shell.cmd` launcher, and adds `shell\bin` to the user `Path`. Open a new PowerShell or Terminal window and run `forge614-shell`.
 
+The SHA-256 checksum is computed with .NET classes (`System.Security.Cryptography.SHA256`), not with the `Get-FileHash` cmdlet: if `powershell.exe` 5.1 is opened from PowerShell 7 it inherits its `PSModulePath` and does not find that cmdlet, with exactly the command documented above typed in Windows Terminal with `pwsh`. For the same reason, the Forge614 Engines installer runs with the same PowerShell that is running `install.ps1` (the full path of `pwsh` or `powershell.exe`), not with the first one found on the `PATH`.
+
 ## Commands
 
 ```text
