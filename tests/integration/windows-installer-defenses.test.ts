@@ -2,15 +2,16 @@ import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-test("Windows launcher resolves the active version from bin and finishes its one parsed line", async () => {
+test("Windows launcher resolves the active version from bin and rejects a missing pointer", async () => {
   const launcher = await readFile(join(process.cwd(), "scripts", "forge614-shell.cmd"), "utf8");
   const lines = launcher.trim().split(/\r?\n/);
-  expect(lines).toHaveLength(1);
   expect(lines[0]).toStartWith("@(goto) 2>nul & @echo off &");
-  expect(lines[0]).toContain(".active-version");
-  expect(lines[0]).toContain('"%~dp0..\\%%V\\forge614-shell-%%V\\dist\\cli.js"');
-  expect(lines[0]).toContain("%*");
-  expect(lines[0]).toContain("exit /b");
+  expect(launcher).toContain(".active-version");
+  expect(launcher).toContain('"%~dp0..\\%activeVersion%\\forge614-shell-%activeVersion%\\dist\\cli.js"');
+  expect(launcher).toContain("if not exist \"%activeVersionFile%\" goto missingVersion");
+  expect(launcher).toContain("if not defined activeVersion goto missingVersion");
+  expect(launcher).toContain("%*");
+  expect(launcher).toContain("exit /b 1");
 });
 
 test("Unix launcher resolves .active-version relative to its bin link and quotes paths", async () => {
