@@ -6,7 +6,7 @@ La documentación canónica se mantiene en Markdown local y se publica en Notion
 
 ## Regla de sincronización
 
-`docs/notion-map.json` registra para cada archivo local: idioma, URL exacta de Notion, versión revisada y huella de contenido (hash, una firma corta para detectar cambios). Una huella solo se actualiza tras actualizar juntos el archivo local y su página de Notion.
+`docs/notion-map.json` registra para cada archivo local: idioma, URL exacta de Notion, versión revisada y huella SHA-256 del Markdown local actual. Actualiza la huella cuando cambia ese archivo; `notionSyncPending: true` indica que la página de Notion aún debe recibir esos cambios. Quita la marca solo después de sincronizar la página.
 
 ## Revisión
 
