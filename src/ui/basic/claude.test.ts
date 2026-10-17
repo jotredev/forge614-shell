@@ -334,6 +334,7 @@ else {
   }
 });
 
+/** A real full-screen startup can exceed Bun's 5-second default on Windows under the full-suite load; give its cleanup time to run so it cannot leave warning listeners or a terminal behind. */
 test("Claude UI shows AskUserQuestion and sends the chosen answer to the SDK", async () => {
   const root = await mkdtemp(join(tmpdir(), "forge614-question-ui-"));
   const executable = testExecutablePath(root); const marker = join(root, "answer");
@@ -386,7 +387,7 @@ else {
     if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
     if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
   }
-});
+}, { timeout: 30_000 });
 
 /**
  * Came out of the real-account test: in a copy under a long path the «Carpeta:» line was broken in the middle of a folder name.
