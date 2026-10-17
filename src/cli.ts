@@ -36,7 +36,7 @@ if (args[0] === "update") {
       const { runUpdateCommand } = await import("./app/update-command.ts");
       await runUpdateCommand({ env: process.env, locale: staticLocale, version, currentVersion: metadata.version, json });
     } catch (error) {
-      console.error(getCatalog(staticLocale).cli.updateFailed({ message: describeError(error, staticLocale) }));
+      console.error(JSON.stringify({ schemaVersion: 1, code: "UPDATE_FAILED", error: getCatalog(staticLocale).cli.updateFailed({ message: describeError(error, staticLocale) }) }));
       process.exitCode = 1;
     }
   }
