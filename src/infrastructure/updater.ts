@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn as spawnAsync, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, openSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -161,13 +161,16 @@ async function runPublishedInstaller(action: "update" | "uninstall", options: Ru
       if (workerLog) {
         appendFileSync(workerLog, "parent: launching worker\n");
       }
+      const workerErrorLog = workerLog ? `${workerLog}.stderr` : undefined;
+      const workerErrorFd = workerErrorLog ? openSync(workerErrorLog, "a") : undefined;
       const child = spawnAsync(resolvePowerShellCommand(options.powerShellCommand, env, platform), ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", worker], {
         cwd: env.TEMP || env.TMP || tmpdir(),
         detached: true,
-        stdio: "ignore",
+        stdio: workerErrorFd === undefined ? "ignore" : ["ignore", "ignore", workerErrorFd],
         windowsHide: true,
         env: workerEnv,
       });
+      if (workerErrorFd !== undefined) closeSync(workerErrorFd);
       if (workerLog) {
         child.once("spawn", () => appendFileSync(workerLog, "parent: worker process spawned\n"));
         child.once("error", error => appendFileSync(workerLog, `parent: spawn failed: ${error.message}\n`));
