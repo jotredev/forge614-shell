@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
@@ -32,43 +32,38 @@ async function currentRelease(output: string): Promise<string> {
   return `forge614-shell-${VERSION}.tar.gz`;
 }
 
-/** Create a small legacy package with the real 27bf310 installer and its update call shape. */
-async function legacyRelease(root: string): Promise<{ installer: string; archive: string; checksum: string }> {
-  const oldInstaller = Bun.spawnSync(["git", "show", "27bf310:scripts/install.sh"], { cwd: REPO_ROOT, stdout: "pipe", stderr: "pipe" });
-  expect(oldInstaller.exitCode, new TextDecoder().decode(oldInstaller.stderr)).toBe(0);
-  const legacyRoot = join(root, "legacy-release");
-  const packageRoot = join(legacyRoot, "forge614-shell-1.16.0");
-  await mkdir(join(packageRoot, "dist"), { recursive: true });
-  const installer = join(legacyRoot, "install.sh");
-  await writeFile(installer, oldInstaller.stdout);
-  await chmod(installer, 0o755);
-  await copyFile(installer, join(packageRoot, "install.sh"));
-  await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "forge614-shell", version: "1.16.0", type: "commonjs" }, null, 2));
-  await writeFile(join(packageRoot, "dist", "cli.js"), `#!/usr/bin/env node
-const { spawnSync } = require("node:child_process");
-const { join } = require("node:path");
-const args = process.argv.slice(2);
-if (args[0] === "--version") { console.log("forge614-shell 1.16.0"); process.exit(0); }
-if (args[0] === "update") {
-  const result = spawnSync("bash", [join(__dirname, "..", "install.sh"), "--latest"], { stdio: "inherit" });
-  process.exit(result.status ?? 1);
-}
-process.exit(64);
-`);
-  await chmod(join(packageRoot, "dist", "cli.js"), 0o755);
-  const output = join(root, "release-1.16.0");
-  await mkdir(output, { recursive: true });
-  const archive = join(output, "forge614-shell-1.16.0.tar.gz");
-  const pack = Bun.spawnSync(["tar", "-czf", archive, "-C", legacyRoot, "forge614-shell-1.16.0"], { stdout: "pipe", stderr: "pipe" });
-  expect(pack.exitCode, new TextDecoder().decode(pack.stderr)).toBe(0);
-  const checksum = `${createHash("sha256").update(await readFile(archive)).digest("hex")}  forge614-shell-1.16.0.tar.gz\n`;
-  await writeFile(`${archive}.sha256`, checksum);
-  return {
-    installer,
-    archive,
-    checksum: `${archive}.sha256`,
+let legacyBuildRoot: string | undefined;
+let legacyReleaseFixture: { installer: string; archive: string };
+
+/** Build the real 1.16.0 release package from its tagged source in an isolated checkout. */
+beforeAll(async () => {
+  legacyBuildRoot = await mkdtemp(join(REPO_ROOT, ".forge614-shell-116-build-"));
+  const sourceRoot = join(legacyBuildRoot, "source");
+  const archiveFile = join(legacyBuildRoot, "source.tar");
+  const output = join(legacyBuildRoot, "release");
+  await mkdir(sourceRoot, { recursive: true });
+
+  const sourceArchive = Bun.spawnSync(["git", "archive", "--format=tar", "27bf310"], { cwd: REPO_ROOT, stdout: "pipe", stderr: "pipe" });
+  expect(sourceArchive.exitCode, new TextDecoder().decode(sourceArchive.stderr)).toBe(0);
+  await writeFile(archiveFile, sourceArchive.stdout);
+  const extract = Bun.spawnSync(["tar", "-xf", archiveFile, "-C", sourceRoot], { stdout: "pipe", stderr: "pipe" });
+  expect(extract.exitCode, new TextDecoder().decode(extract.stderr)).toBe(0);
+
+  const build = Bun.spawnSync([process.execPath, "scripts/release-bundle.mjs", "--out", output], {
+    cwd: sourceRoot,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(build.exitCode, `${new TextDecoder().decode(build.stdout)}\n${new TextDecoder().decode(build.stderr)}`).toBe(0);
+  legacyReleaseFixture = {
+    installer: join(output, "install.sh"),
+    archive: join(output, "forge614-shell-1.16.0.tar.gz"),
   };
-}
+}, { timeout: 120_000 });
+
+afterAll(async () => {
+  if (legacyBuildRoot) await rm(legacyBuildRoot, { recursive: true, force: true });
+});
 
 /** Create an Engines fixture for the installer's declared dependency and Shell's update orchestration. */
 async function installEnginesFixture(forgeHome: string): Promise<void> {
@@ -94,7 +89,7 @@ test.skipIf(process.platform === "win32")("1.16 legacy update, 1.17 migration, n
   const forgeHome = join(home, ".forge614");
   await mkdir(home, { recursive: true });
   const archiveName = await currentRelease(releaseDir);
-  const legacy = await legacyRelease(root);
+  const legacy = legacyReleaseFixture;
   await installEnginesFixture(forgeHome);
   const newChecksum = await readFile(join(releaseDir, `${archiveName}.sha256`));
   const requests: string[] = [];
@@ -176,4 +171,4 @@ test.skipIf(process.platform === "win32")("1.16 legacy update, 1.17 migration, n
     server.stop(true);
     await rm(root, { recursive: true, force: true });
   }
-});
+}, 120_000);
