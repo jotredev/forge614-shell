@@ -9,6 +9,7 @@ test("Windows launcher resolves the active version from bin and rejects a missin
   expect(launcher).toContain(".active-version");
   expect(launcher).toContain('"%~dp0..\\%activeVersion%\\forge614-shell-%activeVersion%\\dist\\cli.js"');
   expect(launcher).toContain("if not exist \"%activeVersionFile%\" goto missingVersion");
+  expect(launcher).toContain('set "activeVersion="');
   expect(launcher).toContain("if not defined activeVersion goto missingVersion");
   expect(launcher).toContain("%*");
   expect(launcher).toContain("exit /b 1");
