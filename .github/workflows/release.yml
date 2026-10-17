@@ -1,267 +1,54 @@
-name: Release
+name: release
 
 on:
-  workflow_dispatch:
   push:
-    tags:
-      - '[0-9]*.[0-9]*.[0-9]*'
+    tags: ["v*"]
 
 permissions:
   contents: read
 
 jobs:
-  verify:
-    name: Verify release prerequisites
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22.19.0"
-      - run: bun install --frozen-lockfile
-      - name: Typecheck
-        run: bun run typecheck
-      - name: Unit and integration tests
-        run: bun test
-      - name: Check git diff whitespace
-        run: git diff --check
-      - name: Bash installer syntax check
-        run: bash -n scripts/install.sh
-
-  build:
-    name: Build and validate release package
-    needs: verify
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22.19.0"
-      - run: bun install --frozen-lockfile
-      - name: Build release bundle
-        run: bun run bundle:release -- --out dist-release
-      - name: Validate release package pieces and checksum
-        run: node scripts/validate-release-bundle.mjs dist-release
-      - name: Upload release assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-assets
-          path: dist-release/
-          if-no-files-found: error
-
-  smoke:
-    name: Smoke test (${{ matrix.os }})
-    needs: build
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22.19.0"
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-assets
-          path: dist-release
-
-      - name: Unix smoke test (Ubuntu / macOS)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          test_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/forge614-smoke-XXXXXX")"
-          trap 'rm -rf "$test_root"' EXIT
-          test_home="$test_root/forge614-home"
-          fake_home="$test_root/user-home"
-          mkdir -p "$test_home" "$fake_home"
-          export HOME="$fake_home" FORGE614_HOME="$test_home"
-
-          # 1. Marcadores en engram/ y engines/
-          mkdir -p "$test_home/engram" "$test_home/engines"
-          echo "engram-safe" > "$test_home/engram/marker.txt"
-          echo "engines-safe" > "$test_home/engines/marker.txt"
-
-          # 2. Fixture compatible de Engines (sin descargas externas)
-          mkdir -p "$test_home/engines/bin"
-          cat > "$test_home/engines/bin/forge614-engines" <<'ENGINE'
-          #!/usr/bin/env bash
-          if [[ "${1:-}" == "detect" ]]; then
-            echo '{"schemaVersion":1,"agents":[]}'
-            exit 0
-          fi
-          if [[ "${1:-}" == "capabilities" ]]; then
-            echo '{"schemaVersion":1,"id":"claude-code","supportsMcp":true,"fullySupported":true}'
-            exit 0
-          fi
-          exit 64
-          ENGINE
-          chmod +x "$test_home/engines/bin/forge614-engines"
-
-          # 3. Instalación desde -Archive con el paquete construido
-          archive_file=$(ls dist-release/forge614-shell-*.tar.gz | head -n 1)
-          bash dist-release/install.sh --archive "$archive_file"
-
-          # 4. Comprobación del lanzador instalado
-          launcher="$test_home/shell/bin/forge614-shell"
-          [[ -x "$launcher" ]] || { echo "Lanzador no ejecutable en $launcher" >&2; exit 1; }
-
-          version_expected=$(node -p "require('./package.json').version")
-          version_output="$("$launcher" --version)"
-          echo "Installed launcher --version: $version_output"
-          [[ "$version_output" == "forge614-shell $version_expected" ]] || {
-            echo "Versión inesperada: '$version_output' (esperado: 'forge614-shell $version_expected')" >&2
-            exit 1
-          }
-
-          help_output="$("$launcher" --help)"
-          echo "$help_output" | grep -q "Forge614-Shell" || {
-            echo "Salida de --help inesperada" >&2
-            exit 1
-          }
-
-          # 5. Preservación de marcadores
-          [[ "$(cat "$test_home/engram/marker.txt")" == "engram-safe" ]] || {
-            echo "Marcador engram/ alterado" >&2
-            exit 1
-          }
-          [[ "$(cat "$test_home/engines/marker.txt")" == "engines-safe" ]] || {
-            echo "Marcador engines/ alterado" >&2
-            exit 1
-          }
-
-          echo "Unix smoke test passed successfully."
-
-      - name: Windows smoke test
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          # 0. Validación de sintaxis de install.ps1
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile("dist-release\install.ps1", [ref]$null, [ref]$errors) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_ }
-            exit 1
-          }
-
-          $tempRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [System.IO.Path]::GetTempPath() }
-          $testRoot = Join-Path $tempRoot ("forge614-smoke-win-" + [Guid]::NewGuid().ToString("N"))
-          $testHome = Join-Path $testRoot "forge614-home"
-          $originalUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-
-          try {
-            # 1. Fixture compatible de Engines compilado localmente
-            $enginesBin = Join-Path $testHome "engines\bin"
-            New-Item -ItemType Directory -Force -Path $enginesBin | Out-Null
-            $fakeEnginesExe = Join-Path $enginesBin "forge614-engines.exe"
-
-            $fakeTs = Join-Path $testRoot "fake-ci-engines.ts"
-            @'
-          const args = process.argv.slice(2);
-          if (args[0] === "detect") {
-            console.log(JSON.stringify({ schemaVersion: 1, agents: [] }));
-            process.exit(0);
-          }
-          if (args[0] === "capabilities") {
-            console.log(JSON.stringify({ schemaVersion: 1, id: "claude-code", supportsMcp: true, fullySupported: true }));
-            process.exit(0);
-          }
-          process.exit(64);
-          '@ | Set-Content -Path $fakeTs -Encoding UTF8
-
-            & bun build $fakeTs --compile --outfile $fakeEnginesExe
-            if ($LASTEXITCODE -ne 0) { throw "Error compilando fake engines para CI" }
-
-            # 2. Marcadores en engram/ y engines/
-            $engramDir = Join-Path $testHome "engram"
-            New-Item -ItemType Directory -Force -Path $engramDir | Out-Null
-            Set-Content -Path (Join-Path $engramDir "marker.txt") -Value "engram-safe"
-            Set-Content -Path (Join-Path $testHome "engines\marker.txt") -Value "engines-safe"
-
-            # 3. Instalación desde -Archive
-            $archiveFile = (Get-ChildItem -Path "dist-release" -Filter "forge614-shell-*.tar.gz" | Select-Object -First 1).FullName
-            $env:FORGE614_HOME = $testHome
-            & pwsh -NoProfile -ExecutionPolicy Bypass -File dist-release\install.ps1 -Archive $archiveFile
-            if ($LASTEXITCODE -ne 0) { throw "install.ps1 -Archive falló" }
-
-            $launcher = Join-Path $testHome "shell\bin\forge614-shell.cmd"
-            if (-not (Test-Path $launcher)) { throw "El lanzador no fue creado en $launcher" }
-
-            # 4. Ejecución real con cmd.exe
-            $versionExpected = (Get-Content "package.json" | ConvertFrom-Json).version
-            $versionOutput = & cmd.exe /c "`"$launcher`" --version"
-            Write-Host "forge614-shell.cmd --version: $versionOutput"
-            if ($versionOutput.Trim() -ne "forge614-shell $versionExpected") {
-              throw "Salida inesperada de --version: $versionOutput (esperado: forge614-shell $versionExpected)"
-            }
-
-            $helpOutput = & cmd.exe /c "`"$launcher`" --help"
-            if ($LASTEXITCODE -ne 0 -or "$helpOutput" -notmatch "Forge614-Shell") {
-              throw "Salida inesperada de --help"
-            }
-
-            # 5. Marcadores en engram/ y engines/ preservados
-            if (-not (Test-Path (Join-Path $engramDir "marker.txt"))) {
-              throw "Marcador engram/ afectado"
-            }
-            if (-not (Test-Path (Join-Path $testHome "engines\marker.txt"))) {
-              throw "Marcador engines/ afectado"
-            }
-            Write-Host "Windows smoke test passed successfully."
-          } finally {
-            [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
-            Remove-Item -Recurse -Force $testRoot -ErrorAction SilentlyContinue
-          }
-
-  publish:
-    name: Publish GitHub Release
-    needs: [verify, build, smoke]
-    if: github.event_name == 'push' && github.ref_type == 'tag'
-    runs-on: ubuntu-latest
+  release:
+    name: Build and publish Node package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
       - uses: actions/setup-node@v4
         with:
           node-version: "22.19.0"
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-assets
-          path: dist-release
-      - name: Verify tag matches package version exactly
+      - name: Verify v tag matches package version
+        shell: bash
         run: |
-          tag="${GITHUB_REF_NAME}"
-          version=$(node -p "require('./package.json').version")
-          if [ "$tag" != "$version" ]; then
-            echo "Error: Git tag '$tag' does not match package.json version '$version'" >&2
+          tag="$GITHUB_REF_NAME"
+          version="$(node -p "require('./package.json').version")"
+          [[ "$tag" == "v$version" && "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Expected v$version, received $tag" >&2
             exit 1
-          fi
-          echo "Verified: Git tag '$tag' matches package.json version '$version'."
-      - name: Create GitHub Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          }
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+      - run: bun run build
+      - name: Build compatibility package and release assets
         run: |
-          tag="${GITHUB_REF_NAME}"
-          gh release create "$tag" \
-            dist-release/forge614-shell-${tag}.tar.gz \
-            dist-release/forge614-shell-${tag}.tar.gz.sha256 \
-            dist-release/install.sh \
-            dist-release/install.ps1 \
-            --title "Forge614-Shell $tag" \
+          bun run bundle:release -- --out dist/release
+          bun run scripts/prepare-release-assets.mjs
+          test "$(find dist/release -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 7
+          (cd dist/release && sha256sum -c SHA256SUMS)
+      # D2: the legacy .tar.gz.sha256 sidecar is removed in the next version.
+      - name: Publish seven release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          gh release create "v$version" dist/release/* \
+            --title "Forge614 Shell v$version" \
             --generate-notes

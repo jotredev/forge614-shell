@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+launcher_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
+if [ -f "$launcher_dir/dist/cli.js" ]; then
+  exec node "$launcher_dir/dist/cli.js" "$@"
+fi
+shell_home=$(CDPATH= cd "$launcher_dir/.." && pwd)
+version=$(cat "$shell_home/.active-version")
+case "$version" in
+  ''|*[!0-9.]*|.*|*.) echo "Forge614 Shell has an invalid active version." >&2; exit 1 ;;
+esac
+exec node "$shell_home/$version/forge614-shell-$version/dist/cli.js" "$@"

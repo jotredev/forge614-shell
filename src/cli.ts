@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { createInterface } from "node:readline/promises";
 import { parseEngine } from "./app/options.ts";
 import { discoverSelectableEngines, requireFullySupportedEngine } from "./infrastructure/forge614-engines.ts";
 import { startTerminalSpinner } from "./app/startup-spinner.ts";
@@ -17,21 +18,65 @@ const args = process.argv.slice(2);
 // then English. No selector means no translation is a myth — only the prompt is skipped.
 const staticLocale = resolveConfiguredLocale({ env: process.env }) ?? "en";
 
-if (args.length === 1 && args[0] === "update") {
-  try {
-    const { runUpdateCommand } = await import("./app/update-command.ts");
-    await runUpdateCommand({ env: process.env, locale: staticLocale });
-  } catch (error) {
-    console.error(getCatalog(staticLocale).cli.updateFailed({ message: describeError(error, staticLocale) }));
-    process.exitCode = 1;
+if (args[0] === "update") {
+  let version: string | undefined;
+  let json = false;
+  let invalid = false;
+  for (let index = 1; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--json" && !json) json = true;
+    else if (arg === "--version" && version === undefined && index + 1 < args.length && /^v?\d+\.\d+\.\d+$/.test(args[index + 1] ?? "")) version = args[++index];
+    else invalid = true;
   }
-} else if (args.length === 1 && args[0] === "uninstall") {
-  try {
-    const { uninstallInstalledShell } = await import("./infrastructure/updater.ts");
-    await uninstallInstalledShell({ locale: staticLocale, env: process.env });
-  } catch (error) {
-    console.error(getCatalog(staticLocale).cli.uninstallFailed({ message: describeError(error, staticLocale) }));
-    process.exitCode = 1;
+  if (invalid) {
+    console.error(JSON.stringify({ schemaVersion: 1, code: "INVALID_ARGUMENTS", error: "Uso: forge614-shell update [--version X.Y.Z|vX.Y.Z] [--json]." }));
+    process.exitCode = 2;
+  } else {
+    try {
+      const { runUpdateCommand } = await import("./app/update-command.ts");
+      await runUpdateCommand({ env: process.env, locale: staticLocale, version, currentVersion: metadata.version, json });
+    } catch (error) {
+      console.error(getCatalog(staticLocale).cli.updateFailed({ message: describeError(error, staticLocale) }));
+      process.exitCode = 1;
+    }
+  }
+} else if (args[0] === "uninstall") {
+  const flags = args.slice(1);
+  const json = flags.includes("--json");
+  const self = flags.includes("--self");
+  if (flags.some(flag => flag !== "--json" && flag !== "--self") || new Set(flags).size !== flags.length) {
+    console.error(JSON.stringify({ schemaVersion: 1, code: "INVALID_ARGUMENTS", error: "Uso: forge614-shell uninstall [--json] [--self]." }));
+    process.exitCode = 2;
+  } else if (self) {
+    if (json) console.log(JSON.stringify({ schemaVersion: 1, result: { integrationsRemoved: true } }));
+    else console.log(staticLocale === "es" ? "Forge614 Shell no tiene integraciones propias que retirar." : "Forge614 Shell has no integrations of its own to remove.");
+  } else {
+    let confirmed = true;
+    if (!json && process.stdin.isTTY && process.stdout.isTTY) {
+      const prompt = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        const question = staticLocale === "es"
+          ? "Esto eliminará Forge614 Shell, sus preferencias y su historial. ¿Continuar? [s/N] "
+          : "This removes Forge614 Shell, its preferences, and its history. Continue? [y/N] ";
+        const answer = await prompt.question(question);
+        confirmed = staticLocale === "es" ? /^s(?:í|i)?$/i.test(answer.trim()) : /^y(?:es)?$/i.test(answer.trim());
+      } catch { confirmed = false; }
+      finally { prompt.close(); }
+    }
+    if (!confirmed) {
+      if (!json) console.log(staticLocale === "es" ? "No se desinstaló nada." : "Nothing was uninstalled.");
+      process.exitCode = 130;
+    } else {
+      try {
+        const { uninstallInstalledShell } = await import("./infrastructure/updater.ts");
+        await uninstallInstalledShell({ locale: staticLocale, env: process.env });
+        if (json) console.log(JSON.stringify({ schemaVersion: 1, result: { removed: true } }));
+        else console.log(staticLocale === "es" ? "Forge614 Shell, sus preferencias y su historial se eliminaron." : "Forge614 Shell, its preferences, and its history were removed.");
+      } catch (error) {
+        console.error(JSON.stringify({ schemaVersion: 1, code: "UNINSTALL_FAILED", error: describeError(error, staticLocale) }));
+        process.exitCode = 1;
+      }
+    }
   }
 } else if (args[0] === "init") {
   // Mutable: starts at the static (non-prompting) resolution, then becomes whatever the person
@@ -75,7 +120,15 @@ if (args.length === 1 && args[0] === "update") {
   /** A terminal gets the responsive colored sign; a pipe gets stable, wide, plain rows before unchanged help text. */
   console.log(helpLines(process.stdout, getCatalog(staticLocale).cli.help({ version: metadata.version })).join("\n"));
 } else if (args.includes("--version") || args.includes("-v")) {
-  console.log(`forge614-shell ${metadata.version}`);
+  const validVersionArgs = args.length === 1 || (args.length === 2 && args.includes("--version") && args.includes("--json"));
+  if (!validVersionArgs) {
+    console.error(JSON.stringify({ schemaVersion: 1, code: "INVALID_ARGUMENTS", error: "Use --version [--json]." }));
+    process.exitCode = 2;
+  } else if (args.includes("--json")) {
+    console.log(JSON.stringify({ schemaVersion: 1, name: "forge614-shell", version: metadata.version }));
+  } else {
+    console.log(`forge614-shell ${metadata.version}`);
+  }
 } else {
   let effectiveLocale = staticLocale;
   try {

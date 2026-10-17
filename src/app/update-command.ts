@@ -7,7 +7,7 @@ import { getCatalog, resolveConfiguredLocale } from "../i18n/index.ts";
 import type { Locale } from "../i18n/index.ts";
 import { describeError } from "../shell-error.ts";
 
-export type ShellSpawn = (command: string, args: string[], options?: { stdio?: "inherit" }) => { status: number | null; stderr?: string | Buffer; error?: Error };
+export type ShellSpawn = (command: string, args: string[], options?: { stdio?: "inherit" | "pipe"; env?: NodeJS.ProcessEnv; windowsHide?: boolean }) => { status: number | null; stdout?: string | Buffer; stderr?: string | Buffer; error?: Error };
 
 export interface RunUpdateOptions {
   readonly home?: string;
@@ -23,6 +23,9 @@ export interface RunUpdateOptions {
   /** Never prompts (this command never opens the language selector); resolved by the caller from
    * FORGE614_SHELL_LOCALE / preferences.json when omitted, defaulting to English. */
   readonly locale?: Locale;
+  readonly version?: string;
+  readonly currentVersion?: string;
+  readonly json?: boolean;
 }
 
 type UpdateOutcomeStatus = "updated" | "already-up-to-date" | "pending" | "not-installed" | "failed";
@@ -90,11 +93,21 @@ export async function runUpdateCommand(options: RunUpdateOptions = {}): Promise<
   let anyFailed = false;
 
   try {
-    await updateInstalledShell({ installer: options.installer, spawn: options.spawn, locale, env: options.env });
-    report({ label: "Forge614 Shell", status: "updated" }, locale);
+    const result = await updateInstalledShell({
+      installer: options.installer,
+      spawn: options.spawn,
+      locale,
+      env: options.env,
+      version: options.version,
+      currentVersion: options.currentVersion,
+    });
+    if (options.json) console.log(JSON.stringify({ schemaVersion: 1, ...result }));
+    else report({ label: "Forge614 Shell", status: result.updated ? "updated" : "already-up-to-date" }, locale);
   } catch (error) {
     anyFailed = true;
-    report({ label: "Forge614 Shell", status: "failed", detail: describeError(error, locale) }, locale);
+    const detail = describeError(error, locale);
+    if (options.json) console.error(JSON.stringify({ schemaVersion: 1, code: "UPDATE_FAILED", error: getCatalog(locale).cli.updateFailed({ message: detail }) }));
+    else report({ label: "Forge614 Shell", status: "failed", detail }, locale);
   }
 
   try {

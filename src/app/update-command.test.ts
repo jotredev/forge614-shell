@@ -143,6 +143,28 @@ test("a Shell self-update failure is reported to stderr and Engines/Engram are s
   } finally { restore(); process.exitCode = 0; }
 });
 
+test("JSON Shell update failures use the structured error shape in the selected language", async () => {
+  const { errors, restore } = captureLogs();
+  process.exitCode = 0;
+  try {
+    await runUpdateCommand({
+      home: "/Users/tester",
+      locale: "en",
+      json: true,
+      installer: "/tmp/release/install.sh",
+      spawn: () => ({ status: 1, stderr: "Node.js is required" }),
+      engramBinaryExists: () => false,
+      enginesRun: async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { updated: false, currentVersion: "1.4.0", latestVersion: "1.4.0" } }), stderr: "" }),
+    });
+    expect(JSON.parse(errors[0] ?? "")).toEqual({
+      schemaVersion: 1,
+      code: "UPDATE_FAILED",
+      error: "Forge614-Shell update failed: Node.js is required",
+    });
+    expect(process.exitCode).toBe(1);
+  } finally { restore(); process.exitCode = 0; }
+});
+
 test("never sends any command to Engines or Engram other than update / update --json", async () => {
   const { restore } = captureLogs();
   process.exitCode = 0;

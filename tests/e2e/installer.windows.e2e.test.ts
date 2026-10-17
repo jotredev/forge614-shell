@@ -1,0 +1,104 @@
+import { expect, test } from "bun:test";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+const REPO_ROOT = resolve(import.meta.dir, "../..");
+const VERSION = "1.17.0";
+
+/** Run a child process with a bounded wait and captured output. */
+async function run(command: string[], options: { cwd: string; env: Record<string, string | undefined>; timeoutMs?: number }) {
+  const child = Bun.spawn(command, { cwd: options.cwd, env: { ...process.env, ...options.env }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const timer = setTimeout(() => child.kill(), options.timeoutMs ?? 30_000);
+  try {
+    const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    return { exitCode, stdout, stderr };
+  } finally { clearTimeout(timer); }
+}
+
+/** Build a localhost release containing the package, common gatekeepers, node pointer and manifest. */
+async function buildRelease(output: string): Promise<void> {
+  const bundle = Bun.spawnSync([process.execPath, "scripts/release-bundle.mjs", "--out", output], { cwd: REPO_ROOT, stdout: "pipe", stderr: "pipe" });
+  expect(bundle.exitCode, new TextDecoder().decode(bundle.stderr)).toBe(0);
+  for (const name of ["install.sh", "install.ps1", "install.mjs", "forge614.node.json"]) await copyFile(join(REPO_ROOT, name), join(output, name));
+  const names = (await readdir(output)).sort();
+  const lines: string[] = [];
+  for (const name of names) lines.push(`${createHash("sha256").update(await readFile(join(output, name))).digest("hex")}  ${name}`);
+  await writeFile(join(output, "SHA256SUMS"), `${lines.join("\n")}\n`);
+}
+
+/** Install a fake but protocol-shaped Engines launcher beside the temporary Shell home. */
+async function installEnginesFixture(forgeHome: string): Promise<void> {
+  const bin = join(forgeHome, "engines", "bin");
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, "fake-engines.js"), `const a=process.argv.slice(2); if(a[0]==="--version") console.log("forge614-engines 1.0.0"); else if(a[0]==="detect") console.log(JSON.stringify({schemaVersion:1,agents:[]})); else if(a[0]==="capabilities") console.log(JSON.stringify({schemaVersion:1,id:"claude-code",fullySupported:true})); else if(a[0]==="update") console.log(JSON.stringify({schemaVersion:1,result:{updated:false,currentVersion:"1.0.0",latestVersion:"1.0.0"}})); else process.exit(64);`);
+  const launcher = join(bin, "forge614-engines.cmd");
+  await writeFile(launcher, `@node "%~dp0fake-engines.js" %* & @exit /b\r\n`);
+}
+
+test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wait for the installed process and use only localhost", async () => {
+  const root = await mkdtemp(join(tmpdir(), "forge614-shell-win-e2e-"));
+  const releaseDir = join(root, "release");
+  const home = join(root, "user home");
+  const forgeHome = join(home, ".forge614");
+  const registryKey = `Software\\Forge614-Test-ShellE2E-${randomUUID().replaceAll("-", "")}`;
+  await mkdir(home, { recursive: true });
+  await buildRelease(releaseDir);
+  await installEnginesFixture(forgeHome);
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      const path = new URL(request.url).pathname;
+      if (path === "/repos/jotredev/forge614-shell/releases/latest") return Response.json({ tag_name: `v${VERSION}` });
+      const prefix = `/repos/jotredev/forge614-shell/releases/download/v${VERSION}/`;
+      if (path.startsWith(prefix)) {
+        const file = join(releaseDir, decodeURIComponent(path.slice(prefix.length)));
+        return existsSync(file) ? new Response(Bun.file(file)) : new Response("not found", { status: 404 });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  try {
+    const createKey = `$key='HKCU:\\${registryKey}'; New-Item -Path $key -Force | Out-Null; New-ItemProperty -Path $key -Name Path -Value '' -PropertyType ExpandString -Force | Out-Null`;
+    const registry = await run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", createKey], { cwd: root, env: {} });
+    expect(registry.exitCode, registry.stderr).toBe(0);
+    const env = {
+      HOME: home,
+      USERPROFILE: home,
+      FORGE614_HOME: forgeHome,
+      FORGE614_INSTALL_TEST_BASE_URL: `http://127.0.0.1:${server.port}`,
+      FORGE614_TEST_WINDOWS_ENV_KEY: registryKey,
+      FORGE614_SHELL_LOCALE: "en",
+    };
+    const install = await run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(REPO_ROOT, "install.ps1"), "--latest"], { cwd: root, env });
+    expect(install.exitCode, `${install.stdout}\n${install.stderr}`).toBe(0);
+    const launcher = join(forgeHome, "shell", "bin", "forge614-shell.cmd");
+    expect(existsSync(launcher)).toBe(true);
+    const commandLine = (args: string[]) => run(["cmd.exe", "/d", "/c", `"${launcher}" ${args.join(" ")}`], { cwd: root, env });
+    const version = await commandLine(["--version"]);
+    expect(version.exitCode, `${version.stdout}\n${version.stderr}`).toBe(0);
+    expect(version.stdout.trim()).toBe(`forge614-shell ${VERSION}`);
+
+    const update = await commandLine(["update", "--version", `v${VERSION}`, "--json"]);
+    expect(update.exitCode, `${update.stdout}\n${update.stderr}`).toBe(0);
+    expect(update.stdout).toContain(`"installedVersion":"${VERSION}"`);
+
+    const uninstall = await commandLine(["uninstall", "--json"]);
+    expect(uninstall.exitCode, `${uninstall.stdout}\n${uninstall.stderr}`).toBe(0);
+    expect(JSON.parse(uninstall.stdout.trim())).toEqual({ schemaVersion: 1, result: { removed: true } });
+    const deadline = Date.now() + 10_000;
+    while (existsSync(join(forgeHome, "shell")) && Date.now() < deadline) await new Promise(resolvePromise => setTimeout(resolvePromise, 100));
+    expect(existsSync(join(forgeHome, "shell"))).toBe(false);
+    const pathRead = await run(["powershell.exe", "-NoProfile", "-Command", `$key='HKCU:\\${registryKey}'; (Get-ItemProperty -Path $key -Name Path).Path`], { cwd: root, env });
+    expect(pathRead.stdout).not.toContain(join(forgeHome, "shell", "bin"));
+  } finally {
+    server.stop(true);
+    const removeKey = `Remove-Item -LiteralPath 'HKCU:\\${registryKey}' -Recurse -Force -ErrorAction SilentlyContinue`;
+    await run(["powershell.exe", "-NoProfile", "-Command", removeKey], { cwd: root, env: {} });
+    await rm(root, { recursive: true, force: true });
+  }
+});

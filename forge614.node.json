@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "node": "shell",
+  "kind": "product",
+  "standard": {
+    "version": "1.2.1",
+    "sha256": "357f26a5391cfcd5abc48abe1bd750db1a540e95b511f6bd12ac681a1527100e"
+  },
+  "ecosystem": "forge614",
+  "install": {
+    "repository": "jotredev/forge614-shell",
+    "minimumNodeVersion": "22.19.0",
+    "systems": [
+      { "os": "darwin", "architectures": ["arm64", "x64"] },
+      { "os": "linux", "architectures": ["arm64", "x64"] },
+      { "os": "windows", "architectures": ["x64"] }
+    ],
+    "tagFormat": "vX.Y.Z",
+    "asset": {
+      "type": "node-package-tar-gzip",
+      "pattern": "forge614-shell-<ver>.tar.gz",
+      "checksumFile": "SHA256SUMS"
+    },
+    "dependencies": [
+      {
+        "node": "engines",
+        "minimumVersion": null,
+        "requiredCapabilities": [
+          { "agent": "claude-code", "field": "fullySupported" }
+        ],
+        "compatibility": "capabilities"
+      }
+    ],
+    "path": { "modify": true, "retireWhen": "cuando forge614 init gestione el PATH" },
+    "smokeTest": ["--version"]
+  }
+}
