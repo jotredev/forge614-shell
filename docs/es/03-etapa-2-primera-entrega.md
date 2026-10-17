@@ -2,7 +2,7 @@
 
 Como la fotografía de una obra en construcción, este documento conserva un momento anterior sin confundirlo con el edificio terminado.
 
-La primera entrega de la etapa 2 creó el lanzador TypeScript/Bun, la integración inicial con Pi y la base de la interfaz de terminal. Es un registro histórico, no un manual de capacidades vigentes.
+La primera entrega de la etapa 2 creó el lanzador TypeScript/Bun, una integración inicial con Pi y la base de la interfaz de terminal. Pi dejó de ser un motor vigente en Shell 1.16.0; este es un registro histórico, no un manual de capacidades vigentes.
 
 Las afirmaciones sobre motores que aparecían en entregas anteriores pueden haber cambiado. En particular, Gemini y Antigravity fueron retirados; la referencia actual de arquitectura y motores es [04](04-arquitectura-motores.md). La inicialización de Engram y su integración de memoria posterior viven en [07](07-inicializacion-engram-y-mcp.md).
 

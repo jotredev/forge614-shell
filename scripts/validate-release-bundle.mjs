@@ -71,7 +71,6 @@ const requiredPieces = [
   `${releasePrefix}/install.sh`,
   `${releasePrefix}/install.ps1`,
   `${releasePrefix}/forge614-shell.cmd.template`,
-  `${releasePrefix}/extensions/forge614-shell.ts`,
 ];
 
 for (const piece of requiredPieces) {

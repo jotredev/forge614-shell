@@ -13,7 +13,7 @@ Piensa en una central telefónica: Shell atiende y muestra la conversación; Eng
 
 ## Detección y chat
 
-Al iniciar de forma interactiva, Shell ejecuta `~/.forge614/engines/bin/forge614-engines detect` y exige `schemaVersion: 1` (versión del formato de respuesta). Solo muestra `claude-code` y `codex`, porque son los únicos identificadores con adaptador de chat. Si Engines falta, es incompatible o devuelve datos inválidos, Shell falla con instrucciones de reparación; no realiza una segunda detección en `PATH` (la lista de programas que el sistema puede ejecutar).
+Al iniciar de forma interactiva, Shell ejecuta `~/.forge614/engines/bin/forge614-engines detect` y exige `schemaVersion: 1` (versión del formato de respuesta). Solo muestra `claude-code` y `codex`, porque son los únicos identificadores con adaptador de chat. Con `--engine claude|codex`, Shell consulta `detect` y `capabilities --agent <id>` antes de crear una terminal, elegir idioma o guardar preferencias. Si Engines falta o no responde, Shell muestra `engines-unavailable`; un id no compatible (incluido `pi`), un adaptador ausente o cualquier valor distinto de `fullySupported: true` muestra `engine-not-fully-supported`. No realiza una segunda detección en `PATH` (la lista de programas que el sistema puede ejecutar).
 
 Claude Code usa su flujo oficial de suscripción y Codex usa `app-server` con inicio de sesión ChatGPT. Ambos conservan las credenciales administradas por su cliente nativo. `/login` (Claude Code) o `/f614:login` (Codex) reutiliza la cuenta existente o abre el flujo oficial; `/logout` borra únicamente el estado de la sesión de Shell.
 
@@ -23,7 +23,7 @@ Shell tiene dos adaptadores de chat para la conversación interactiva: Claude Co
 
 ## Qué asistentes lista Shell
 
-Toda lista de asistentes que muestra Shell contiene solo los asistentes que Engines informa como de soporte completo (`fullySupported: true` en `capabilities --agent <id>`); hoy Claude Code y Codex. Decide Engines, nunca Shell. Gemini y Antigravity ya no tienen directorios, procesos, autenticación ni selector en Shell.
+Toda lista de asistentes que muestra Shell contiene solo los asistentes que Engines informa como de soporte completo (`fullySupported: true` en `capabilities --agent <id>`); hoy Claude Code y Codex. Decide Engines, nunca Shell. Pi ya no es un motor de chat de Shell; `pi-tui` sigue como biblioteca de interfaz de terminal y `pi-coding-agent` solo se usa para miniaturas. Gemini y Antigravity ya no tienen directorios, procesos, autenticación ni selector en Shell.
 
 ## Regla para asistentes nuevos
 

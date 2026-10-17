@@ -26,7 +26,6 @@ try {
   await cp(join(root, "scripts", "install.sh"), join(releaseRoot, "install.sh"));
   await cp(join(root, "scripts", "install.ps1"), join(releaseRoot, "install.ps1"));
   await cp(join(root, "scripts", "forge614-shell.cmd.template"), join(releaseRoot, "forge614-shell.cmd.template"));
-  await cp(join(root, "extensions"), join(releaseRoot, "extensions"), { recursive: true });
   await chmod(join(releaseRoot, "dist", "cli.js"), 0o755);
   await chmod(join(releaseRoot, "install.sh"), 0o755);
 

@@ -147,7 +147,7 @@ let thumbnailReady: (() => void) | undefined;
 export function onThumbnailReady(listener: (() => void) | undefined): void { thumbnailReady = listener; }
 
 /**
- * The thumbnail of an image, as a PNG. A PNG of `THUMBNAIL_MAX_BYTES` or less is drawn as it is, at once. Any other (a JPEG, even a light one, or a heavier PNG) is made with Photon (`resizeImage` of pi-coding-agent, in
+ * pi-coding-agent is retained only for thumbnails: this calls its `resizeImage` and `convertToPng` helpers. The thumbnail of an image, as a PNG. A PNG of `THUMBNAIL_MAX_BYTES` or less is drawn as it is, at once. Any other (a JPEG, even a light one, or a heavier PNG) is made with Photon (`resizeImage` of pi-coding-agent, in
  * a worker thread, which is why it is not waited for: `readImage` and the screen's rendering are synchronous and writing in the box must never stop): until it is ready the gray line is drawn, and then the screen is asked
  * to repaint. `resizeImage` shrinks it to the box (`THUMBNAIL_COLUMNS` × `THUMBNAIL_ROWS` cells, twice over for Retina screens) and may answer with a JPEG, which `convertToPng` turns into a PNG; a thumbnail that weighs
  * more than `THUMBNAIL_MAX_BYTES` is shrunk some more (fewer pixels, never another format). If Photon does not load or cannot do it, a PNG original of `THUMBNAIL_FALLBACK_BYTES` or less is drawn as it is, and a JPEG
