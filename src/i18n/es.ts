@@ -203,6 +203,7 @@ const es: Catalog = {
     "init-unsupported-product": ({ product }) => `forge614-shell init --product ${product} no es compatible. Solo "engram" es compatible por ahora.`,
     "updater-update-failed": () => "Falló la actualización de Forge614 Shell.",
     "updater-uninstall-failed": () => "Falló la desinstalación de Forge614 Shell.",
+    "updater-uninstall-from-shell": () => "Ejecuta uninstall desde fuera de la carpeta de Forge614 Shell.",
   },
   cli: {
     updateFailed: ({ message }) => `Falló la actualización de Forge614-Shell: ${message}`,
