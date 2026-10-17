@@ -117,6 +117,7 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     for (const exitCode of [0, 1, 2, 130]) {
       const forwarded = await commandLine(["argument with spaces", 'value with "embedded quotes"'], root, {
         PATH: `${fakeNodeDir};${process.env.PATH ?? ""}`,
+        PATHEXT: ".CMD;.EXE;.BAT",
         FORGE614_TEST_NODE_EXIT: String(exitCode),
       });
       expect(forwarded.exitCode, `${forwarded.stdout}\n${forwarded.stderr}`).toBe(exitCode);
