@@ -96,7 +96,9 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     const shellHome = join(forgeHome, "shell");
     const blockedUninstall = await commandLine(["uninstall", "--json"], shellHome);
     expect(blockedUninstall.exitCode, `${blockedUninstall.stdout}\n${blockedUninstall.stderr}`).toBe(1);
-    expect(JSON.parse(blockedUninstall.stderr.trim())).toMatchObject({ schemaVersion: 1, code: "UNINSTALL_FAILED" });
+    const blockedOutput = `${blockedUninstall.stdout}\n${blockedUninstall.stderr}`;
+    expect(blockedOutput).toContain('"code":"UNINSTALL_FAILED"');
+    expect(blockedOutput).toContain("Run uninstall from outside the Forge614 Shell folder.");
     expect(existsSync(shellHome)).toBe(true);
 
     logStage("update: started");
