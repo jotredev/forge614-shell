@@ -88,7 +88,7 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
       "powershell.exe",
       "-NoProfile",
       "-Command",
-      `& ${quoteForPowerShell(launcher)} ${args.map(quoteForPowerShell).join(" ")}`,
+      `& ${quoteForPowerShell(launcher)} ${args.map(quoteForPowerShell).join(" ")}; exit $LASTEXITCODE`,
     ], { cwd, env: { ...env, ...extraEnv } });
     const version = await commandLine(["--version"]);
     expect(version.exitCode, `${version.stdout}\n${version.stderr}`).toBe(0);
