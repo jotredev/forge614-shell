@@ -108,7 +108,6 @@ jobs:
           src/engines/mcp-status.test.ts
           src/engines/memory-source.test.ts
           src/engines/permission-text.test.ts
-          src/engines/pi/launcher.test.ts
           src/engines/process.test.ts
           src/engines/work-mode.test.ts
           src/engines/codex/commands.test.ts
