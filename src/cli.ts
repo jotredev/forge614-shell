@@ -1,10 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { createLaunch } from "./engines/pi/launcher.ts";
 import { parseEngine } from "./app/options.ts";
-import { discoverSelectableEngines } from "./infrastructure/forge614-engines.ts";
+import { discoverSelectableEngines, requireFullySupportedEngine } from "./infrastructure/forge614-engines.ts";
 import { startTerminalSpinner } from "./app/startup-spinner.ts";
 import { getCatalog, resolveConfiguredLocale } from "./i18n/index.ts";
 import { describeError } from "./shell-error.ts";
@@ -83,28 +80,25 @@ if (args.length === 1 && args[0] === "update") {
   let effectiveLocale = staticLocale;
   try {
     const selected = parseEngine(args, staticLocale);
-    let selectedExecutable: string | undefined;
+    const explicitEngine = selected.engine
+      ? await requireFullySupportedEngine(selected.engine, { env: process.env })
+      : undefined;
+    let selectedExecutable = explicitEngine?.executable;
     const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-    // Only the legacy non-interactive Pi automation path bypasses the UI.
-    if (interactive || selected.engine !== "pi") {
-      if (!interactive) {
-        throw new Error(getCatalog(staticLocale).cli.requiresInteractiveStartup);
-      }
-      // Language first, before any other visible text or work: the spinner and engine detection
-      // below must never run (and the person must never see anything) until a locale is settled.
-      // Cancelling the language selector cancels this whole startup — no detection, no picker.
-      const { ProcessTerminal } = await import("@earendil-works/pi-tui");
-      // Shared with `chooseStartup` below for the same reason as the `init` dispatch above: two
-      // independent `ProcessTerminal` instances chained back to back left the second alt-screen
-      // deaf to input on a real PTY.
-      const terminal = new ProcessTerminal();
-      const { ensureLocale } = await import("./app/language-gate.ts");
-      const locale = await ensureLocale({ env: process.env, version: metadata.version, terminal });
-      if (locale === undefined) {
-        process.exitCode = 130;
-        selected.engine = undefined;
-      } else {
-        effectiveLocale = locale;
+    if (!interactive) throw new Error(getCatalog(staticLocale).cli.requiresInteractiveStartup);
+
+    // Explicit adapter support was confirmed above, before constructing a terminal or entering the language gate.
+    // Normal startup still chooses a language first, then detects and asks which supported adapter to open.
+    const { ProcessTerminal } = await import("@earendil-works/pi-tui");
+    const terminal = new ProcessTerminal();
+    const { ensureLocale } = await import("./app/language-gate.ts");
+    const locale = await ensureLocale({ env: process.env, version: metadata.version, terminal });
+    if (locale === undefined) {
+      process.exitCode = 130;
+      selected.engine = undefined;
+    } else {
+      effectiveLocale = locale;
+      if (!selected.engine) {
         const t = getCatalog(locale);
         const stopSpinner = startTerminalSpinner(t.spinner.detectingEngines);
         let installed: Awaited<ReturnType<typeof discoverSelectableEngines>>;
@@ -128,28 +122,6 @@ if (args.length === 1 && args[0] === "update") {
       const { startNativeUI } = await import("./app/native-chat.ts");
       const { readEcosystemVersions } = await import("./infrastructure/ecosystem-versions.ts");
       await startNativeUI(selected.engine, executable, selected.args, metadata.version, effectiveLocale, () => readEcosystemVersions({ env: process.env }));
-    } else if (selected.engine === "pi") {
-    const piModule = import.meta.resolve("@earendil-works/pi-coding-agent");
-    const piRoot = new URL("../", piModule);
-    const piMetadata = JSON.parse(readFileSync(new URL("package.json", piRoot), "utf8")) as {
-      bin: { pi: string };
-    };
-    const launch = createLaunch({
-      home: homedir(),
-      cwd: process.cwd(),
-      env: process.env,
-      executable: process.execPath,
-      piEntry: fileURLToPath(new URL(piMetadata.bin.pi, piRoot)),
-      extension: fileURLToPath(new URL("../extensions/forge614-shell.ts", import.meta.url)),
-      args: selected.args,
-    });
-    for (const [key, value] of Object.entries(launch.env)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-    process.argv = [launch.command, ...launch.args];
-    // Pi owns the terminal and signals directly; there is no detached background agent.
-    await import(pathToFileURL(launch.args[0]!).href);
     }
   } catch (error) {
     console.error(getCatalog(effectiveLocale).cli.couldNotStart({ message: describeError(error, effectiveLocale) }));

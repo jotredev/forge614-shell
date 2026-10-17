@@ -49,7 +49,7 @@ forge614-shell init --product engram
 
 `forge614-shell update` also refreshes Forge614 Engines, and Forge614 Engram if it is installed — each is reported independently (updated, already up to date, not installed, or failed with a safe message), and a failure in one never hides or is presented as success for the others; the command exits with a non-zero status if any of the three failed.
 
-`--engine claude|codex` is a legacy option; in an interactive terminal it does not bypass pickers. Native chat requires an interactive terminal. The installer only keeps an existing Forge614 Engines if `capabilities --agent claude-code` also returns a boolean `fullySupported`; otherwise (or if that call fails) it installs the latest one.
+`--engine claude|codex` checks with Forge614 Engines that the chosen adapter is fully supported before opening a terminal or saving preferences; Shell then asks for the language and starts that adapter. `--engine pi` and other unsupported ids fail with `engine-not-fully-supported`; without a supported explicit id, startup asks which adapter to open. Native chat requires an interactive terminal. The installer only keeps an existing Forge614 Engines if `capabilities --agent claude-code` also returns a boolean `fullySupported`; otherwise (or if that call fails) it installs the latest one.
 
 ## Startup and common errors
 

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { applyEnginesPlan, defaultRun, discoverMcpCapableAgents, discoverSelectableEngines, enginesBinary, planMcpInstall, planMcpRemove, planMemoryInstall, removeEngramMcpFromAgent, verifyMemoryIntegration } from "./forge614-engines.ts";
+import { applyEnginesPlan, defaultRun, discoverMcpCapableAgents, discoverSelectableEngines, enginesBinary, planMcpInstall, planMcpRemove, planMemoryInstall, removeEngramMcpFromAgent, requireFullySupportedEngine, verifyMemoryIntegration } from "./forge614-engines.ts";
 import { ShellError, describeError } from "../shell-error.ts";
 
 test("enginesBinary resolves without .exe on Unix platforms", () => {
@@ -60,6 +60,32 @@ function enginesDouble(detectReport: unknown, capsFor: (id: string) => Record<st
 
 /** Fully-supported map: Claude Code and Codex are fully supported; any other agent is not. */
 const fullySupportedToday = (id: string) => ({ fullySupported: id !== "example-agent" });
+
+test("explicit adapter validation checks Engines before startup and returns its executable", async () => {
+  const calls: string[][] = [];
+  const selected = await requireFullySupportedEngine("claude", { home: "/Users/tester", run: enginesDouble(report, fullySupportedToday, calls) });
+  expect(selected).toEqual({ id: "claude", label: "Claude Code", executable: "/usr/local/bin/claude" });
+  expect(calls).toEqual([[BIN, "detect"], [BIN, "capabilities", "--agent", "claude-code"]]);
+});
+
+test("explicit validation rejects unknown ids without consulting Engines, and maps unsupported capabilities to the stable error", async () => {
+  const calls: string[][] = [];
+  for (const engine of ["pi", "foo"]) {
+    const error = await requireFullySupportedEngine(engine, { home: "/Users/tester", run: enginesDouble(report, fullySupportedToday, calls) }).catch((thrown: unknown) => thrown);
+    expect((error as ShellError).code).toBe("engine-not-fully-supported");
+  }
+  expect(calls).toEqual([]);
+
+  const missingField = await requireFullySupportedEngine("claude", { home: "/Users/tester", run: enginesDouble(report, () => ({})) }).catch((thrown: unknown) => thrown);
+  expect((missingField as ShellError).code).toBe("engine-not-fully-supported");
+  const falseField = await requireFullySupportedEngine("claude", { home: "/Users/tester", run: enginesDouble(report, () => ({ fullySupported: false })) }).catch((thrown: unknown) => thrown);
+  expect((falseField as ShellError).code).toBe("engine-not-fully-supported");
+});
+
+test("explicit validation keeps engines-unavailable when Engines cannot answer detect", async () => {
+  const error = await requireFullySupportedEngine("claude", { run: async () => ({ status: 127, stdout: "", stderr: "missing" }) }).catch((thrown: unknown) => thrown);
+  expect((error as ShellError).code).toBe("engines-unavailable");
+});
 
 /**
  * The chat selector offers only what Engines calls `fullySupported` AND Shell has an adapter for.

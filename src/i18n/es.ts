@@ -179,6 +179,7 @@ const es: Catalog = {
     "engines-invalid-detection": () => "Forge614 Engines devolvió un resultado de detección inválido.",
     "engines-incompatible-schema": () => "Forge614 Engines es incompatible con esta versión de Shell. Reinstala Forge614 Shell para reparar su dependencia requerida.",
     "engines-unavailable": () => "Forge614 Engines no está disponible. Reinstala Forge614 Shell para reparar su dependencia requerida.",
+    "engine-not-fully-supported": ({ engine }) => `Shell no puede abrir «${engine}»: Forge614 Engines no lo marca como totalmente compatible.`,
     "engines-unavailable-at-path": ({ path }) => `Forge614 Engines no está disponible en ${path}. Instala o reinstala Forge614 Engines para reparar esta dependencia.`,
     "engines-command-failed": ({ label }) => `forge614-engines ${label} falló.`,
     "engines-invalid-plan": () => "forge614-engines devolvió un plan inválido.",
