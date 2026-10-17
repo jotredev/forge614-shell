@@ -320,6 +320,29 @@ test("a JPEG from the clipboard is converted to a PNG with Photon, and the PNG i
   });
 }, { timeout: 30_000 });
 
+test("a JPEG clipboard image with EXIF orientation is saved upright", async () => {
+  const { resizeImage } = await import("@earendil-works/pi-coding-agent");
+  const probe = await import("../ui/basic/png-fixtures.ts");
+  const made = await resizeImage(probe.realPng(400, 300, 8), "image/png", { maxWidth: 400, maxHeight: 300, maxBytes: 50_000 });
+  expect(made?.mimeType).toBe("image/jpeg");
+  const jpeg = Buffer.from(made!.data, "base64");
+  const exif = Buffer.from([
+    0xff, 0xe1, 0x00, 0x22,
+    0x45, 0x78, 0x69, 0x66, 0x00, 0x00,
+    0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+  ]);
+  const rotated = Buffer.concat([jpeg.subarray(0, 2), exif, jpeg.subarray(2)]);
+  await withFolder(async directory => {
+    const double = imageDouble(call => call.args[0] === "--list-types" ? { stdout: Buffer.from("image/jpeg\n") } : { stdout: rotated });
+    const result = await pasteClipboardImage({ platform: "linux", env: { WAYLAND_DISPLAY: "w" }, run: double.run, directory });
+    expect(result.kind).toBe("image");
+    const png = readFileSync((result as { path: string }).path);
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([225, 300]);
+  });
+}, { timeout: 30_000 });
+
 test("the PNG's signature is checked on what a program wrote, and the size limit holds: a file that is not a PNG or is too big is deleted", async () => {
   await withFolder(async directory => {
     const notPng = imageDouble(call => { writeFileSync(call.env!.FORGE614_CLIP_PATH!, JPEG); return { stdout: ok("ok") }; });

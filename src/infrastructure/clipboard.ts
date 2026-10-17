@@ -3,6 +3,7 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readSync, rmSync
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { convertToPng } from "@earendil-works/pi-coding-agent";
 import { ShellError } from "../shell-error.ts";
 
 /** Comando y argumentos para fijar el portapapeles en Windows leyendo UTF-8 desde stdin sin interpolar en shell. */
@@ -210,7 +211,7 @@ export const WINDOWS_PASTE_SCRIPT = [
   "try { $image.Save($target, [System.Drawing.Imaging.ImageFormat]::Png); Write-Output 'ok' } finally { $image.Dispose() }",
 ].join("\n");
 
-/** The image types a clipboard may offer that Photon can turn into a PNG when there is no `image/png`. */
+/** The image types a clipboard may offer that pi-coding-agent can turn into a PNG when there is no `image/png`. */
 const CONVERTIBLE = ["image/jpeg", "image/webp", "image/gif", "image/bmp"];
 
 /** `bytes` as a PNG: as they are when they already are one, converted with Photon when they are another image type; undefined when that cannot be done. */
@@ -218,12 +219,11 @@ async function asPng(bytes: Buffer, mime: string): Promise<Buffer | undefined> {
   if (bytes.subarray(0, 8).equals(PNG_SIGNATURE)) return bytes;
   if (!CONVERTIBLE.includes(mime)) return undefined;
   try {
-    const { PhotonImage } = await import("@silvia-odwyer/photon-node");
-    const image = PhotonImage.new_from_byteslice(bytes);
-    let converted: Buffer;
-    try { converted = Buffer.from(image.get_bytes()); }
-    finally { image.free(); }
-    return converted?.subarray(0, 8).equals(PNG_SIGNATURE) ? converted : undefined;
+    // pi-coding-agent applies JPEG EXIF orientation before encoding: clipboard photos stay upright when pasted.
+    const converted = await convertToPng(bytes.toString("base64"), mime);
+    if (!converted) return undefined;
+    const png = Buffer.from(converted.data, "base64");
+    return png.subarray(0, 8).equals(PNG_SIGNATURE) ? png : undefined;
   } catch { return undefined; }
 }
 
