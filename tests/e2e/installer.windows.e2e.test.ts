@@ -94,12 +94,17 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     expect(version.stdout.trim()).toBe(`forge614-shell ${VERSION}`);
 
     const shellHome = join(forgeHome, "shell");
-    const blockedUninstall = await commandLine(["uninstall", "--json"], shellHome, { FORGE614_TEST_UNINSTALL_CWD_DIAGNOSTIC: "1" });
+    const blockedUninstall = await commandLine(["uninstall", "--json"], join(shellHome, "bin"));
     expect(blockedUninstall.exitCode, `${blockedUninstall.stdout}\n${blockedUninstall.stderr}`).toBe(1);
     const blockedOutput = `${blockedUninstall.stdout}\n${blockedUninstall.stderr}`;
     expect(blockedOutput).toContain('"code":"UNINSTALL_FAILED"');
     expect(blockedOutput).toContain("Run uninstall from outside the Forge614 Shell folder.");
     expect(existsSync(shellHome)).toBe(true);
+    expect(existsSync(launcher)).toBe(true);
+    expect(existsSync(join(shellHome, ".active-version"))).toBe(true);
+    const versionAfterRejectedUninstall = await commandLine(["--version"], join(shellHome, "bin"));
+    expect(versionAfterRejectedUninstall.exitCode, `${versionAfterRejectedUninstall.stdout}\n${versionAfterRejectedUninstall.stderr}`).toBe(0);
+    expect(versionAfterRejectedUninstall.stdout.trim()).toBe(`forge614-shell ${VERSION}`);
 
     logStage("update: started");
     const update = await commandLine(["update", "--version", `v${VERSION}`, "--json"]);
