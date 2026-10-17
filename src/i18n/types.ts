@@ -63,7 +63,8 @@ export type ShellErrorCode =
   | "init-unexpected-args"
   | "init-unsupported-product"
   | "updater-update-failed"
-  | "updater-uninstall-failed";
+  | "updater-uninstall-failed"
+  | "updater-uninstall-from-shell";
 
 /**
  * Shell's translated presentation strings. Never covers command names, paths, environment

@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { checksumForAsset, uninstallInstalledShell, updateInstalledShell } from "./updater.ts";
 import { ShellError, describeError } from "../shell-error.ts";
 
@@ -25,11 +29,58 @@ test("reports installer diagnostics", async () => {
 
 test("runs the bundled installer with --uninstall", async () => {
   const calls: string[][] = [];
-  await uninstallInstalledShell({ installer: "/tmp/release/install.sh", platform: "darwin", spawn: ((command: string, args: string[]) => {
+  await uninstallInstalledShell({ installer: "/tmp/release/install.sh", platform: "darwin", env: { FORGE614_HOME: "/tmp/forge614-updater-no-shell" }, spawn: ((command: string, args: string[]) => {
     calls.push([command, ...args]);
     return { status: 0, stderr: "" } as never;
   }) as never });
   expect(calls).toEqual([["bash", "/tmp/release/install.sh", "--uninstall"]]);
+});
+
+test("rejects uninstall from inside Shell and leaves the installation untouched", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "forge614-updater-cwd-"));
+  const forgeHome = join(temp, ".forge614");
+  const shellHome = join(forgeHome, "shell");
+  await mkdir(shellHome, { recursive: true });
+  let installerCalls = 0;
+  try {
+    const error = await uninstallInstalledShell({
+      installer: "/tmp/release/install.sh",
+      platform: "win32",
+      env: { HOME: temp, FORGE614_HOME: forgeHome },
+      cwd: join(shellHome, "dist"),
+      spawn: (() => { installerCalls++; return { status: 0, stderr: "" }; }) as never,
+    }).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(ShellError);
+    expect((error as ShellError).code).toBe("updater-uninstall-from-shell");
+    expect(describeError(error, "es")).toBe("Ejecuta uninstall desde fuera de la carpeta de Forge614 Shell.");
+    expect(describeError(error, "en")).toBe("Run uninstall from outside the Forge614 Shell folder.");
+    expect(installerCalls).toBe(0);
+    expect(existsSync(shellHome)).toBe(true);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("does not report a successful uninstall when the gatekeeper leaves Shell installed", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "forge614-updater-leftover-"));
+  const forgeHome = join(temp, ".forge614");
+  const shellHome = join(forgeHome, "shell");
+  await mkdir(shellHome, { recursive: true });
+  try {
+    const error = await uninstallInstalledShell({
+      installer: "/tmp/release/install.sh",
+      platform: "darwin",
+      env: { HOME: temp, FORGE614_HOME: forgeHome },
+      cwd: temp,
+      spawn: (() => ({ status: 0, stderr: "" })) as never,
+    }).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("still exists");
+    expect((error as Error).message).not.toContain(temp);
+    expect(existsSync(shellHome)).toBe(true);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });
 
 test("passes Shell's effective locale to the installer through a controlled environment variable", async () => {
@@ -113,6 +164,7 @@ test("runs the bundled installer with install.ps1 and -Uninstall on Windows with
     installer: "C:\\Program Files\\release\\install.ps1",
     platform: "win32",
     powerShellCommand: "powershell.exe",
+    env: { FORGE614_HOME: "C:\\forge614-test-home" },
     spawn: ((command: string, args: string[], options?: { windowsHide?: boolean; env?: NodeJS.ProcessEnv }) => {
       calls.push({ command, args, options });
       return { status: 0, stderr: "" } as never;

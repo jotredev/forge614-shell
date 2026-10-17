@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { spawn as spawnAsync, spawnSync } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, openSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, lstatSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ShellError } from "../shell-error.ts";
 import { resolveConfiguredLocale } from "../i18n/index.ts";
 import type { Locale } from "../i18n/index.ts";
@@ -22,6 +22,8 @@ export interface RunInstallerOptions {
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   powerShellCommand?: string;
+  /** Current working directory override used to exercise the uninstall safety boundary. */
+  cwd?: string;
   version?: string;
   currentVersion?: string;
   fetcher?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -34,6 +36,31 @@ export interface UpdateInstalledShellResult {
 }
 
 const REPOSITORY = "jotredev/forge614-shell";
+
+function shellHome(env: NodeJS.ProcessEnv): string {
+  const forgeHome = env.FORGE614_HOME ?? join(env.HOME ?? env.USERPROFILE ?? homedir(), ".forge614");
+  return resolve(forgeHome, "shell");
+}
+
+function pathIsInside(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+
+function ensureUninstallStartsOutsideShell(env: NodeJS.ProcessEnv, cwd = process.cwd()): void {
+  if (pathIsInside(shellHome(env), resolve(cwd))) throw new ShellError("updater-uninstall-from-shell");
+}
+
+function ensureShellWasRemoved(env: NodeJS.ProcessEnv): void {
+  const directory = shellHome(env);
+  try {
+    lstatSync(directory);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+    throw new Error(sanitizeInstallerDetail(`could not verify that ${directory} was removed: ${error instanceof Error ? error.message : "filesystem check failed"}`, env));
+  }
+  throw new Error(sanitizeInstallerDetail(`installer exited successfully but ${directory} still exists`, env));
+}
 
 /** Check whether a command executable is present on PATH. */
 function isCommandOnPath(command: string, env?: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): boolean {
@@ -134,52 +161,10 @@ async function runPublishedInstaller(action: "update" | "uninstall", options: Ru
   env.FORGE614_SHELL_LOCALE = locale;
   const fetcher = options.fetcher ?? fetch;
   let directory: string | undefined;
-  let cleanupByWorker = false;
   try {
     const tag = await selectedTag(action === "update" ? options.version : undefined, env, fetcher);
     const gate = await downloadGatekeeper(tag, platform, { ...options, env, fetcher });
     directory = gate.directory;
-    if (action === "uninstall" && platform === "win32" && !options.spawn) {
-      const worker = join(gate.directory, "uninstall-after-shell-exits.ps1");
-      const psLiteral = (value: string | undefined) => value === undefined ? "$null" : `'${value.replaceAll("'", "''")}'`;
-      const script = [
-        `$Gatekeeper = ${psLiteral(gate.installer)}`,
-        `$GatekeeperDir = ${psLiteral(gate.directory)}`,
-        `$LogPath = ${psLiteral(env.FORGE614_TEST_WINDOWS_UNINSTALL_LOG)}`,
-        `if ($LogPath) { "worker started" | Add-Content -LiteralPath $LogPath }`,
-        `try { Wait-Process -Id ${process.pid} -Timeout 120 -ErrorAction Stop; if ($LogPath) { "shell process exited" | Add-Content -LiteralPath $LogPath } } catch { if ($LogPath) { "wait failed: $($_.Exception.Message)" | Add-Content -LiteralPath $LogPath } }`,
-        `try { & $Gatekeeper --uninstall; $Code = $LASTEXITCODE; if ($LogPath) { "gatekeeper exit: $Code" | Add-Content -LiteralPath $LogPath } } catch { $Code = 1; if ($LogPath) { "gatekeeper error: $($_.Exception.Message)" | Add-Content -LiteralPath $LogPath } }`,
-        `if ($LogPath) { "removing gatekeeper directory" | Add-Content -LiteralPath $LogPath }`,
-        `Remove-Item -LiteralPath $GatekeeperDir -Recurse -Force -ErrorAction SilentlyContinue`,
-        `exit $Code`,
-      ].join("\r\n");
-      await writeFile(worker, script, "utf8");
-      const workerEnv = {
-        ...Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
-      };
-      const workerLog = env.FORGE614_TEST_WINDOWS_UNINSTALL_LOG;
-      if (workerLog) {
-        appendFileSync(workerLog, "parent: launching worker\n");
-      }
-      const workerErrorLog = workerLog ? `${workerLog}.stderr` : undefined;
-      const workerErrorFd = workerErrorLog ? openSync(workerErrorLog, "a") : undefined;
-      const child = spawnAsync(resolvePowerShellCommand(options.powerShellCommand, env, platform), ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", worker], {
-        cwd: env.TEMP || env.TMP || tmpdir(),
-        detached: true,
-        stdio: workerErrorFd === undefined ? "ignore" : ["ignore", "ignore", workerErrorFd],
-        windowsHide: true,
-        env: workerEnv,
-      });
-      if (workerErrorFd !== undefined) closeSync(workerErrorFd);
-      if (workerLog) {
-        child.once("spawn", () => appendFileSync(workerLog, `parent: worker process spawned (pid ${child.pid ?? "unknown"})\n`));
-        child.once("exit", (code, signal) => appendFileSync(workerLog, `parent: worker process exited (code ${code ?? "null"}, signal ${signal ?? "none"})\n`));
-        child.once("error", error => appendFileSync(workerLog, `parent: spawn failed: ${error.message}\n`));
-      }
-      child.unref();
-      cleanupByWorker = true;
-      return { tag };
-    }
     const command = platform === "win32" ? resolvePowerShellCommand(options.powerShellCommand, env, platform) : "sh";
     const actionArgs = action === "update" ? ["--version", tag] : ["--uninstall"];
     const args = platform === "win32"
@@ -195,13 +180,14 @@ async function runPublishedInstaller(action: "update" | "uninstall", options: Ru
       const detail = sanitizeInstallerDetail(stderr.trim() || `installer exited with code ${result.status ?? 1}`, env);
       throw new Error(detail);
     }
+    if (action === "uninstall") ensureShellWasRemoved(env);
     return { tag };
   } catch (error) {
     if (error instanceof ShellError) throw error;
     const detail = sanitizeInstallerDetail(error instanceof Error ? error.message : "installer failed", env);
     throw new Error(detail);
   } finally {
-    if (directory && !cleanupByWorker) await rm(directory, { recursive: true, force: true });
+    if (directory) await rm(directory, { recursive: true, force: true });
   }
 }
 
@@ -234,9 +220,11 @@ export async function updateInstalledShell(options: RunInstallerOptions = {}): P
 
 /** Uninstall Shell through the published gatekeeper. */
 export async function uninstallInstalledShell(options: RunInstallerOptions = {}): Promise<void> {
+  const baseEnv = options.env ?? process.env;
+  ensureUninstallStartsOutsideShell(baseEnv, options.cwd ?? process.cwd());
   if (options.installer) {
     const platform = options.platform ?? process.platform;
-    const env = { ...(options.env ?? process.env), FORGE614_SHELL_LOCALE: options.locale ?? resolveConfiguredLocale({ env: options.env }) ?? "en" };
+    const env = { ...baseEnv, FORGE614_SHELL_LOCALE: options.locale ?? resolveConfiguredLocale({ env: options.env }) ?? "en" };
     const command = platform === "win32" ? resolvePowerShellCommand(options.powerShellCommand, env, platform) : "bash";
     const args = platform === "win32"
       ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", options.installer, "--uninstall"]
@@ -248,6 +236,7 @@ export async function uninstallInstalledShell(options: RunInstallerOptions = {})
       const stderr = typeof result.stderr === "string" ? result.stderr : Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf8") : "";
       throw stderr.trim() ? new Error(sanitizeInstallerDetail(stderr.trim(), env)) : new ShellError("updater-uninstall-failed");
     }
+    ensureShellWasRemoved(env);
     return;
   }
   await runPublishedInstaller("uninstall", options);

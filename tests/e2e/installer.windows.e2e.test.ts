@@ -46,7 +46,6 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
   const releaseDir = join(root, "release");
   const home = join(root, "user home");
   const forgeHome = join(home, ".forge614");
-  const uninstallLog = join(root, "windows uninstall worker.log");
   const registryKey = `Software\\Forge614-Test-ShellE2E-${randomUUID().replaceAll("-", "")}`;
   await mkdir(home, { recursive: true });
   await buildRelease(releaseDir);
@@ -76,7 +75,6 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
       FORGE614_HOME: forgeHome,
       FORGE614_INSTALL_TEST_BASE_URL: `http://127.0.0.1:${server.port}`,
       FORGE614_TEST_WINDOWS_ENV_KEY: registryKey,
-      FORGE614_TEST_WINDOWS_UNINSTALL_LOG: uninstallLog,
       FORGE614_SHELL_LOCALE: "en",
     };
     logStage("install: started");
@@ -85,15 +83,21 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     logStage("install: completed");
     const launcher = join(forgeHome, "shell", "bin", "forge614-shell.cmd");
     expect(existsSync(launcher)).toBe(true);
-    const commandLine = (args: string[]) => run([
+    const commandLine = (args: string[], cwd = root) => run([
       "powershell.exe",
       "-NoProfile",
       "-Command",
       `& '${launcher.replaceAll("'", "''")}' ${args.join(" ")}`,
-    ], { cwd: root, env });
+    ], { cwd, env });
     const version = await commandLine(["--version"]);
     expect(version.exitCode, `${version.stdout}\n${version.stderr}`).toBe(0);
     expect(version.stdout.trim()).toBe(`forge614-shell ${VERSION}`);
+
+    const shellHome = join(forgeHome, "shell");
+    const blockedUninstall = await commandLine(["uninstall", "--json"], shellHome);
+    expect(blockedUninstall.exitCode, `${blockedUninstall.stdout}\n${blockedUninstall.stderr}`).toBe(1);
+    expect(JSON.parse(blockedUninstall.stderr.trim())).toMatchObject({ schemaVersion: 1, code: "UNINSTALL_FAILED" });
+    expect(existsSync(shellHome)).toBe(true);
 
     logStage("update: started");
     const update = await commandLine(["update", "--version", `v${VERSION}`, "--json"]);
@@ -105,13 +109,9 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     const uninstall = await commandLine(["uninstall", "--json"]);
     expect(uninstall.exitCode, `${uninstall.stdout}\n${uninstall.stderr}`).toBe(0);
     expect(JSON.parse(uninstall.stdout.trim())).toEqual({ schemaVersion: 1, result: { removed: true } });
-    logStage("uninstall: installed Node process exited; waiting for shell directory removal");
-    const deadline = Date.now() + 10_000;
-    while (existsSync(join(forgeHome, "shell")) && Date.now() < deadline) await new Promise(resolvePromise => setTimeout(resolvePromise, 100));
-    const workerOutput = await readFile(uninstallLog, "utf8").catch(() => "(worker did not write a log)");
-    const workerError = await readFile(`${uninstallLog}.stderr`, "utf8").catch(() => "(worker did not write stderr)");
-    expect(existsSync(join(forgeHome, "shell")), `${workerOutput}\nworker stderr:\n${workerError}`).toBe(false);
-    logStage("uninstall: shell directory removed");
+    expect(existsSync(shellHome)).toBe(false);
+    expect(`${uninstall.stdout}\n${uninstall.stderr}`).not.toMatch(/The batch file cannot be found|cmd\.exe/i);
+    logStage("uninstall: returned after shell directory removal");
     const pathRead = await run(["powershell.exe", "-NoProfile", "-Command", `$key='HKCU:\\${registryKey}'; (Get-ItemProperty -Path $key -Name Path).Path`], { cwd: root, env });
     expect(pathRead.stdout).not.toContain(join(forgeHome, "shell", "bin"));
   } finally {
