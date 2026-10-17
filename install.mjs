@@ -869,7 +869,12 @@ async function activate(nodeName, version, nodeHome, stagedDir, stagedLauncher, 
     pointerWritten = true;
     const smoke = await run(launcher, smokeTest, { allowFailure: true });
     if (smoke.code !== 0 || smoke.stdout.trim() !== `forge614-${nodeName} ${version}`) {
-      throw new Error("published launcher smoke test failed");
+      const details = [
+        `exit code: ${smoke.code ?? "unknown"}`,
+        smoke.stdout.trim() ? `stdout: ${smoke.stdout.trim()}` : "",
+        smoke.stderr.trim() ? `stderr: ${smoke.stderr.trim()}` : "",
+      ].filter(Boolean).join("; ");
+      throw new Error(`published launcher smoke test failed (${details})`);
     }
     if (launcherBackup) {
       await rm(launcherBackup, { force: true });
