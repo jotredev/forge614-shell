@@ -1,14 +1,22 @@
 import { expect, test } from "bun:test";
-import { uninstallInstalledShell, updateInstalledShell } from "./updater.ts";
+import { createHash } from "node:crypto";
+import { checksumForAsset, uninstallInstalledShell, updateInstalledShell } from "./updater.ts";
 import { ShellError, describeError } from "../shell-error.ts";
 
-test("runs the bundled installer with --latest", async () => {
+test("SHA256SUMS accepts one strict GNU entry and rejects malformed or duplicate entries", () => {
+  const digest = "a".repeat(64);
+  expect(checksumForAsset("install.sh", `${digest}  install.sh\n`)).toBe(digest);
+  expect(() => checksumForAsset("install.sh", `${digest} *install.sh\n`)).toThrow("strict GNU");
+  expect(() => checksumForAsset("install.sh", `${digest}  install.sh\n${digest}  install.sh\n`)).toThrow("unique entry");
+});
+
+test("passes the resolved version tag to the local installer seam", async () => {
   const calls: string[][] = [];
-  await updateInstalledShell({ installer: "/tmp/release/install.sh", platform: "darwin", spawn: ((command: string, args: string[]) => {
+  await updateInstalledShell({ installer: "/tmp/release/install.sh", platform: "darwin", version: "1.17.0", spawn: ((command: string, args: string[]) => {
     calls.push([command, ...args]);
     return { status: 0, stderr: "" } as never;
   }) as never });
-  expect(calls).toEqual([["bash", "/tmp/release/install.sh", "--latest"]]);
+  expect(calls).toEqual([["bash", "/tmp/release/install.sh", "--version", "v1.17.0"]]);
 });
 
 test("reports installer diagnostics", async () => {
@@ -78,6 +86,7 @@ test("runs the bundled installer with install.ps1 and -Latest on Windows", async
   await updateInstalledShell({
     installer: "C:\\Program Files\\release\\install.ps1",
     platform: "win32",
+    version: "1.17.0",
     powerShellCommand: "pwsh",
     spawn: ((command: string, args: string[], options?: { windowsHide?: boolean; env?: NodeJS.ProcessEnv }) => {
       calls.push({ command, args, options });
@@ -92,7 +101,8 @@ test("runs the bundled installer with install.ps1 and -Latest on Windows", async
     "Bypass",
     "-File",
     "C:\\Program Files\\release\\install.ps1",
-    "-Latest",
+    "--version",
+    "v1.17.0",
   ]);
   expect(calls[0]!.options?.windowsHide).toBe(true);
 });
@@ -116,7 +126,7 @@ test("runs the bundled installer with install.ps1 and -Uninstall on Windows with
     "Bypass",
     "-File",
     "C:\\Program Files\\release\\install.ps1",
-    "-Uninstall",
+    "--uninstall",
   ]);
   expect(calls[0]!.options?.windowsHide).toBe(true);
 });
@@ -150,23 +160,32 @@ test("preserves locale and diagnostics on Windows update failure", async () => {
   expect(capturedEnv?.FORGE614_SHELL_LOCALE).toBe("es");
 });
 
-test("selects default install.ps1 on Windows and install.sh on Unix", async () => {
-  let unixInstaller = "";
-  let winInstaller = "";
-  await updateInstalledShell({
-    platform: "darwin",
-    spawn: (_cmd: string, args: string[]) => {
-      unixInstaller = args[0]!;
-      return { status: 0, stderr: "" };
-    },
-  });
+test("downloads and verifies the Windows gatekeeper and invokes it with execution policy bypass", async () => {
+  const calls: { command: string; args: string[] }[] = [];
+  const fetched: string[] = [];
+  const fetcher = async (input: string | URL | Request): Promise<Response> => {
+    const url = String(input);
+    fetched.push(url);
+    if (url.endsWith("/SHA256SUMS")) {
+      const digest = createHash("sha256").update("gatekeeper").digest("hex");
+      return new Response(`${digest}  install.ps1\n`);
+    }
+    return new Response("gatekeeper");
+  };
   await updateInstalledShell({
     platform: "win32",
-    spawn: (_cmd: string, args: string[]) => {
-      winInstaller = args[4]!; // -File is index 3, installer is index 4
-      return { status: 0, stderr: "" };
-    },
+    version: "1.17.0",
+    currentVersion: "1.16.0",
+    env: { FORGE614_INSTALL_TEST_BASE_URL: "http://127.0.0.1:1234" } as NodeJS.ProcessEnv,
+    fetcher,
+    powerShellCommand: "pwsh",
+    spawn: (command, args) => { calls.push({ command, args }); return { status: 0, stderr: "" }; },
   });
-  expect(unixInstaller).toMatch(/install\.sh$/);
-  expect(winInstaller).toMatch(/install\.ps1$/);
+  expect(fetched).toEqual([
+    "http://127.0.0.1:1234/repos/jotredev/forge614-shell/releases/download/v1.17.0/install.ps1",
+    "http://127.0.0.1:1234/repos/jotredev/forge614-shell/releases/download/v1.17.0/SHA256SUMS",
+  ]);
+  expect(calls[0]?.command).toBe("pwsh");
+  expect(calls[0]?.args.slice(0, 3)).toEqual(["-NoProfile", "-ExecutionPolicy", "Bypass"]);
+  expect(calls[0]?.args.slice(-2)).toEqual(["--version", "v1.17.0"]);
 });

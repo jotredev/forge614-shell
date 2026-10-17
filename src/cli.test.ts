@@ -32,6 +32,19 @@ import { helpLines } from "./ui/basic/logo.ts";
 
 const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 
+test("--version --json prints the common version object", async () => {
+  const home = mkdtempSync(join(tmpdir(), "forge614-shell-cli-version-json-"));
+  try {
+    const result = spawnSync(process.execPath, [cliPath, "--version", "--json"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000,
+      env: testEnv(home, "en"),
+    });
+    expect(result.status).toBe(0);
+    const version = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).version;
+    expect(JSON.parse(result.stdout)).toEqual({ schemaVersion: 1, name: "forge614-shell", version });
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
 /** Conserva variables del sistema necesarias en Windows y redirige las carpetas de perfil al fixture. */
 const testEnv = (home: string, locale: string) => ({
   ...process.env,

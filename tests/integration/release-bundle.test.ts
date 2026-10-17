@@ -17,12 +17,18 @@ test.skipIf(process.platform === "win32")("release bundle installs outside the r
     await mkdir(unpacked);
     expect(Bun.spawnSync(["tar", "-xzf", join(output, archive!), "-C", unpacked]).exitCode).toBe(0);
     const version = JSON.parse(await readFile("package.json", "utf8")).version;
-    const packagedInstaller = join(unpacked, `forge614-shell-${version}`, "install.sh");
-    expect(await readFile(packagedInstaller, "utf8")).toContain("--latest");
-    const packagedWindowsInstaller = join(unpacked, `forge614-shell-${version}`, "install.ps1");
-    expect(await readFile(packagedWindowsInstaller, "utf8")).toContain("-Latest");
-    const packagedCmdTemplate = join(unpacked, `forge614-shell-${version}`, "forge614-shell.cmd.template");
-    expect(await readFile(packagedCmdTemplate, "utf8")).toContain("__VERSION__");
+    const packagedLauncher = join(unpacked, `forge614-shell-${version}`, "forge614-shell");
+    expect(await readFile(packagedLauncher, "utf8")).toContain(".active-version");
+    const packagedWindowsLauncher = join(unpacked, `forge614-shell-${version}`, "forge614-shell.cmd");
+    const windowsLauncherSource = await readFile(packagedWindowsLauncher, "utf8");
+    expect(windowsLauncherSource).toContain(".active-version");
+    expect(windowsLauncherSource.trim().split("\n")).toHaveLength(1);
+
+    const legacyInstaller = join(root, "install-1.16.0.sh");
+    const legacySource = Bun.spawnSync(["git", "show", "27bf310:scripts/install.sh"], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+    expect(legacySource.exitCode).toBe(0);
+    await writeFile(legacyInstaller, legacySource.stdout);
+    await chmod(legacyInstaller, 0o755);
 
     const enginesExecutable = join(installation, "engines", "bin", "forge614-engines");
     await mkdir(join(installation, "engines", "bin"), { recursive: true });
@@ -39,7 +45,7 @@ exit 64
 `);
     await chmod(enginesExecutable, 0o755);
 
-    const installArguments = ["bash", "scripts/install.sh", "--archive", join(output, archive!)];
+    const installArguments = ["bash", legacyInstaller, "--archive", join(output, archive!)];
     const install = Bun.spawnSync(installArguments, {
       cwd: process.cwd(),
       env: { ...process.env, HOME: home, SHELL: "/bin/zsh", FORGE614_HOME: installation },

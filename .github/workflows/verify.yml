@@ -17,6 +17,8 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
@@ -24,18 +26,19 @@ jobs:
         with:
           node-version: "22.19.0"
       - run: bun install --frozen-lockfile
-      # S1 comprueba el paquete y los instaladores; full-suite ejecuta todas las pruebas.
-      - run: bun test tests/integration/release-bundle.test.ts tests/integration/public-installer.test.ts tests/integration/windows-installer-defenses.test.ts
+      - run: bun test tests/integration/release-bundle.test.ts tests/integration/windows-installer-defenses.test.ts tests/e2e/installer.e2e.test.ts
       - run: bun run typecheck
       - run: bun run build
       - run: git diff --check
-      - run: bash -n scripts/install.sh
+      - run: bash -n install.sh
 
   windows:
     name: Windows checks
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
@@ -44,230 +47,14 @@ jobs:
           node-version: "22.19.0"
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
-      - name: Disable Windows Defender real-time scanning for this job
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          Set-MpPreference -DisableRealtimeMonitoring $true
-      - run: bun test tests/integration/windows-installer-defenses.test.ts src/infrastructure/forge614-engines.test.ts src/infrastructure/forge614-engram.test.ts src/infrastructure/updater.test.ts src/infrastructure/clipboard.test.ts src/app/update-command.test.ts src/infrastructure/git-local.test.ts tests/integration/windows-s2-native.test.ts
-      - run: bun test src/app/init-engram.test.ts src/app/init-engram.groups.test.ts src/infrastructure/forge614-engram.ecosystem.test.ts src/ui/startup/memory-setup.test.ts src/infrastructure/memory-hook.test.ts src/engines/claude/memory-delivery.test.ts src/engines/codex/memory-delivery.test.ts
-      - run: bun test src/infrastructure/project-identity.test.ts src/infrastructure/project-info.test.ts src/infrastructure/local-path.test.ts src/infrastructure/input-history.test.ts src/app/init-debug-log.test.ts src/cli.test.ts
-      - run: bun test src/ui/basic/chat-links.test.ts src/ui/basic/workspace-chrome.test.ts
-      - run: bun test src/ui/basic/native.test.ts
-        timeout-minutes: 4
-      - run: bun test src/engines/claude/session.test.ts src/engines/codex/session.test.ts src/engines/codex/outside-commands.test.ts
-        timeout-minutes: 3
-      - run: >-
-          bun test
-          src/ui/basic/sidebar.test.ts
-          src/ui/basic/sidebar-resize.test.ts
-          src/ui/basic/status-panel.test.ts
-          src/ui/basic/status-bar-indicators.test.ts
-          src/ui/basic/shell-state.test.ts
-          src/ui/basic/resume-picker.test.ts
-          src/ui/basic/permission-choice.test.ts
-          src/ui/basic/composer-status.test.ts
-          src/ui/basic/metrics.test.ts
-          src/ui/basic/theme.test.ts
-          src/ui/basic/composer.test.ts
-          src/ui/basic/duration.test.ts
-          src/ui/basic/transcript.test.ts
-          src/ui/basic/logo.test.ts
-          src/ui/basic/diff.test.ts
-          src/ui/basic/tool-tracker.test.ts
-          src/ui/basic/chat-selection.test.ts
-          src/ui/basic/claude-model-display.test.ts
-          src/ui/basic/codex-thread-commands.test.ts
-          src/ui/basic/codex-commands.test.ts
-        timeout-minutes: 3
-      - run: bun test src/ui/basic/claude.test.ts
-        timeout-minutes: 8
-      - run: >-
-          bun test
-          src/app/language-gate.test.ts
-          src/app/options.test.ts
-          src/app/language-command.test.ts
-          src/app/startup-spinner.test.ts
-          src/app/native-chat.test.ts
-          src/i18n/status-text.test.ts
-          src/i18n/command-prefix.test.ts
-          src/i18n/index.test.ts
-          src/ui/startup/engram-init.test.ts
-          src/ui/startup/engine-picker.test.ts
-          src/ui/startup/visual-picker.test.ts
-          src/ui/startup/frame.test.ts
-          src/ui/startup/group-picker.test.ts
-          src/ui/startup/language-picker.test.ts
-          src/ui/startup/multi-select.test.ts
-          src/ui/startup/masked-input.test.ts
-        timeout-minutes: 3
-      - run: >-
-          bun test
-          src/engines/logout.test.ts
-          src/engines/mcp-labels.test.ts
-          src/engines/mcp-status.test.ts
-          src/engines/memory-source.test.ts
-          src/engines/permission-text.test.ts
-          src/engines/process.test.ts
-          src/engines/work-mode.test.ts
-          src/engines/codex/commands.test.ts
-          src/engines/codex/recap.test.ts
-          src/engines/codex/side.test.ts
-          src/engines/codex/subagents.test.ts
-          src/engines/codex/transcript.test.ts
-        timeout-minutes: 3
-      - run: >-
-          bun test
-          src/engines/claude/auth.test.ts
-          src/engines/claude/catalog.test.ts
-          src/engines/claude/panels.test.ts
-          src/engines/claude/session-background.test.ts
-          src/engines/claude/session-live.test.ts
-          src/engines/claude/telemetry.test.ts
-        timeout-minutes: 3
-      - run: >-
-          bun test
-          src/infrastructure/browser.test.ts
-          src/infrastructure/ecosystem-versions.test.ts
-          src/infrastructure/engram-notices.test.ts
-          src/infrastructure/forge614-engram.groups.test.ts
-          src/infrastructure/forge614-engram.run.test.ts
-          src/infrastructure/rpc.test.ts
-          src/infrastructure/shell-preferences.test.ts
-          src/shell-error.test.ts
-        timeout-minutes: 3
-      - run: >-
-          bun test
-          tests/architecture/layers.test.ts
-          tests/integration/package-engines.test.ts
-          tests/integration/runtime.test.ts
-        timeout-minutes: 3
-
       - name: PowerShell syntax check
         shell: pwsh
         run: |
           $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile("scripts/install.ps1", [ref]$null, [ref]$errors) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_ }
-            exit 1
-          }
-          [System.Management.Automation.Language.Parser]::ParseFile("tests/windows/installer-defenses.ps1", [ref]$null, [ref]$errors) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_ }
-            exit 1
-          }
-
-      - name: Build release bundle
-        shell: pwsh
-        run: |
-          bun run bundle:release -- --out ${{ runner.temp }}\dist-release
-
-      - name: Minimal Windows installation, execution, idempotence and uninstall
-        shell: pwsh
-        run: |
-          $testHome = Join-Path $env:RUNNER_TEMP "forge614-ci-home"
-          $originalUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-
-          try {
-            # 1. Preparar fixture de Engines compatible
-            $enginesBin = Join-Path $testHome "engines\bin"
-            New-Item -ItemType Directory -Force -Path $enginesBin | Out-Null
-            $fakeEnginesExe = Join-Path $enginesBin "forge614-engines.exe"
-
-            $fakeTs = Join-Path $env:RUNNER_TEMP "fake-ci-engines.ts"
-            @'
-          const args = process.argv.slice(2);
-          if (args[0] === "detect") {
-            console.log(JSON.stringify({ schemaVersion: 1, agents: [] }));
-            process.exit(0);
-          }
-          if (args[0] === "capabilities") {
-            console.log(JSON.stringify({ schemaVersion: 1, id: "claude-code", supportsMcp: true, fullySupported: true }));
-            process.exit(0);
-          }
-          process.exit(64);
-          '@ | Set-Content -Path $fakeTs -Encoding UTF8
-
-            & bun build $fakeTs --compile --outfile $fakeEnginesExe
-            if ($LASTEXITCODE -ne 0) { throw "Error compilando fake engines para CI" }
-
-            # 2. Marcadores en engram/ y engines/
-            $engramDir = Join-Path $testHome "engram"
-            New-Item -ItemType Directory -Force -Path $engramDir | Out-Null
-            Set-Content -Path (Join-Path $engramDir "marker.txt") -Value "engram-safe"
-            Set-Content -Path (Join-Path $testHome "engines\marker.txt") -Value "engines-safe"
-
-            # 3. Instalación desde -Archive
-            $archiveFile = (Get-ChildItem -Path "${{ runner.temp }}\dist-release" -Filter "*.tar.gz" | Select-Object -First 1).FullName
-            $env:FORGE614_HOME = $testHome
-            & pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Archive $archiveFile
-            if ($LASTEXITCODE -ne 0) { throw "install.ps1 -Archive falló en la instalación inicial" }
-
-            $launcher = Join-Path $testHome "shell\bin\forge614-shell.cmd"
-            if (-not (Test-Path $launcher)) { throw "El lanzador no fue creado en $launcher" }
-
-            # 4. Ejecución real con Node
-            $versionOutput = & cmd.exe /c "`"$launcher`" --version"
-            Write-Host "forge614-shell.cmd --version: $versionOutput"
-            if ($versionOutput -notmatch "forge614-shell \d+\.\d+\.\d+") {
-              throw "Salida inesperada de --version: $versionOutput"
-            }
-
-            $helpOutput = & cmd.exe /c "`"$launcher`" --help"
-            if ($LASTEXITCODE -ne 0 -or "$helpOutput" -notmatch "Forge614-Shell") {
-              throw "Salida inesperada de --help"
-            }
-
-            # 5. Repetición idempotente
-            & pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Archive $archiveFile
-            if ($LASTEXITCODE -ne 0) { throw "install.ps1 falló en la repetición idempotente" }
-
-            # 5b. Instalación desde -Archive con powershell.exe (5.1) lanzado desde este paso en pwsh (7): hereda el PSModulePath de PowerShell 7
-            #     y no encuentra los cmdlets que 5.1 trae por su cuenta. Es el caso de quien escribe el comando documentado por Engram en Windows
-            #     Terminal con PowerShell 7 (Engram, Verify 38616906739: «The term ... is not recognized»); el instalador no debe depender de ellos.
-            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Archive $archiveFile
-            if ($LASTEXITCODE -ne 0) { throw "install.ps1 -Archive falló al lanzarlo como powershell.exe desde pwsh" }
-
-            $pathAfterRepeat = [Environment]::GetEnvironmentVariable("Path", "User")
-            $targetBin = Join-Path $testHome "shell\bin"
-            $occurrences = ($pathAfterRepeat -split ';' | Where-Object { $_ -ieq $targetBin }).Count
-            if ($occurrences -ne 1) {
-              throw "Entrada duplicada en PATH: $occurrences veces encontrada"
-            }
-
-            # 6. Desinstalación con -Yes
-            & pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Uninstall -Yes
-            if ($LASTEXITCODE -ne 0) { throw "install.ps1 -Uninstall -Yes falló" }
-
-            if (Test-Path (Join-Path $testHome "shell")) {
-              throw "La carpeta shell/ no fue eliminada tras desinstalar"
-            }
-
-            # 7. Marcadores en engram/ y engines/ preservados
-            if (-not (Test-Path (Join-Path $engramDir "marker.txt"))) {
-              throw "Desinstalación afectó indebidamente la carpeta engram/"
-            }
-            if (-not (Test-Path (Join-Path $testHome "engines\marker.txt"))) {
-              throw "Desinstalación afectó indebidamente la carpeta engines/"
-            }
-
-            # 8. PATH retirado exactamente
-            $pathAfterUninstall = [Environment]::GetEnvironmentVariable("Path", "User")
-            if ($pathAfterUninstall -split ';' | Where-Object { $_ -ieq $targetBin }) {
-              throw "La entrada $targetBin no fue retirada del PATH"
-            }
-
-            Write-Host "Verificación mínima completada con éxito."
-          } finally {
-            [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
-            Remove-Item -Recurse -Force $testHome -ErrorAction SilentlyContinue
-          }
-
-      - name: Comprehensive Windows installer defenses
-        shell: pwsh
-        run: |
-          & pwsh -NoProfile -ExecutionPolicy Bypass -File tests\windows\installer-defenses.ps1
+          [System.Management.Automation.Language.Parser]::ParseFile("install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+      - name: Windows update and uninstall from the installed .cmd
+        run: bun test tests/e2e/installer.windows.e2e.test.ts
 
   full-suite:
     name: Full suite (${{ matrix.os }})
@@ -279,6 +66,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
@@ -286,10 +75,4 @@ jobs:
         with:
           node-version: "22.19.0"
       - run: bun install --frozen-lockfile
-      - name: Disable Windows Defender real-time scanning for this job
-        if: runner.os == 'Windows'
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          Set-MpPreference -DisableRealtimeMonitoring $true
       - run: bun test

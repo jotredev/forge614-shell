@@ -1,121 +1,43 @@
 import { expect, test } from "bun:test";
-import { readFile, readdir, mkdtemp, rm, mkdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 
-/**
- * Normaliza y filtra una lista de rutas simulando la lógica de coincidencia exacta
- * de Remove-UserPath en scripts/install.ps1.
- */
-function removeUserPathExact(currentPath: string, targetDirectory: string): string {
-  const normalizedTarget = targetDirectory.replace(/[\\/]+$/, "").toLowerCase();
-  const entries = currentPath.split(";").filter(e => e.trim().length > 0);
-  const remaining = entries.filter(entry => entry.replace(/[\\/]+$/, "").toLowerCase() !== normalizedTarget);
-  return remaining.join(";");
-}
-
-test("launcher template quotes versioned cli path and preserves argument quoting", async () => {
-  const templatePath = join(process.cwd(), "scripts", "forge614-shell.cmd.template");
-  const template = await readFile(templatePath, "utf8");
-
-  expect(template).toContain("@echo off");
-  // La ruta a dist/cli.js debe estar entre comillas para soportar espacios en la ruta de instalación
-  expect(template).toMatch(/node\s+"%~dp0\.\.\\__VERSION__\\dist\\cli\.js"\s+%\*/);
-  // Preservación del código de salida de Node
-  expect(template).toContain("exit /b %ERRORLEVEL%");
-
-  // Comprobar sustitución de versión
-  const generated = template.replace("__VERSION__", "1.13.1");
-  expect(generated).toContain('node "%~dp0..\\1.13.1\\dist\\cli.js" %*');
+test("Windows launcher resolves the active version from bin and finishes its one parsed line", async () => {
+  const launcher = await readFile(join(process.cwd(), "scripts", "forge614-shell.cmd"), "utf8");
+  const lines = launcher.trim().split(/\r?\n/);
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain(".active-version");
+  expect(lines[0]).toContain('"%~dp0..\\%%V\\forge614-shell-%%V\\dist\\cli.js"');
+  expect(lines[0]).toContain("%*");
+  expect(lines[0]).toContain("exit /b");
 });
 
-test("PATH removal matches exact directory and preserves similar prefixes and other tools", () => {
-  const samplePath = [
-    "C:\\Windows\\system32",
-    "C:\\Users\\tester\\.forge614\\shell\\bin",
-    "C:\\Users\\tester\\.forge614\\shell\\bin-extra",
-    "C:\\Users\\tester\\.forge614\\engines\\bin",
-    "C:\\Users\\tester\\.forge614\\engram\\bin",
-  ].join(";");
-
-  const targetToRemove = "C:\\Users\\tester\\.forge614\\shell\\bin";
-  const updated = removeUserPathExact(samplePath, targetToRemove);
-
-  expect(updated).not.toContain("C:\\Users\\tester\\.forge614\\shell\\bin;");
-  expect(updated).toContain("C:\\Users\\tester\\.forge614\\shell\\bin-extra");
-  expect(updated).toContain("C:\\Users\\tester\\.forge614\\engines\\bin");
-  expect(updated).toContain("C:\\Users\\tester\\.forge614\\engram\\bin");
-  expect(updated).toContain("C:\\Windows\\system32");
+test("Unix launcher resolves .active-version relative to its bin link and quotes paths", async () => {
+  const launcher = await readFile(join(process.cwd(), "scripts", "forge614-shell"), "utf8");
+  expect(launcher).toContain('"$(dirname "$0")"');
+  expect(launcher).toContain('"$launcher_dir/dist/cli.js"');
+  expect(launcher).toContain('"$launcher_dir/.."');
+  expect(launcher).toContain('cat "$shell_home/.active-version"');
+  expect(launcher).toContain('exec node "$shell_home/$version/forge614-shell-$version/dist/cli.js" "$@"');
 });
 
-test("install.ps1 implements strict defenses for checksum, engines preservation, and path validation", async () => {
-  const scriptPath = join(process.cwd(), "scripts", "install.ps1");
-  const script = await readFile(scriptPath, "utf8");
-
-  // Parámetros y modos requeridos
-  expect(script).toContain('[Parameter(ParameterSetName = "Latest")]');
-  expect(script).toContain('[Parameter(ParameterSetName = "Archive"');
-  expect(script).toContain('[Parameter(ParameterSetName = "Uninstall"');
-  expect(script).toContain('[switch]$Yes');
-
-  // Rechazo estricto de FORGE614_HOME relativo o vacío
-  expect(script).toContain("IsPathRooted");
-  expect(script).toContain("IsNullOrWhiteSpace");
-
-  // Verificación de checksum SHA256 antes de extraer, calculada con .NET: powershell.exe 5.1 abierto desde PowerShell 7 hereda su PSModulePath y
-  // no encuentra el cmdlet de hash de archivos (Verify 38616906739 de Engram), así que el instalador no puede depender de él.
-  expect(script).toContain("[System.Security.Cryptography.SHA256]::Create()");
-  expect(script).toContain("[IO.File]::OpenRead(");
-  expect(script).toContain("ToLowerInvariant()");
-  expect(script).toContain("$actualHash = Get-Sha256Hex $ArchivePath");
-  expect(script).toMatch(/finally \{\s*if \(\$null -ne \$sha\) \{ \$sha\.Dispose\(\) \}\s*if \(\$null -ne \$stream\) \{ \$stream\.Dispose\(\) \}/); // se cierran los dos
-  // Nada escrito solo para PowerShell 7: ni estos comandos, que 5.1 no trae o no encuentra.
-  expect(script).not.toMatch(/Get-FileHash|New-TemporaryFile|Format-Hex|Import-PowerShellDataFile|Expand-Archive/);
-  // El instalador de Engines corre con el mismo ejecutable de PowerShell que ya corre este script, no con el que haya en el PATH.
-  expect(script).toContain("$psExe = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName");
-  expect(script).not.toMatch(/Get-Command pwsh/);
-
-  // Comprobación de compatibilidad de Engines antes de modificar Shell
-  expect(script).toContain("schemaVersion");
-  expect(script).toContain("fullySupported");
-
-  // Validación de URL HTTPS o loopback verificado
-  expect(script).toContain("127.0.0.1");
-  expect(script).toContain("localhost");
-  expect(script).toContain("https");
-
-  // Coincidencia exacta en PATH (-ieq)
-  expect(script).toContain("-ieq");
+test("rendered gatekeepers use the Shell identity and PowerShell keeps its UTF-8 BOM", async () => {
+  const shell = await readFile(join(process.cwd(), "install.sh"), "utf8");
+  const powershell = await readFile(join(process.cwd(), "install.ps1"));
+  expect(shell.startsWith("#!/bin/sh")).toBe(true);
+  expect(shell).toContain('NODE_NAME="shell"');
+  expect(shell).toContain('REPO="jotredev/forge614-shell"');
+  expect(powershell[0]).toBe(0xef);
+  expect(powershell[1]).toBe(0xbb);
+  expect(powershell[2]).toBe(0xbf);
+  expect(powershell.toString("utf8")).toContain('$NodeName = "shell"');
+  expect(powershell.toString("utf8")).toContain('$Repo = "jotredev/forge614-shell"');
 });
 
-test("release bundle packages Windows installer and launcher template alongside unix assets", async () => {
-  const root = await mkdtemp(join(tmpdir(), "forge614-bundle-windows-"));
-  const output = join(root, "release");
-  try {
-    const bundle = Bun.spawnSync([process.execPath, "scripts/release-bundle.mjs", "--out", output], { cwd: process.cwd() });
-    expect(bundle.exitCode).toBe(0);
-
-    const files = await readdir(output);
-    const archiveName = files.find(f => f.endsWith(".tar.gz"));
-    expect(archiveName).toBeDefined();
-
-    // El instalador standalone install.ps1 debe copiarse al directorio de release
-    expect(files).toContain("install.ps1");
-
-    // Desempaquetar y verificar que el tar.gz contiene install.ps1 y el template
-    const unpacked = join(root, "unpacked");
-    await mkdir(unpacked, { recursive: true });
-    const unpack = Bun.spawnSync(["tar", "-xzf", join(output, archiveName!), "-C", unpacked], { cwd: process.cwd() });
-    expect(unpack.exitCode).toBe(0);
-
-    const version = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8")).version;
-    const releaseFolder = join(unpacked, `forge614-shell-${version}`);
-    const packagedFiles = await readdir(releaseFolder);
-
-    expect(packagedFiles).toContain("install.ps1");
-    expect(packagedFiles).toContain("forge614-shell.cmd.template");
-    expect(packagedFiles).toContain("install.sh");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+test("release package includes the two active-version launchers and omits retired installers", async () => {
+  const script = await readFile(join(process.cwd(), "scripts", "release-bundle.mjs"), "utf8");
+  expect(script).toContain('"forge614-shell"');
+  expect(script).toContain('"forge614-shell.cmd"');
+  expect(script).not.toContain("forge614-shell.cmd.template");
+  expect(script).not.toContain('"scripts", "install.sh"');
 });
