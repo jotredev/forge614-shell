@@ -493,3 +493,15 @@ test("si no hay portapapeles, el clic avisa y no dice Copiado", async () => {
   expect(unavailable).toBe(1);
   expect(plain(message.render(80)).join("\n")).not.toContain("Copiado");
 });
+
+test("si la copia solo se envió a la terminal, avisa eso y no dice Copiado", async () => {
+  let fallback = 0;
+  const message = new AssistantMessage({ agent: "Claude", locale: "es", at: null, copy: async () => "terminal", onChange: () => {}, onCopyTerminalFallback: () => { fallback++; } });
+  message.setText("```sh\nbun test\n```");
+  message.complete();
+  const [button] = buttonsOf(message);
+  clickOn(message, button!.y, button!.x);
+  await Bun.sleep(0);
+  expect(fallback).toBe(1);
+  expect(plain(message.render(80)).join("\n")).not.toContain("Copiado");
+});

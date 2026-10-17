@@ -9,6 +9,7 @@ import { ImagePlacer, placesImagesLast } from "./image-placement.ts";
 import type { LayoutFrameLike } from "./image-rows.ts";
 import type { StatusPanels } from "./status-panel.ts";
 import { copySelectionText } from "../../infrastructure/clipboard.ts";
+import type { ClipboardCopyResult } from "../../infrastructure/clipboard.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -147,9 +148,9 @@ class ChatScreen extends TuiAltScreen {
   private readonly watched = new WeakSet<IndependentScrollView>();
   private readonly notices: Record<string, string>;
 
-  constructor(notices: { copied: string; copyFailed: string }, ...args: ConstructorParameters<typeof TuiAltScreen>) {
+  constructor(notices: { copied: string; copyFailed: string; terminalFallback: string }, private readonly selectionResult: () => ClipboardCopyResult, ...args: ConstructorParameters<typeof TuiAltScreen>) {
     super(...args);
-    this.notices = { "Copied!": notices.copied, "Copy failed": notices.copyFailed };
+    this.notices = { "Copied!": notices.copied, "Copy failed": notices.copyFailed, terminalFallback: notices.terminalFallback };
     // pi-tui calls its input handler through the instance, so shadowing it here runs the extra step after pi-tui's own, on everything the screen is given.
     const pi = this.pi();
     const handle = pi.handleViewportInput.bind(this);
@@ -162,9 +163,11 @@ class ChatScreen extends TuiAltScreen {
 
   private pi(): PiScreenState { return this as unknown as PiScreenState; }
 
-  /** Shows a transient notice. pi-tui's two copy notices are swapped for the catalog's text; anything else is shown as it comes. */
+  /** Shows a transient notice. Copy notices reflect whether the system confirmed the copy or OSC 52 only reached the terminal. */
   override flash(message: string, durationMs?: number): void {
-    super.flash(this.notices[message] ?? message, durationMs);
+    const copyNotice = message === "Copied!" || message === "Copy failed";
+    const resultNotice = copyNotice ? this.notices[this.selectionResult() === "clipboard" ? "Copied!" : this.selectionResult() === "terminal" ? "terminalFallback" : "Copy failed"] : message;
+    super.flash(resultNotice ?? message, durationMs);
   }
 
   /** Whether a window other than the pill is visible. If pi-tui no longer has the state this reads, it answers as pi-tui does, so a renamed field makes the selection fail the tests, not the screen. */
@@ -201,15 +204,23 @@ class ChatScreen extends TuiAltScreen {
  * The alternate screen of the chat, the same for Codex and Claude Code: the session-local terminal (`workspaceTerminal`) with the mouse on, and the clicks on links sent to `links`,
  * which also draws the hover and asks for the hand pointer through that terminal. With `panels`, the bottom bar's panels are closed by Esc and by a click anywhere else before the screen sees
  * either (see `StatusPanels.intercept`). The screen keeps a mouse selection on its text while the chat scrolls (see `ChatScreen`). Returns the terminal to build the layout on, the screen and the `copy` it uses for a selection, which the «Copy» button under an answer uses too.
- * What is selected is copied with `options.copySelection`, by default through the system clipboard with OSC 52 as a fallback. The returned `copy` function for code-block buttons disables that fallback so «Copied» means a system clipboard program confirmed success. `options.locale` is the language of the copy notice.
+ * What is selected and what a code-block button copies use `options.copySelection`, by default through the system clipboard with OSC 52 as a fallback. Both paths distinguish a system-confirmed copy from an OSC 52 request that the terminal may ignore. `options.locale` is the language of the copy notice.
  */
 export function chatScreen(
-  terminal: Terminal, links: ChatLinks, panels?: StatusPanels, options: { copySelection?: (text: string) => Promise<boolean>; locale?: Locale } = {},
-): { surface: Terminal; tui: TuiAltScreen; copy: (text: string) => Promise<boolean> } {
+  terminal: Terminal, links: ChatLinks, panels?: StatusPanels, options: { copySelection?: (text: string) => Promise<ClipboardCopyResult | boolean>; locale?: Locale } = {},
+): { surface: Terminal; tui: TuiAltScreen; copy: (text: string) => Promise<ClipboardCopyResult | boolean> } {
   const surface = workspaceTerminal(terminal, links, panels);
   const copySelection = options.copySelection ?? ((text: string) => copySelectionText(text, { write: data => surface.write(data) }));
-  const copyCodeBlock = options.copySelection ?? ((text: string) => copySelectionText(text, { write: data => surface.write(data), fallback: false }));
-  const tui = new ChatScreen(getCatalog(options.locale ?? "en").chatSelection, surface, true, undefined, { mouse: true, openUrl: url => links.open(url), copySelection });
+  const copyCodeBlock = options.copySelection ?? ((text: string) => copySelectionText(text, { write: data => surface.write(data) }));
+  let selectionResult: ClipboardCopyResult = "failed";
+  const copyManualSelection = async (text: string): Promise<boolean> => {
+    try {
+      const answer = await copySelection(text);
+      selectionResult = answer === true ? "clipboard" : answer === false ? "failed" : answer;
+    } catch { selectionResult = "failed"; }
+    return selectionResult !== "failed";
+  };
+  const tui = new ChatScreen(getCatalog(options.locale ?? "en").chatSelection, () => selectionResult, surface, true, undefined, { mouse: true, openUrl: url => links.open(url), copySelection: copyManualSelection });
   links.bind({ requestRender: () => tui.requestRender(), write: data => surface.write(data) });
   // A thumbnail that was being reduced (see `thumbnailOf`) is drawn the moment it is ready.
   onThumbnailReady(() => tui.requestRender());

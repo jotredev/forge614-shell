@@ -65,29 +65,29 @@ const osc52 = (text: string) => `\x1b]52;c;${Buffer.from(text).toString("base64"
  */
 test("copySelectionText() copies with the system pbcopy on macOS", async () => {
   const double = clipboardDouble({ "/usr/bin/pbcopy": 0 });
-  expect(await copySelectionText("line one\nline 'two' & $three", double.options("darwin"))).toBe(true);
+  expect(await copySelectionText("line one\nline 'two' & $three", double.options("darwin"))).toBe("clipboard");
   expect(double.calls).toEqual([["/usr/bin/pbcopy", [], "line one\nline 'two' & $three"]]);
   expect(double.written).toEqual([]);
 });
 
 test("copySelectionText() reports failure when no system clipboard program confirms the copy", async () => {
   const double = clipboardDouble({ "/usr/bin/pbcopy": 1 });
-  expect(await copySelectionText("texto", { ...double.options("darwin"), fallback: false })).toBe(false);
+  expect(await copySelectionText("texto", { ...double.options("darwin"), fallback: false })).toBe("failed");
   expect(double.written).toEqual([]);
 });
 
 /** En Linux se intenta wl-copy y después xclip; en Windows PowerShell lee UTF-8 desde stdin. */
 test("copySelectionText() tries wl-copy then xclip on Linux, and powershell.exe on Windows", async () => {
   const both = clipboardDouble({ "wl-copy": null, xclip: 0 });
-  expect(await copySelectionText("hola", both.options("linux"))).toBe(true);
+  expect(await copySelectionText("hola", both.options("linux"))).toBe("clipboard");
   expect(both.calls).toEqual([["wl-copy", [], "hola"], ["xclip", ["-selection", "clipboard"], "hola"]]);
   expect(both.written).toEqual([]);
   const wayland = clipboardDouble({ "wl-copy": 0 });
-  expect(await copySelectionText("hola", wayland.options("linux"))).toBe(true);
+  expect(await copySelectionText("hola", wayland.options("linux"))).toBe("clipboard");
   expect(wayland.calls).toEqual([["wl-copy", [], "hola"]]);
 
   const windowsPs = clipboardDouble({ "powershell.exe": 0 });
-  expect(await copySelectionText("hola", windowsPs.options("win32"))).toBe(true);
+  expect(await copySelectionText("hola", windowsPs.options("win32"))).toBe("clipboard");
   expect(windowsPs.calls).toEqual([[
     "powershell.exe",
     ["-NoProfile", "-Command", "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"],
@@ -96,7 +96,7 @@ test("copySelectionText() tries wl-copy then xclip on Linux, and powershell.exe 
   expect(windowsPs.written).toEqual([]);
 
   const windowsFallback = clipboardDouble({ "powershell.exe": null });
-  expect(await copySelectionText("ñandú → 日本", windowsFallback.options("win32"))).toBe(true);
+  expect(await copySelectionText("ñandú → 日本", windowsFallback.options("win32"))).toBe("terminal");
   expect(windowsFallback.calls).toEqual([
     [
       "powershell.exe",
@@ -113,25 +113,25 @@ test("copySelectionText() tries wl-copy then xclip on Linux, and powershell.exe 
 test("copySelectionText() falls back to OSC 52 for manual text selection", async () => {
   const text = "ñandú → 日本\nsegunda línea";
   const failing = clipboardDouble({ pbcopy: 1 });
-  expect(await copySelectionText(text, failing.options("darwin"))).toBe(true);
+  expect(await copySelectionText(text, failing.options("darwin"))).toBe("terminal");
   expect(failing.written).toEqual([osc52(text)]);
   const missing = clipboardDouble({});
-  expect(await copySelectionText(text, missing.options("linux"))).toBe(true);
+  expect(await copySelectionText(text, missing.options("linux"))).toBe("terminal");
   expect(missing.calls.map(call => call[0])).toEqual(["wl-copy", "xclip"]);
   expect(missing.written).toEqual([osc52(text)]);
   const unknown = clipboardDouble({});
-  expect(await copySelectionText(text, unknown.options("freebsd"))).toBe(true);
+  expect(await copySelectionText(text, unknown.options("freebsd"))).toBe("terminal");
   expect(unknown.calls).toEqual([]);
   expect(unknown.written).toEqual([osc52(text)]);
   const rejected: string[] = [];
-  expect(await copySelectionText(text, { platform: "darwin", run: async () => { throw new Error("spawn failed"); }, write: data => { rejected.push(data); } })).toBe(true);
+  expect(await copySelectionText(text, { platform: "darwin", run: async () => { throw new Error("spawn failed"); }, write: data => { rejected.push(data); } })).toBe("terminal");
   expect(rejected).toEqual([osc52(text)]);
 });
 
 /** Never throws, even when starting the clipboard program and writing OSC 52 both fail. */
 test("copySelectionText() never throws", async () => {
   const answer = await copySelectionText("x", { platform: "darwin", run: async () => { throw new Error("boom"); }, write: () => { throw new Error("terminal closed"); } });
-  expect(answer).toBe(false);
+  expect(answer).toBe("failed");
 });
 
 /** No shell: the program is always a bare name with its arguments apart, whatever the text holds, and the code never asks for a shell. */

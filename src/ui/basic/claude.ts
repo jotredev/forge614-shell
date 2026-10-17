@@ -279,6 +279,7 @@ export async function startClaudeUI(args: string[], selectedExecutable?: string,
     const message = new AssistantMessage({
       agent: "Claude", locale, links, copy, ...(at === undefined ? {} : { at }), onChange: () => tui.requestRender(),
       onCopyFailed: () => writeWarning(describeError(new ShellError("clipboard-unavailable"), locale)),
+      onCopyTerminalFallback: () => writeWarning(getCatalog(locale).chatSelection.terminalFallback),
     });
     message.setText(clean(text));
     transcript.addChild(message);

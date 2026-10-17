@@ -87,7 +87,7 @@ describe("Windows S2 native verifications", () => {
 
       const testText2 = "Texto de selección con acentos: áéíóú y emoji 🎯";
       const copied = await copySelectionText(testText2, { write: () => {} });
-      expect(copied).toBe(true);
+      expect(copied).toBe("clipboard");
       const read2 = await readClipboardEventually(testText2);
       expect(read2).toBe(testText2);
     } finally {
