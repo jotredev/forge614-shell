@@ -12,6 +12,22 @@ import { defaultRun } from "../../src/infrastructure/forge614-engines.ts";
 const isWindows = process.platform === "win32";
 const baseTemp = process.env.RUNNER_TEMP ?? tmpdir();
 
+/** Windows may publish Set-Clipboard asynchronously; give its native clipboard a short bounded time to expose the new text. */
+async function readClipboardEventually(expected: string): Promise<string> {
+  const deadline = Date.now() + 2_000;
+  let actual = "";
+  do {
+    actual = execFileSync("powershell.exe", [
+      "-NoProfile",
+      "-Command",
+      "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Clipboard -Raw",
+    ], { encoding: "utf8" }).replace(/\r?\n$/, "");
+    if (actual === expected) return actual;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  } while (Date.now() < deadline);
+  return actual;
+}
+
 describe("Windows S2 native verifications", () => {
   /** En Windows, comprueba la ejecución directa de un .exe fixture mediante defaultRun sin invocar shell. */
   test.skipIf(!isWindows)("direct execution of fixture .exe with defaultRun without shell", async () => {
@@ -66,21 +82,13 @@ describe("Windows S2 native verifications", () => {
     try {
       const testText = "¡Hola mundo! 🚀 ñañú — ÁÉÍÓÚ — 日本語 🌟";
       await copyToClipboard(testText);
-      const read1 = execFileSync("powershell.exe", [
-        "-NoProfile",
-        "-Command",
-        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Clipboard -Raw",
-      ], { encoding: "utf8" }).replace(/\r?\n$/, "");
+      const read1 = await readClipboardEventually(testText);
       expect(read1).toBe(testText);
 
       const testText2 = "Texto de selección con acentos: áéíóú y emoji 🎯";
       const copied = await copySelectionText(testText2, { write: () => {} });
       expect(copied).toBe(true);
-      const read2 = execFileSync("powershell.exe", [
-        "-NoProfile",
-        "-Command",
-        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Clipboard -Raw",
-      ], { encoding: "utf8" }).replace(/\r?\n$/, "");
+      const read2 = await readClipboardEventually(testText2);
       expect(read2).toBe(testText2);
     } finally {
       if (priorClipboard !== null) {
