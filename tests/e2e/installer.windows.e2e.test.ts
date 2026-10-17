@@ -46,6 +46,7 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
   const releaseDir = join(root, "release");
   const home = join(root, "user home");
   const forgeHome = join(home, ".forge614");
+  const uninstallLog = join(root, "windows uninstall worker.log");
   const registryKey = `Software\\Forge614-Test-ShellE2E-${randomUUID().replaceAll("-", "")}`;
   await mkdir(home, { recursive: true });
   await buildRelease(releaseDir);
@@ -75,6 +76,7 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
       FORGE614_HOME: forgeHome,
       FORGE614_INSTALL_TEST_BASE_URL: `http://127.0.0.1:${server.port}`,
       FORGE614_TEST_WINDOWS_ENV_KEY: registryKey,
+      FORGE614_TEST_WINDOWS_UNINSTALL_LOG: uninstallLog,
       FORGE614_SHELL_LOCALE: "en",
     };
     logStage("install: started");
@@ -106,7 +108,8 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     logStage("uninstall: installed Node process exited; waiting for shell directory removal");
     const deadline = Date.now() + 10_000;
     while (existsSync(join(forgeHome, "shell")) && Date.now() < deadline) await new Promise(resolvePromise => setTimeout(resolvePromise, 100));
-    expect(existsSync(join(forgeHome, "shell"))).toBe(false);
+    const workerOutput = await readFile(uninstallLog, "utf8").catch(() => "(worker did not write a log)");
+    expect(existsSync(join(forgeHome, "shell")), workerOutput).toBe(false);
     logStage("uninstall: shell directory removed");
     const pathRead = await run(["powershell.exe", "-NoProfile", "-Command", `$key='HKCU:\\${registryKey}'; (Get-ItemProperty -Path $key -Name Path).Path`], { cwd: root, env });
     expect(pathRead.stdout).not.toContain(join(forgeHome, "shell", "bin"));
