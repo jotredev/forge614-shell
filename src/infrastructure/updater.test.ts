@@ -52,7 +52,7 @@ test("redacts gatekeeper paths beneath TMPDIR from installer errors", () => {
   const gatekeeper = join(tmpdir(), "forge614-shell-installer-test", "install.sh");
   const sanitized = sanitizeInstallerDetail(`could not run ${gatekeeper}`, { TMPDIR: tmpdir() } as NodeJS.ProcessEnv);
   expect(sanitized).not.toContain(tmpdir());
-  expect(sanitized).toContain("<ruta>/forge614-shell-installer-test/install.sh");
+  expect(sanitized).toContain(join("<ruta>", "forge614-shell-installer-test", "install.sh"));
 });
 
 test("runs the bundled installer with --uninstall", async () => {
