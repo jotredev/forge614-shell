@@ -50,12 +50,15 @@ async function buildRelease(output: string): Promise<void> {
 }
 
 /** Install a fake but protocol-shaped Engines launcher beside the temporary Shell home. */
-async function installEnginesFixture(forgeHome: string): Promise<void> {
+async function installEnginesFixture(forgeHome: string, nodeExecutable: string, workingDirectory: string): Promise<void> {
   const bin = join(forgeHome, "engines", "bin");
   await mkdir(bin, { recursive: true });
   await writeFile(join(bin, "fake-engines.js"), `const a=process.argv.slice(2); if(a[0]==="--version") console.log("forge614-engines 1.0.0"); else if(a[0]==="detect") console.log(JSON.stringify({schemaVersion:1,agents:[]})); else if(a[0]==="capabilities") console.log(JSON.stringify({schemaVersion:1,id:"claude-code",fullySupported:true})); else if(a[0]==="update") console.log(JSON.stringify({schemaVersion:1,result:{updated:false,currentVersion:"1.0.0",latestVersion:"1.0.0"}})); else process.exit(64);`);
   const launcher = join(bin, "forge614-engines.cmd");
   await writeFile(launcher, `@node "%~dp0fake-engines.js" %* & @exit /b\r\n`);
+  // The Windows production lookup for update uses .exe and execFile; make that fixture run this local response through Node.
+  await copyFile(nodeExecutable, join(bin, "forge614-engines.exe"));
+  await writeFile(join(workingDirectory, "update"), `console.log(JSON.stringify({schemaVersion:1,result:{updated:false,currentVersion:"1.0.0",latestVersion:"1.0.0"}}));\n`);
 }
 
 test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wait for the installed process and use only localhost", async () => {
@@ -69,7 +72,6 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
   const registryKey = `Software\\Forge614-Test-ShellE2E-${randomUUID().replaceAll("-", "")}`;
   await mkdir(home, { recursive: true });
   await buildRelease(releaseDir);
-  await installEnginesFixture(forgeHome);
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -86,6 +88,9 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
   });
 
   try {
+    const realNode = await run(["powershell.exe", "-NoProfile", "-Command", "(Get-Command node.exe).Source"], { cwd: root, env: {} });
+    expect(realNode.exitCode, realNode.stderr).toBe(0);
+    await installEnginesFixture(forgeHome, realNode.stdout.trim(), root);
     const createKey = `$key='HKCU:\\${registryKey}'; New-Item -Path $key -Force | Out-Null; New-ItemProperty -Path $key -Name Path -Value '' -PropertyType ExpandString -Force | Out-Null`;
     const registry = await run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", createKey], { cwd: root, env: {} });
     expect(registry.exitCode, registry.stderr).toBe(0);
@@ -129,8 +134,6 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
 
     const fakeNodeDir = join(root, "node command probe");
     await mkdir(fakeNodeDir, { recursive: true });
-    const realNode = await run(["powershell.exe", "-NoProfile", "-Command", "(Get-Command node.exe).Source"], { cwd: root, env });
-    expect(realNode.exitCode, realNode.stderr).toBe(0);
     const captureScript = join(fakeNodeDir, "capture.mjs");
     await writeFile(captureScript, "process.stdout.write(JSON.stringify({ script: process.argv[2], args: process.argv.slice(3) })); process.exitCode = Number(process.env.FORGE614_TEST_NODE_EXIT ?? 0);\n");
     await writeFile(join(fakeNodeDir, "node.cmd"), `@echo off\r\n@"${realNode.stdout.trim()}" "%~dp0capture.mjs" %*\r\n@exit /b %ERRORLEVEL%\r\n`);
