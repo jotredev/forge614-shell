@@ -4,8 +4,8 @@
   "reviewedVersion": "1.17.0",
   "notionHub": "https://app.notion.com/p/3de21943d129818b9cd6ca4ab12c44ad?pvs=204",
   "pages": [
-    {"localPath":"docs/es/00-instalacion-y-prueba-local-release.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d12981f4ba25c60272f1ca73?pvs=204","fingerprint":"9f1cc655290a958837803bc4dd26c6a12efd68f0762d298eb31a8b9bb841fe3a","notionSyncPending":true},
-    {"localPath":"docs/en/00-installation-and-local-release-test.md","language":"en","notionUrl":"https://app.notion.com/p/3e121943d129812e96e2f20aec9d6678?pvs=204","fingerprint":"a143e440d051008862fd91f775b5d75876a436bca70e5a37c7ee41d5eb3dba77","notionSyncPending":true},
+    {"localPath":"docs/es/00-instalacion-y-prueba-local-release.md","language":"es","notionUrl":"https://app.notion.com/p/3e121943d12981f4ba25c60272f1ca73?pvs=204","fingerprint":"aaf7ac30dd83d72b3d092c8127a3d531f2b1be6a5011c5f604e012690b528c54","notionSyncPending":true},
+    {"localPath":"docs/en/00-installation-and-local-release-test.md","language":"en","notionUrl":"https://app.notion.com/p/3e121943d129812e96e2f20aec9d6678?pvs=204","fingerprint":"25a97c8993856fd71ec630c1120a9cf8d87002e6f185cb158a3266f3f792c198","notionSyncPending":true},
     {"localPath":"docs/es/01-alcance.md","language":"es","notionUrl":"https://app.notion.com/p/3de21943d129819c9bd2ee1d70d04087?pvs=204","fingerprint":"6bc0b83c59e13bf71645637a231a1fc71f1b74b614b56370299baa54a25b7067","notionSyncPending":true},
     {"localPath":"docs/en/01-scope.md","language":"en","notionUrl":"https://app.notion.com/p/3de21943d12981edad3bd48436fec691?pvs=204","fingerprint":"5912a622abe4ac6d34dca536b1b8f8034821e6ad16e51b4c5e1f9c0fdc1c5353","notionSyncPending":true},
     {"localPath":"docs/es/02-traspaso-notion.md","language":"es","notionUrl":"https://app.notion.com/p/3de21943d1298125a565e14fdcfca893?pvs=204","fingerprint":"c3cfbfbd9f93c807f21d19b2a6cf0a039795f8379cacdfb5edc36ee2f4d240f5","notionSyncPending":true},
