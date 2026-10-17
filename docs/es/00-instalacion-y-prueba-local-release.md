@@ -11,7 +11,7 @@ En macOS o Linux se necesitan Node.js 22.19 o superior, `curl` y `shasum` o `sha
 curl -fsSL https://github.com/jotredev/forge614-shell/releases/latest/download/install.sh | bash
 ```
 
-El instalador verifica descargas mediante SHA-256, prepara Shell bajo `~/.forge614/shell/` y asegura una copia compatible de Engines. Abre una terminal nueva y ejecuta `forge614-shell`.
+El portero requiere Node.js 22.19 o superior y verifica `install.mjs` y `forge614.node.json` contra `SHA256SUMS` en formato GNU. Prepara Shell bajo `~/.forge614/shell/<versión>/forge614-shell-<versión>/`, registra la versión activa y asegura Engines compatible. Abre una terminal nueva y ejecuta `forge614-shell`.
 
 ### Windows x64
 En Windows se necesitan Windows 10 versión 1803+ o Windows 11 x64, Node.js 22.19 o superior, PowerShell 5.1 o PowerShell 7 (`pwsh`) y `tar.exe`. Los comandos de descarga de abajo también usan `curl.exe`; el instalador utiliza PowerShell para descargar los assets.
@@ -32,9 +32,9 @@ pwsh -ExecutionPolicy Bypass -File .\install.ps1 -Latest
 Remove-Item install.ps1
 ```
 
-El instalador comprueba la huella criptográfica SHA-256 contra el sidecar `.sha256`, instala Shell bajo `%USERPROFILE%\.forge614\shell\<versión>` (o `$env:FORGE614_HOME\shell\<versión>`), asegura una versión compatible de Forge614 Engines (`forge614-engines.exe` con esquema 1 y la capacidad booleana `fullySupported`), genera el lanzador `forge614-shell.cmd` y añade `shell\bin` al `Path` de usuario. Abre una ventana nueva de PowerShell o Terminal y ejecuta `forge614-shell`.
+El portero requiere Node.js 22.19 o superior y verifica `install.mjs` y `forge614.node.json` contra `SHA256SUMS` en formato GNU. Instala Shell bajo `%USERPROFILE%\.forge614\shell\<versión>\forge614-shell-<versión>` (o `$env:FORGE614_HOME\shell\<versión>\forge614-shell-<versión>`), asegura Engines compatible (`fullySupported: true` para Claude Code), crea el lanzador `forge614-shell.cmd` y añade `shell\bin` al `Path` de usuario. Abre una ventana nueva de PowerShell o Terminal y ejecuta `forge614-shell`.
 
-La huella SHA-256 se calcula con las clases de .NET (`System.Security.Cryptography.SHA256`) y no con el cmdlet `Get-FileHash`: si `powershell.exe` 5.1 se abre desde PowerShell 7, hereda su `PSModulePath` y no encuentra ese cmdlet, justo con el comando documentado arriba escrito en Windows Terminal con `pwsh`. Por la misma razón, el instalador de Forge614 Engines se ejecuta con el mismo PowerShell que está corriendo `install.ps1` (la ruta completa de `pwsh` o de `powershell.exe`), no con el primero que se encuentre en el `PATH`.
+El portero de PowerShell usa las API SHA-256 de .NET y ejecuta `install.mjs` con `-ExecutionPolicy Bypass`, también con Windows PowerShell 5.1.
 
 ## Comandos
 
@@ -42,12 +42,17 @@ La huella SHA-256 se calcula con las clases de .NET (`System.Security.Cryptograp
 forge614-shell                    # inicia el selector interactivo
 forge614-shell --help             # muestra ayuda
 forge614-shell --version          # muestra la versión
-forge614-shell update             # actualiza Shell, Engines y Engram (si está instalado)
-forge614-shell uninstall          # retira solo Shell tras confirmación
+forge614-shell --version --json   # imprime el objeto común de versión
+forge614-shell update [--version X.Y.Z|vX.Y.Z] [--json]
+forge614-shell uninstall          # pregunta antes de borrar Shell, preferencias e historial
+forge614-shell uninstall --json   # borra Shell sin preguntar y devuelve JSON
+forge614-shell uninstall --self   # informa que Shell no tiene integraciones propias
 forge614-shell init --product engram
 ```
 
-`forge614-shell update` también actualiza Forge614 Engines y, si está instalado, Forge614 Engram — cada uno se reporta de forma independiente (actualizado, ya estaba actualizado, no instalado, o falló con un mensaje seguro), y el fallo de uno nunca oculta ni se presenta como éxito del otro; el comando termina con código distinto de cero si alguno de los tres falló.
+`forge614-shell update` verifica el `install.sh` de la versión elegida contra `SHA256SUMS` estricto y siempre pasa al portero la etiqueta `vX.Y.Z` ya resuelta. También actualiza Forge614 Engines y, si está instalado, Forge614 Engram; cada resultado se reporta por separado y los fallos no se presentan como éxitos. Entrada inválida: código 2; error de actualización o desinstalación: código 1; cancelar el uninstall interactivo: código 130.
+
+Los releases de Shell usan etiquetas `vX.Y.Z`. La versión 1.17.0 también publica una sola vez `forge614-shell-1.17.0.tar.gz.sha256` para que el updater incluido en 1.16.0 pueda verificar y descargar el paquete nuevo; el release siguiente elimina ese sidecar de compatibilidad.
 
 `--engine claude|codex` consulta a Forge614 Engines si el adaptador elegido tiene soporte completo antes de abrir una terminal o guardar preferencias; después Shell pregunta el idioma e inicia ese adaptador. `--engine pi` y otros ids no compatibles fallan con `engine-not-fully-supported`; si no se indica un id explícito compatible, el inicio pregunta qué adaptador abrir. El chat nativo requiere terminal interactiva. El instalador solo conserva un Forge614 Engines existente si `capabilities --agent claude-code` además devuelve `fullySupported` como booleano; si no (o si esa llamada falla), instala el último.
 

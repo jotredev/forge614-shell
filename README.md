@@ -15,7 +15,7 @@ Shell is a TypeScript application run with Bun and Node.js 22.19+. It is the hum
 ## Installation / Instalación
 
 Supported platforms: **macOS**, **Linux**, and **Windows x64**.
-Prerequisites: **Node.js 22.19+**.
+Prerequisites: **Node.js 22.19+** for installation and execution.
 
 ### macOS / Linux
 Requires `curl` and `shasum` or `sha256sum`:
@@ -30,7 +30,9 @@ curl.exe -fsSL -o install.ps1 https://github.com/jotredev/forge614-shell/release
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Latest
 Remove-Item install.ps1
 ```
-The installer validates SHA-256 sidecar checksums, places Forge614 Shell under `%USERPROFILE%\.forge614\shell\<version>`, ensures compatible Forge614 Engines, and adds the `forge614-shell.cmd` launcher to the user `Path`.
+The gatekeeper verifies `install.mjs` and `forge614.node.json` against the release's GNU-format `SHA256SUMS`. It places Forge614 Shell under `%USERPROFILE%\.forge614\shell\<version>\forge614-shell-<version>`, ensures compatible Forge614 Engines, and adds the `forge614-shell.cmd` launcher to the user `Path`. Releases use `vX.Y.Z` tags. Version 1.17.0 also publishes `forge614-shell-1.17.0.tar.gz.sha256` once for compatibility with the bundled 1.16.0 updater; the next release removes it.
+
+`forge614-shell --version --json` prints the common version object. `forge614-shell update [--version X.Y.Z|vX.Y.Z] [--json]` updates Shell through the verified release gatekeeper, then updates Engines and Engram when installed. `forge614-shell uninstall` asks for confirmation before removing Shell, its preferences, and history; `uninstall --json` skips the prompt, and `uninstall --self` reports that Shell has no integrations of its own to remove.
 
 ## Documentation / Documentación
 
