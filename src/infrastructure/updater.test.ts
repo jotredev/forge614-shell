@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checksumForAsset, uninstallInstalledShell, updateInstalledShell } from "./updater.ts";
+import { checksumForAsset, sanitizeInstallerDetail, uninstallInstalledShell, updateInstalledShell } from "./updater.ts";
 import { ShellError, describeError } from "../shell-error.ts";
 
 test("SHA256SUMS accepts one strict GNU entry and rejects malformed or duplicate entries", () => {
@@ -23,8 +23,36 @@ test("passes the resolved version tag to the local installer seam", async () => 
   expect(calls).toEqual([["bash", "/tmp/release/install.sh", "--version", "v1.17.0"]]);
 });
 
+test("reports the active version when an installer exits successfully without changing it", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "forge614-updater-noop-"));
+  const forgeHome = join(temp, ".forge614");
+  const shellHome = join(forgeHome, "shell");
+  await mkdir(shellHome, { recursive: true });
+  await writeFile(join(shellHome, ".active-version"), "1.16.0\n");
+  try {
+    const result = await updateInstalledShell({
+      installer: "/tmp/release/install.sh",
+      platform: "darwin",
+      currentVersion: "1.16.0",
+      version: "1.17.0",
+      env: { HOME: temp, FORGE614_HOME: forgeHome },
+      spawn: (() => ({ status: 0, stderr: "" })) as never,
+    });
+    expect(result).toEqual({ updated: false, previousVersion: "1.16.0", installedVersion: "1.16.0" });
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("reports installer diagnostics", async () => {
   await expect(updateInstalledShell({ installer: "/tmp/release/install.sh", spawn: (() => ({ status: 69, stderr: "Node.js is required" }) as never) as never })).rejects.toThrow("Node.js is required");
+});
+
+test("redacts gatekeeper paths beneath TMPDIR from installer errors", () => {
+  const gatekeeper = join(tmpdir(), "forge614-shell-installer-test", "install.sh");
+  const sanitized = sanitizeInstallerDetail(`could not run ${gatekeeper}`, { TMPDIR: tmpdir() } as NodeJS.ProcessEnv);
+  expect(sanitized).not.toContain(tmpdir());
+  expect(sanitized).toContain("<ruta>/forge614-shell-installer-test/install.sh");
 });
 
 test("runs the bundled installer with --uninstall", async () => {
@@ -237,6 +265,11 @@ test("preserves locale and diagnostics on Windows update failure", async () => {
 });
 
 test("downloads and verifies the Windows gatekeeper and invokes it with execution policy bypass", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "forge614-updater-published-"));
+  const forgeHome = join(temp, ".forge614");
+  const shellHome = join(forgeHome, "shell");
+  await mkdir(shellHome, { recursive: true });
+  await writeFile(join(shellHome, ".active-version"), "1.16.0\n");
   const calls: { command: string; args: string[] }[] = [];
   const fetched: string[] = [];
   const fetcher = async (input: string | URL | Request): Promise<Response> => {
@@ -248,20 +281,25 @@ test("downloads and verifies the Windows gatekeeper and invokes it with executio
     }
     return new Response("gatekeeper");
   };
-  await updateInstalledShell({
-    platform: "win32",
-    version: "1.17.0",
-    currentVersion: "1.16.0",
-    env: { FORGE614_INSTALL_TEST_BASE_URL: "http://127.0.0.1:1234" } as NodeJS.ProcessEnv,
-    fetcher,
-    powerShellCommand: "pwsh",
-    spawn: (command, args) => { calls.push({ command, args }); return { status: 0, stderr: "" }; },
-  });
-  expect(fetched).toEqual([
-    "http://127.0.0.1:1234/repos/jotredev/forge614-shell/releases/download/v1.17.0/install.ps1",
-    "http://127.0.0.1:1234/repos/jotredev/forge614-shell/releases/download/v1.17.0/SHA256SUMS",
-  ]);
-  expect(calls[0]?.command).toBe("pwsh");
-  expect(calls[0]?.args.slice(0, 3)).toEqual(["-NoProfile", "-ExecutionPolicy", "Bypass"]);
-  expect(calls[0]?.args.slice(-2)).toEqual(["--version", "v1.17.0"]);
+  try {
+    const result = await updateInstalledShell({
+      platform: "win32",
+      version: "1.17.0",
+      currentVersion: "1.16.0",
+      env: { HOME: temp, FORGE614_HOME: forgeHome, FORGE614_INSTALL_TEST_BASE_URL: "http://127.0.0.1:1234" } as NodeJS.ProcessEnv,
+      fetcher,
+      powerShellCommand: "pwsh",
+      spawn: (command, args) => { calls.push({ command, args }); return { status: 0, stderr: "" }; },
+    });
+    expect(result).toEqual({ updated: false, previousVersion: "1.16.0", installedVersion: "1.16.0" });
+    expect(fetched).toEqual([
+      "http://127.0.0.1:1234/repos/jotredev/forge614-shell/releases/download/v1.17.0/install.ps1",
+      "http://127.0.0.1:1234/repos/jotredev/forge614-shell/releases/download/v1.17.0/SHA256SUMS",
+    ]);
+    expect(calls[0]?.command).toBe("pwsh");
+    expect(calls[0]?.args.slice(0, 3)).toEqual(["-NoProfile", "-ExecutionPolicy", "Bypass"]);
+    expect(calls[0]?.args.slice(-2)).toEqual(["--version", "v1.17.0"]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });

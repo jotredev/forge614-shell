@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -40,6 +40,19 @@ const REPOSITORY = "jotredev/forge614-shell";
 function shellHome(env: NodeJS.ProcessEnv): string {
   const forgeHome = env.FORGE614_HOME ?? join(env.HOME ?? env.USERPROFILE ?? homedir(), ".forge614");
   return resolve(forgeHome, "shell");
+}
+
+function readActiveShellVersion(env: NodeJS.ProcessEnv): string | undefined {
+  let value: string;
+  try {
+    value = readFileSync(join(shellHome(env), ".active-version"), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+  const version = value.trim();
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new ShellError("updater-update-failed");
+  return version;
 }
 
 function pathIsInside(parent: string, child: string): boolean {
@@ -98,9 +111,12 @@ export function resolvePowerShellCommand(customCommand?: string, env?: NodeJS.Pr
 /** Replace only literal sensitive path values, leaving URL punctuation and hostnames intact. */
 export function sanitizeInstallerDetail(detail: string, env: NodeJS.ProcessEnv = process.env): string {
   let safe = detail;
-  const values = [env.HOME, env.USERPROFILE, env.FORGE614_HOME, env.TMP]
-    .filter((value): value is string => Boolean(value))
-    .sort((left, right) => right.length - left.length);
+  const candidates = [env.HOME, env.USERPROFILE, env.FORGE614_HOME, env.TMP, env.TMPDIR, env.TEMP, tmpdir()]
+    .filter((value): value is string => Boolean(value));
+  const values = [...new Set(candidates.flatMap(value => {
+    const canonical = (() => { try { return realpathSync.native(value); } catch { return undefined; } })();
+    return canonical ? [value, canonical] : [value];
+  }))].sort((left, right) => right.length - left.length);
   for (const value of values) safe = safe.split(value).join("<ruta>");
   return safe;
 }
@@ -209,9 +225,10 @@ async function runPublishedInstaller(action: "update" | "uninstall", options: Ru
 /** Update Shell through the published, checksum-verified gatekeeper. */
 export async function updateInstalledShell(options: RunInstallerOptions = {}): Promise<UpdateInstalledShellResult> {
   const previousVersion = options.currentVersion ?? "0.0.0";
-  let tag: string;
+  let updateEnv = options.env ?? process.env;
   if (options.installer) {
-    const env = { ...(options.env ?? process.env), FORGE614_SHELL_LOCALE: options.locale ?? resolveConfiguredLocale({ env: options.env }) ?? "en" };
+    const env = { ...updateEnv, FORGE614_SHELL_LOCALE: options.locale ?? resolveConfiguredLocale({ env: options.env }) ?? "en" };
+    updateEnv = env;
     const args = options.version ? ["--version", `v${options.version.replace(/^v/, "")}`] : ["--latest"];
     const platform = options.platform ?? process.platform;
     const command = platform === "win32" ? resolvePowerShellCommand(options.powerShellCommand, env, platform) : "bash";
@@ -225,11 +242,12 @@ export async function updateInstalledShell(options: RunInstallerOptions = {}): P
       const stderr = typeof result.stderr === "string" ? result.stderr : Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf8") : "";
       throw stderr.trim() ? new Error(sanitizeInstallerDetail(stderr.trim(), env)) : new ShellError("updater-update-failed");
     }
-    tag = options.version ? `v${options.version.replace(/^v/, "")}` : "v1.17.0";
   } else {
-    ({ tag } = await runPublishedInstaller("update", options));
+    await runPublishedInstaller("update", options);
   }
-  const installedVersion = tag.replace(/^v/, "");
+  const installedVersion = readActiveShellVersion(updateEnv)
+    ?? (options.installer ? previousVersion : undefined);
+  if (installedVersion === undefined) throw new ShellError("updater-update-failed");
   return { updated: previousVersion !== installedVersion, previousVersion, installedVersion };
 }
 
