@@ -437,6 +437,7 @@ The selected engine's project settings and permissions apply. This is not a sand
   chatSelection: {
     copied: "Copied",
     copyFailed: "Copy failed",
+    terminalFallback: "Sent to the terminal to copy (if it does not paste, your terminal does not allow it)",
   },
   sidebarControls: {
     hide: "hide ›",

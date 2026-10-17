@@ -49,6 +49,9 @@ export async function copyToClipboard(text: string, platform: NodeJS.Platform = 
  */
 export type ClipboardRunner = (command: string, args: string[], input: string) => Promise<number | null>;
 
+/** How a requested copy ended: confirmed by the system clipboard, only sent to the terminal with OSC 52, or not copied. */
+export type ClipboardCopyResult = "clipboard" | "terminal" | "failed";
+
 /** How long a clipboard program may take before it is given up on and the next way of copying is tried. */
 const CLIPBOARD_TIMEOUT_MS = 3000;
 
@@ -79,21 +82,21 @@ function clipboardPrograms(platform: NodeJS.Platform): [string, string[]][] {
 /**
  * Copies text selected with the mouse, or a code block button, through the system clipboard — `pbcopy` on macOS, `wl-copy` and then `xclip -selection clipboard` on Linux, `powershell.exe` on Windows. The text goes in as
  * the program's input, never through a shell. With `fallback` enabled (the default for mouse selection), it also writes OSC 52 to the terminal when no system program confirms the copy. A code block button disables that fallback because a
- * successful terminal write does not prove the system clipboard changed. Never throws: it answers `false` when no enabled method confirms the copy.
+ * successful terminal write does not prove the system clipboard changed. Never throws: it distinguishes a confirmed clipboard copy, an OSC 52 request, and total failure.
  */
 export async function copySelectionText(
   text: string,
   options: { write: (data: string) => void; platform?: NodeJS.Platform; run?: ClipboardRunner; fallback?: boolean },
-): Promise<boolean> {
+): Promise<ClipboardCopyResult> {
   const run = options.run ?? runClipboardProgram;
   for (const [command, args] of clipboardPrograms(options.platform ?? process.platform)) {
-    try { if (await run(command, args, text) === 0) return true; } catch { /* try the next way of copying */ }
+    try { if (await run(command, args, text) === 0) return "clipboard"; } catch { /* try the next way of copying */ }
   }
-  if (options.fallback === false) return false;
+  if (options.fallback === false) return "failed";
   try {
     options.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
-    return true;
-  } catch { return false; }
+    return "terminal";
+  } catch { return "failed"; }
 }
 
 /**

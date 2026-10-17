@@ -437,6 +437,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
   chatSelection: {
     copied: "Copiado",
     copyFailed: "No se pudo copiar",
+    terminalFallback: "Enviado a la terminal para copiar (si no pega, tu terminal no lo permite)",
   },
   sidebarControls: {
     hide: "ocultar ›",

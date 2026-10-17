@@ -458,6 +458,7 @@ export interface Catalog {
   chatSelection: {
     copied: string;
     copyFailed: string;
+    terminalFallback: string;
   };
   sidebarControls: {
     hide: string;

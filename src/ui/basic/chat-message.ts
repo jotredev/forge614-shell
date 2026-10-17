@@ -6,6 +6,7 @@ import type { CodeBlockUi } from "./theme.ts";
 import { ImageStrip, imagesInText } from "./chat-images.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
+import type { ClipboardCopyResult } from "../../infrastructure/clipboard.ts";
 
 /** Columns of margin between the chat's edge and a message, on the side the message is not aligned to. */
 const MARGIN = 2;
@@ -75,12 +76,14 @@ export interface AssistantMessageOptions {
   /** See `messageStamp`. */
   at?: number | null;
   links?: ChatLinks;
-  /** Puts `text` on the clipboard and answers whether it could (`copySelectionText` in the real screen). */
-  copy: (text: string) => Promise<boolean>;
+  /** Puts `text` on the clipboard or sends OSC 52 to the terminal (`copySelectionText` in the real screen). */
+  copy: (text: string) => Promise<ClipboardCopyResult | boolean>;
   /** Asked to redraw the screen when the button's label changes by itself. */
   onChange: () => void;
   /** Told when `copy` could not: the chat says there is no clipboard. */
   onCopyFailed?: () => void;
+  /** Told when the copy command only reached the terminal through OSC 52 and the terminal may ignore it. */
+  onCopyTerminalFallback?: () => void;
   /** The answer's base color, for a message that is not a normal answer. */
   baseColor?: (text: string) => string;
 }
@@ -118,9 +121,13 @@ export class AssistantMessage extends Container {
   }
 
   private async copyBlock(index: number, code: string): Promise<void> {
-    let copied = false;
-    try { copied = await this.options.copy(code); } catch { copied = false; }
-    if (!copied) { this.options.onCopyFailed?.(); return; }
+    let result: ClipboardCopyResult;
+    try {
+      const answer = await this.options.copy(code);
+      result = answer === true ? "clipboard" : answer === false ? "failed" : answer;
+    } catch { result = "failed"; }
+    if (result === "terminal") { this.options.onCopyTerminalFallback?.(); return; }
+    if (result === "failed") { this.options.onCopyFailed?.(); return; }
     this.ui.copied = index;
     this.body.invalidate();
     this.options.onChange();

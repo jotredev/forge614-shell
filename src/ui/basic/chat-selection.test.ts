@@ -11,6 +11,7 @@ import { SidebarLayout } from "./sidebar-layout.ts";
 import { ShellSidebar } from "./sidebar.ts";
 import { StatusPanels, attachStatusPanels } from "./status-panel.ts";
 import { copySelectionText } from "../../infrastructure/clipboard.ts";
+import type { ClipboardCopyResult } from "../../infrastructure/clipboard.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import type { Locale } from "../../i18n/index.ts";
 
@@ -61,7 +62,7 @@ const footer: Component = { invalidate() {}, render: width => [" ".repeat(width)
  * asked the terminal to copy (OSC 52, decoded); `selected()` copies the current selection and returns exactly its text. The screen is given a clipboard of the test's own (`options.copySelection`), so
  * no test touches the real one; by default it is the real function with no clipboard program to find, so what it copies is written as OSC 52, which is what `copies()` reads. `options.locale` is Shell's language.
  */
-function chat(tools?: ChatLinkTools, options: { copySelection?: (text: string) => Promise<boolean>; locale?: Locale } = {}) {
+function chat(tools?: ChatLinkTools, options: { copySelection?: (text: string) => Promise<ClipboardCopyResult | boolean>; locale?: Locale } = {}) {
   const terminal = new TestTerminal(COLUMNS, ROWS);
   const copySelection = options.copySelection ?? ((text: string) => copySelectionText(text, { platform: "darwin", run: async () => null, write: data => terminal.write(data) }));
   const opened: string[] = [];
@@ -351,4 +352,23 @@ test("the copy notice is in Shell's language: «Copiado» and «No se pudo copia
   expect(copiedEn).not.toContain("Copied!");
   const failedEn = await notice("en", false);
   expect(failedEn).toContain("Copy failed");
+});
+
+test("OSC 52 manual copy says it was sent to the terminal, not that it was copied", async () => {
+  const notice = async (locale: Locale) => {
+    const screen = chat(undefined, { locale, copySelection: async () => "terminal" });
+    try {
+      await tick(); await screen.scrollUp();
+      screen.terminal.output = "";
+      await screen.select({ x: 4, y: screen.rowY(42) }, { x: 9, y: screen.rowY(42) });
+      await tick();
+      return stripVTControlCharacters(screen.terminal.output);
+    } finally { screen.stop(); }
+  };
+  const spanish = await notice("es");
+  expect(spanish).toContain(getCatalog("es").chatSelection.terminalFallback);
+  expect(spanish).not.toContain(getCatalog("es").chatSelection.copied);
+  const english = await notice("en");
+  expect(english).toContain(getCatalog("en").chatSelection.terminalFallback);
+  expect(english).not.toContain(getCatalog("en").chatSelection.copied);
 });
