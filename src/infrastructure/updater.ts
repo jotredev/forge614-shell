@@ -143,9 +143,11 @@ async function runPublishedInstaller(action: "update" | "uninstall", options: Ru
       const worker = join(gate.directory, "uninstall-after-shell-exits.ps1");
       const script = [
         `$Gatekeeper = $env:FORGE614_SHELL_GATEKEEPER`,
-        `try { Wait-Process -Id ${process.pid} -Timeout 120 -ErrorAction Stop } catch { }`,
-        `& $Gatekeeper --uninstall`,
-        `$Code = $LASTEXITCODE`,
+        `$LogPath = $env:FORGE614_TEST_WINDOWS_UNINSTALL_LOG`,
+        `if ($LogPath) { "worker started" | Add-Content -LiteralPath $LogPath }`,
+        `try { Wait-Process -Id ${process.pid} -Timeout 120 -ErrorAction Stop; if ($LogPath) { "shell process exited" | Add-Content -LiteralPath $LogPath } } catch { if ($LogPath) { "wait failed: $($_.Exception.Message)" | Add-Content -LiteralPath $LogPath } }`,
+        `try { & $Gatekeeper --uninstall; $Code = $LASTEXITCODE; if ($LogPath) { "gatekeeper exit: $Code" | Add-Content -LiteralPath $LogPath } } catch { $Code = 1; if ($LogPath) { "gatekeeper error: $($_.Exception.Message)" | Add-Content -LiteralPath $LogPath } }`,
+        `if ($LogPath) { "removing gatekeeper directory" | Add-Content -LiteralPath $LogPath }`,
         `Remove-Item -LiteralPath $env:FORGE614_SHELL_GATEKEEPER_DIR -Recurse -Force -ErrorAction SilentlyContinue`,
         `exit $Code`,
       ].join("\r\n");
