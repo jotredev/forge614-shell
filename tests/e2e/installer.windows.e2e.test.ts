@@ -83,11 +83,12 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     logStage("install: completed");
     const launcher = join(forgeHome, "shell", "bin", "forge614-shell.cmd");
     expect(existsSync(launcher)).toBe(true);
-  const commandLine = (args: string[], cwd = root, extraEnv: Record<string, string> = {}) => run([
+    const quoteForPowerShell = (value: string) => `'${value.replaceAll("'", "''")}'`;
+    const commandLine = (args: string[], cwd = root, extraEnv: Record<string, string> = {}) => run([
       "powershell.exe",
       "-NoProfile",
       "-Command",
-      `& '${launcher.replaceAll("'", "''")}' ${args.join(" ")}`,
+      `& ${quoteForPowerShell(launcher)} ${args.map(quoteForPowerShell).join(" ")}`,
     ], { cwd, env: { ...env, ...extraEnv } });
     const version = await commandLine(["--version"]);
     expect(version.exitCode, `${version.stdout}\n${version.stderr}`).toBe(0);
@@ -105,6 +106,24 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     const versionAfterRejectedUninstall = await commandLine(["--version"], join(shellHome, "bin"));
     expect(versionAfterRejectedUninstall.exitCode, `${versionAfterRejectedUninstall.stdout}\n${versionAfterRejectedUninstall.stderr}`).toBe(0);
     expect(versionAfterRejectedUninstall.stdout.trim()).toBe(`forge614-shell ${VERSION}`);
+
+    const fakeNodeDir = join(root, "node command probe");
+    await mkdir(fakeNodeDir, { recursive: true });
+    const realNode = await run(["powershell.exe", "-NoProfile", "-Command", "(Get-Command node.exe).Source"], { cwd: root, env });
+    expect(realNode.exitCode, realNode.stderr).toBe(0);
+    const captureScript = join(fakeNodeDir, "capture.mjs");
+    await writeFile(captureScript, "process.stdout.write(JSON.stringify({ script: process.argv[2], args: process.argv.slice(3) })); process.exitCode = Number(process.env.FORGE614_TEST_NODE_EXIT ?? 0);\n");
+    await writeFile(join(fakeNodeDir, "node.cmd"), `@echo off\r\n@"${realNode.stdout.trim()}" "%~dp0capture.mjs" %*\r\n@exit /b %ERRORLEVEL%\r\n`);
+    for (const exitCode of [0, 1, 2, 130]) {
+      const forwarded = await commandLine(["argument with spaces", 'value with "embedded quotes"'], root, {
+        PATH: `${fakeNodeDir};${process.env.PATH ?? ""}`,
+        FORGE614_TEST_NODE_EXIT: String(exitCode),
+      });
+      expect(forwarded.exitCode, `${forwarded.stdout}\n${forwarded.stderr}`).toBe(exitCode);
+      const payload = JSON.parse(forwarded.stdout.trim()) as { script: string; args: string[] };
+      expect(payload.script).toContain(`forge614-shell-${VERSION}`);
+      expect(payload.args).toEqual(["argument with spaces", 'value with "embedded quotes"']);
+    }
 
     logStage("update: started");
     const update = await commandLine(["update", "--version", `v${VERSION}`, "--json"]);
