@@ -61,6 +61,14 @@ function report(outcome: UpdateOutcome, locale: Locale): void {
   else console.log(outcomeLine(outcome, locale));
 }
 
+function jsonOutcome(outcome: UpdateOutcome, locale: Locale): Record<string, string | undefined> {
+  const result: Record<string, string | undefined> = { status: outcome.status };
+  if (outcome.installedVersion !== undefined) result.installedVersion = outcome.installedVersion;
+  if (outcome.pendingVersion !== undefined) result.pendingVersion = outcome.pendingVersion;
+  if (outcome.status === "failed") result.error = outcome.detail || getCatalog(locale).update.noDetailsReported;
+  return result;
+}
+
 function enginesOutcome(result: EnginesUpdateResult): UpdateOutcome {
   if (!result.updated) return { label: "Forge614 Engines", status: "already-up-to-date", detail: result.latestVersion };
   return { label: "Forge614 Engines", status: "updated", detail: `${result.currentVersion} → ${result.latestVersion}` };
@@ -81,9 +89,9 @@ function engramOutcome(result: EngramUpdateResult): UpdateOutcome {
 
 /**
  * Refreshes Shell itself, then Forge614 Engines (always — a required Shell dependency), then
- * Forge614 Engram (only if its binary is present — Engram is optional for Shell). Every outcome is
- * printed the instant it's known, not buffered, so the "one failure never hides another" guarantee
- * holds by construction, not only when nothing after a given step happens to throw. Never invokes
+ * Forge614 Engram (only if its binary is present — Engram is optional for Shell). Human-readable
+ * outcomes print as soon as each step completes; JSON mode gathers the three outcomes into one
+ * object. Never invokes
  * anything beyond each product's own `update`/`update --json` command, so no memory, SQLite, `.env`,
  * MCP, or assistant configuration is ever touched here.
  */
@@ -91,6 +99,8 @@ export async function runUpdateCommand(options: RunUpdateOptions = {}): Promise<
   const home = options.home ?? homedir();
   const locale = options.locale ?? resolveConfiguredLocale({ env: options.env, home: options.home }) ?? "en";
   let anyFailed = false;
+  const jsonResults: Record<string, unknown> = {};
+  const failures: string[] = [];
 
   try {
     const result = await updateInstalledShell({
@@ -101,36 +111,54 @@ export async function runUpdateCommand(options: RunUpdateOptions = {}): Promise<
       version: options.version,
       currentVersion: options.currentVersion,
     });
-    if (options.json) console.log(JSON.stringify({ schemaVersion: 1, ...result }));
-    else report({ label: "Forge614 Shell", status: result.updated ? "updated" : "already-up-to-date" }, locale);
+    const outcome: UpdateOutcome = { label: "Forge614 Shell", status: result.updated ? "updated" : "already-up-to-date", installedVersion: result.installedVersion };
+    if (options.json) jsonResults.shell = { ...jsonOutcome(outcome, locale), previousVersion: result.previousVersion, installedVersion: result.installedVersion };
+    else report(outcome, locale);
   } catch (error) {
     anyFailed = true;
     const detail = describeError(error, locale);
-    if (options.json) console.error(JSON.stringify({ schemaVersion: 1, code: "UPDATE_FAILED", error: getCatalog(locale).cli.updateFailed({ message: detail }) }));
-    else report({ label: "Forge614 Shell", status: "failed", detail }, locale);
+    const outcome: UpdateOutcome = { label: "Forge614 Shell", status: "failed", detail };
+    if (options.json) jsonResults.shell = jsonOutcome(outcome, locale);
+    failures.push(getCatalog(locale).cli.updateFailed({ message: detail }));
   }
 
   try {
     const result = await updateEngines({ home: options.home, env: options.env, run: options.enginesRun });
-    report(enginesOutcome(result), locale);
+    const outcome = enginesOutcome(result);
+    if (options.json) jsonResults.engines = { ...jsonOutcome(outcome, locale), currentVersion: result.currentVersion, latestVersion: result.latestVersion, ...(result.note === undefined ? {} : { note: result.note }) };
+    else report(outcome, locale);
   } catch (error) {
     anyFailed = true;
-    report({ label: "Forge614 Engines", status: "failed", detail: describeError(error, locale) }, locale);
+    const outcome: UpdateOutcome = { label: "Forge614 Engines", status: "failed", detail: describeError(error, locale) };
+    if (options.json) jsonResults.engines = jsonOutcome(outcome, locale);
+    failures.push(outcomeLine(outcome, locale));
   }
 
   try {
     const engramBinary = locateEngramBinary(home, options.env);
     const engramInstalled = (options.engramBinaryExists ?? existsSync)(engramBinary);
     if (!engramInstalled) {
-      report({ label: "Forge614 Engram", status: "not-installed" }, locale);
+      const outcome: UpdateOutcome = { label: "Forge614 Engram", status: "not-installed" };
+      if (options.json) jsonResults.engram = jsonOutcome(outcome, locale);
+      else report(outcome, locale);
     } else {
       const result = await updateEngram({ home: options.home, env: options.env, run: options.engramRun });
-      report(engramOutcome(result), locale);
+      const outcome = engramOutcome(result);
+      if (options.json) jsonResults.engram = { ...jsonOutcome(outcome, locale), previousVersion: result.previousVersion, installedVersion: result.installedVersion, ...(result.pendingVersion === undefined ? {} : { pendingVersion: result.pendingVersion }) };
+      else report(outcome, locale);
     }
   } catch (error) {
     anyFailed = true;
-    report({ label: "Forge614 Engram", status: "failed", detail: describeError(error, locale) }, locale);
+    const outcome: UpdateOutcome = { label: "Forge614 Engram", status: "failed", detail: describeError(error, locale) };
+    if (options.json) jsonResults.engram = jsonOutcome(outcome, locale);
+    failures.push(outcomeLine(outcome, locale));
   }
 
-  if (anyFailed) process.exitCode = 1;
+  if (options.json) {
+    console.log(JSON.stringify({ schemaVersion: 1, result: jsonResults }));
+  }
+  if (anyFailed) {
+    console.error(JSON.stringify({ schemaVersion: 1, code: "UPDATE_FAILED", error: failures.join("; ") }));
+    process.exitCode = 1;
+  }
 }

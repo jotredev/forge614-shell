@@ -17,6 +17,10 @@ function okShellSpawn(): ShellSpawn {
   return (_command, _args) => ({ status: 0, stderr: "" });
 }
 
+function structuredErrors(errors: string[]): string[] {
+  return errors.map(line => (JSON.parse(line) as { error: string }).error);
+}
+
 test("Engines is installed and gets updated: all three components report independently", async () => {
   const { logs, restore } = captureLogs();
   process.exitCode = 0;
@@ -32,7 +36,7 @@ test("Engines is installed and gets updated: all three components report indepen
       engramRun: async () => ({ status: 0, stdout: JSON.stringify({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" }), stderr: "" }),
     });
     expect(logs).toEqual([
-      "Forge614 Shell: updated",
+      "Forge614 Shell: already up to date",
       "Forge614 Engines: updated (1.3.0 → 1.4.0)",
       "Forge614 Engram: updated (1.3.0 → 1.4.0)",
     ]);
@@ -56,6 +60,33 @@ test("Engram is installed and already up to date using JSON", async () => {
     });
     expect(logs).toContain("Forge614 Engines: already up to date (1.4.0)");
     expect(logs).toContain("Forge614 Engram: already up to date (1.4.0)");
+  } finally { restore(); process.exitCode = 0; }
+});
+
+test("--json writes exactly one parseable object with all three component results", async () => {
+  const { logs, errors, restore } = captureLogs();
+  process.exitCode = 0;
+  try {
+    await runUpdateCommand({
+      home: "/Users/tester",
+      locale: "en",
+      json: true,
+      installer: "/tmp/release/install.sh",
+      spawn: okShellSpawn(),
+      engramBinaryExists: () => true,
+      enginesRun: async () => ({ status: 0, stdout: JSON.stringify({ schemaVersion: 1, result: { updated: true, currentVersion: "1.3.0", latestVersion: "1.4.0" } }), stderr: "" }),
+      engramRun: async () => ({ status: 0, stdout: JSON.stringify({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" }), stderr: "" }),
+    });
+    expect(logs).toHaveLength(1);
+    expect(JSON.parse(logs[0] ?? "")).toEqual({
+      schemaVersion: 1,
+      result: {
+        shell: { status: "already-up-to-date", previousVersion: "0.0.0", installedVersion: "0.0.0" },
+        engines: { status: "updated", currentVersion: "1.3.0", latestVersion: "1.4.0" },
+        engram: { status: "updated", previousVersion: "1.3.0", installedVersion: "1.4.0" },
+      },
+    });
+    expect(errors).toHaveLength(0);
   } finally { restore(); process.exitCode = 0; }
 });
 
@@ -94,7 +125,7 @@ test("an Engines failure is reported to stderr and does not prevent Engram's own
       }),
       engramRun: async () => ({ status: 0, stdout: JSON.stringify({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" }), stderr: "" }),
     });
-    expect(errors).toContain("Forge614 Engines: update failed — The latest release has no Forge614 Engines asset for darwin-arm64");
+    expect(structuredErrors(errors)).toContain("Forge614 Engines: update failed — The latest release has no Forge614 Engines asset for darwin-arm64");
     expect(logs).toContain("Forge614 Engram: updated (1.3.0 → 1.4.0)");
     expect(process.exitCode).toBe(1);
   } finally { restore(); process.exitCode = 0; }
@@ -115,7 +146,7 @@ test("an Engram failure is reported to stderr and does not prevent Engines' own 
       engramRun: async () => ({ status: 1, stdout: "", stderr: JSON.stringify({ code: "UPDATE_FAILED", error: "No se pudo actualizar Forge614 Engram." }) }),
     });
     expect(logs).toContain("Forge614 Engines: updated (1.3.0 → 1.4.0)");
-    expect(errors).toContain("Forge614 Engram: update failed — forge614-engram update failed: No se pudo actualizar Forge614 Engram.");
+    expect(structuredErrors(errors)).toContain("Forge614 Engram: update failed — forge614-engram update failed: No se pudo actualizar Forge614 Engram.");
     expect(logs.some(line => line.startsWith("Forge614 Engram: updated"))).toBe(false);
     expect(process.exitCode).toBe(1);
   } finally { restore(); process.exitCode = 0; }
@@ -136,7 +167,7 @@ test("a Shell self-update failure is reported to stderr and Engines/Engram are s
       }),
       engramRun: async () => ({ status: 0, stdout: JSON.stringify({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" }), stderr: "" }),
     });
-    expect(errors).toContain("Forge614 Shell: update failed — Node.js is required");
+    expect(structuredErrors(errors)).toContain("Forge614-Shell update failed: Node.js is required");
     expect(logs).toContain("Forge614 Engines: updated (1.3.0 → 1.4.0)");
     expect(logs).toContain("Forge614 Engram: updated (1.3.0 → 1.4.0)");
     expect(process.exitCode).toBe(1);
@@ -243,9 +274,9 @@ test("with locale: \"es\", every outcome (success and failure) reports in Spanis
       }),
       engramRun: async () => ({ status: 0, stdout: JSON.stringify({ updated: true, previousVersion: "1.3.0", installedVersion: "1.4.0" }), stderr: "" }),
     });
-    expect(logs).toContain("Forge614 Shell: actualizado");
+    expect(logs).toContain("Forge614 Shell: ya está actualizado");
     expect(logs).toContain("Forge614 Engram: actualizado (1.3.0 → 1.4.0)");
-    expect(errors).toContain("Forge614 Engines: falló la actualización — no asset for darwin-arm64");
+    expect(structuredErrors(errors)).toContain("Forge614 Engines: falló la actualización — no asset for darwin-arm64");
     expect(process.exitCode).toBe(1);
   } finally { restore(); process.exitCode = 0; }
 });
