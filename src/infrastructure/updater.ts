@@ -141,21 +141,21 @@ async function runPublishedInstaller(action: "update" | "uninstall", options: Ru
     directory = gate.directory;
     if (action === "uninstall" && platform === "win32" && !options.spawn) {
       const worker = join(gate.directory, "uninstall-after-shell-exits.ps1");
+      const psLiteral = (value: string | undefined) => value === undefined ? "$null" : `'${value.replaceAll("'", "''")}'`;
       const script = [
-        `$Gatekeeper = $env:FORGE614_SHELL_GATEKEEPER`,
-        `$LogPath = $env:FORGE614_TEST_WINDOWS_UNINSTALL_LOG`,
+        `$Gatekeeper = ${psLiteral(gate.installer)}`,
+        `$GatekeeperDir = ${psLiteral(gate.directory)}`,
+        `$LogPath = ${psLiteral(env.FORGE614_TEST_WINDOWS_UNINSTALL_LOG)}`,
         `if ($LogPath) { "worker started" | Add-Content -LiteralPath $LogPath }`,
         `try { Wait-Process -Id ${process.pid} -Timeout 120 -ErrorAction Stop; if ($LogPath) { "shell process exited" | Add-Content -LiteralPath $LogPath } } catch { if ($LogPath) { "wait failed: $($_.Exception.Message)" | Add-Content -LiteralPath $LogPath } }`,
         `try { & $Gatekeeper --uninstall; $Code = $LASTEXITCODE; if ($LogPath) { "gatekeeper exit: $Code" | Add-Content -LiteralPath $LogPath } } catch { $Code = 1; if ($LogPath) { "gatekeeper error: $($_.Exception.Message)" | Add-Content -LiteralPath $LogPath } }`,
         `if ($LogPath) { "removing gatekeeper directory" | Add-Content -LiteralPath $LogPath }`,
-        `Remove-Item -LiteralPath $env:FORGE614_SHELL_GATEKEEPER_DIR -Recurse -Force -ErrorAction SilentlyContinue`,
+        `Remove-Item -LiteralPath $GatekeeperDir -Recurse -Force -ErrorAction SilentlyContinue`,
         `exit $Code`,
       ].join("\r\n");
       await writeFile(worker, script, "utf8");
       const workerEnv = {
         ...Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
-        FORGE614_SHELL_GATEKEEPER: gate.installer,
-        FORGE614_SHELL_GATEKEEPER_DIR: gate.directory,
       };
       const workerLog = env.FORGE614_TEST_WINDOWS_UNINSTALL_LOG;
       if (workerLog) {
