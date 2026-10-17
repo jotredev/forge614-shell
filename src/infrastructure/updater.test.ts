@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checksumForAsset, uninstallInstalledShell, updateInstalledShell } from "./updater.ts";
@@ -40,20 +40,44 @@ test("rejects uninstall from inside Shell and leaves the installation untouched"
   const temp = await mkdtemp(join(tmpdir(), "forge614-updater-cwd-"));
   const forgeHome = join(temp, ".forge614");
   const shellHome = join(forgeHome, "shell");
-  await mkdir(shellHome, { recursive: true });
+  await mkdir(join(shellHome, "bin"), { recursive: true });
   let installerCalls = 0;
   try {
     const error = await uninstallInstalledShell({
       installer: "/tmp/release/install.sh",
       platform: "win32",
       env: { HOME: temp, FORGE614_HOME: forgeHome },
-      cwd: join(shellHome, "dist"),
+      cwd: join(shellHome, "bin"),
       spawn: (() => { installerCalls++; return { status: 0, stderr: "" }; }) as never,
     }).catch((thrown: unknown) => thrown);
     expect(error).toBeInstanceOf(ShellError);
     expect((error as ShellError).code).toBe("updater-uninstall-from-shell");
     expect(describeError(error, "es")).toBe("Ejecuta uninstall desde fuera de la carpeta de Forge614 Shell.");
     expect(describeError(error, "en")).toBe("Run uninstall from outside the Forge614 Shell folder.");
+    expect(installerCalls).toBe(0);
+    expect(existsSync(shellHome)).toBe(true);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.platform === "win32")("rejects uninstall when CWD reaches Shell through a symlink", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "forge614-updater-symlink-"));
+  const forgeHome = join(temp, ".forge614");
+  const shellHome = join(forgeHome, "shell");
+  const alias = join(temp, "shell alias");
+  await mkdir(shellHome, { recursive: true });
+  await symlink(shellHome, alias, "dir");
+  let installerCalls = 0;
+  try {
+    const error = await uninstallInstalledShell({
+      installer: "/tmp/release/install.sh",
+      platform: "darwin",
+      env: { HOME: temp, FORGE614_HOME: forgeHome },
+      cwd: alias,
+      spawn: (() => { installerCalls++; return { status: 0, stderr: "" }; }) as never,
+    }).catch((thrown: unknown) => thrown);
+    expect((error as ShellError).code).toBe("updater-uninstall-from-shell");
     expect(installerCalls).toBe(0);
     expect(existsSync(shellHome)).toBe(true);
   } finally {

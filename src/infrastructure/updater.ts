@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -47,13 +47,23 @@ function pathIsInside(parent: string, child: string): boolean {
   return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
 }
 
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return resolve(path);
+    throw error;
+  }
+}
+
 function ensureUninstallStartsOutsideShell(env: NodeJS.ProcessEnv, cwd = process.cwd()): void {
   const directory = shellHome(env);
-  const workingDirectory = resolve(cwd);
-  if (env.FORGE614_TEST_UNINSTALL_CWD_DIAGNOSTIC === "1") {
-    process.stderr.write(`[uninstall CWD diagnostic] ${JSON.stringify({ cwd: workingDirectory, shellHome: directory })}\n`);
+  try {
+    if (pathIsInside(canonicalPath(directory), canonicalPath(cwd))) throw new ShellError("updater-uninstall-from-shell");
+  } catch (error) {
+    if (error instanceof ShellError) throw error;
+    throw new ShellError("updater-uninstall-from-shell");
   }
-  if (pathIsInside(directory, workingDirectory)) throw new ShellError("updater-uninstall-from-shell");
 }
 
 function ensureShellWasRemoved(env: NodeJS.ProcessEnv): void {
