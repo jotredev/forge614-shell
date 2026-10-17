@@ -120,6 +120,21 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     expect(version.stdout.trim()).toBe(`forge614-shell ${VERSION}`);
 
     const shellHome = join(forgeHome, "shell");
+    const activeVersionFile = join(shellHome, ".active-version");
+    const activeVersionBytes = await readFile(activeVersionFile);
+    try {
+      await rm(activeVersionFile, { force: true });
+      const missingVersion = await commandLine(["--version"]);
+      expect(missingVersion.exitCode, `${missingVersion.stdout}\n${missingVersion.stderr}`).toBe(1);
+      expect(missingVersion.stderr).toContain(".active-version is missing or empty");
+      await writeFile(activeVersionFile, "");
+      const emptyVersion = await commandLine(["--version"]);
+      expect(emptyVersion.exitCode, `${emptyVersion.stdout}\n${emptyVersion.stderr}`).toBe(1);
+      expect(emptyVersion.stderr).toContain(".active-version is missing or empty");
+    } finally {
+      await writeFile(activeVersionFile, activeVersionBytes);
+    }
+
     const blockedUninstall = await commandLine(["uninstall", "--json"], join(shellHome, "bin"));
     expect(blockedUninstall.exitCode, `${blockedUninstall.stdout}\n${blockedUninstall.stderr}`).toBe(1);
     const blockedOutput = `${blockedUninstall.stdout}\n${blockedUninstall.stderr}`;
