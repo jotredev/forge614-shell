@@ -4,15 +4,17 @@ Como una maleta sellada con etiqueta de envío, un release entrega una versión 
 
 ## Instalación y actualización
 
-El instalador público descarga el release, verifica su SHA-256 (huella criptográfica para detectar una descarga alterada), instala Shell bajo `~/.forge614/shell/<versión>/` (o `%USERPROFILE%\.forge614\shell\<versión>\` en Windows) y deja el ejecutable (`forge614-shell` en Unix, `forge614-shell.cmd` en Windows) en el `PATH` de usuario. En macOS y Linux requiere Node.js 22.19+, `curl` y una herramienta SHA-256 (`shasum` o `sha256sum`). En Windows x64 requiere Node.js 22.19+, PowerShell (5.1 o `pwsh`) y `tar.exe`; el comando documentado usa `curl.exe` para guardar `install.ps1` localmente antes de ejecutarlo con `-Latest` (evitando canalizar código remoto a `iex`). La guía de uso está en [00](00-instalacion-y-prueba-local-release.md).
+El portero público requiere Node.js 22.19+, verifica `install.mjs` y `forge614.node.json` con `SHA256SUMS` en formato GNU, instala Shell bajo `~/.forge614/shell/<versión>/forge614-shell-<versión>/` (o `%USERPROFILE%\.forge614\shell\<versión>\forge614-shell-<versión>` en Windows) y deja el lanzador estable en el `PATH` del usuario. En Windows usa PowerShell 5.1 o `pwsh` con `-ExecutionPolicy Bypass`. La guía de uso está en [00](00-instalacion-y-prueba-local-release.md).
 
 Antes de activar Shell, el instalador valida Forge614 Engines en `~/.forge614/engines/` (`%USERPROFILE%\.forge614\engines\` en Windows) con `detect` y esquema 1, comprobando además que `fullySupported` sea booleano. Si hace falta, instala Engines mediante su instalador compatible. Engines no se añade al `PATH` ni se presenta como aplicación para ejecutar directamente.
 
-`forge614-shell update` (o `install.ps1 -Latest`) descarga y activa el último release estable. `forge614-shell uninstall` pide confirmación y elimina solo la carpeta `shell/`; la ejecución directa de `install.ps1 -Uninstall -Yes` omite la confirmación. Engram, Atlas, Engines y la carpeta padre sobreviven intactos.
+Los releases usan etiquetas `vX.Y.Z`. `forge614-shell --version` imprime `forge614-shell <versión>`; con `--json` devuelve `{"schemaVersion":1,"name":"forge614-shell","version":"<versión>"}`. `forge614-shell update [--version X.Y.Z|vX.Y.Z] [--json]` descarga y verifica el portero de la versión resuelta, y activa esa versión. Shell también actualiza Engines y Engram cuando están instalados. `forge614-shell uninstall` pide confirmación y elimina toda la carpeta `shell/`, incluidas las preferencias y el historial; `uninstall --json` no pregunta y `uninstall --self` informa que Shell no tiene integraciones externas. Engram, Atlas, Engines y la carpeta padre permanecen intactos.
+
+El release 1.17.0 publica una vez `forge614-shell-1.17.0.tar.gz.sha256` para que el actualizador anterior de 1.16.0 valide el archivo nuevo. El siguiente release quitará ese sidecar de compatibilidad; los porteros nuevos usan `SHA256SUMS`.
 
 ## Mantenimiento
 
-Los mantenedores ejecutan `bun run check` antes de empaquetar: typecheck (comprobación estática de TypeScript), pruebas y build (compilación). `bun run bundle:release` crea el archivo del release (`forge614-shell-<versión>.tar.gz`, su sidecar `.sha256`, `install.sh` e `install.ps1`). El script `validate-release-bundle.mjs` verifica que el paquete contenga todas las piezas requeridas por ambos instaladores antes de la publicación. La versión publicada debe coincidir con `package.json` y con los assets de GitHub Releases.
+Los mantenedores ejecutan `bun run typecheck`, `bun test`, `bun run build` y `git diff --check`. `bun run bundle:release` crea el paquete Node con los lanzadores POSIX y Windows; `scripts/prepare-release-assets.mjs` agrega los porteros comunes y la ficha del nodo, y escribe `SHA256SUMS`. El workflow valida que la etiqueta `vX.Y.Z` coincida con `package.json` y publica siete assets para 1.17.0.
 
 ## Límites
 
