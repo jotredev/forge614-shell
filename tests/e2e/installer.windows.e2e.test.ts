@@ -8,15 +8,35 @@ import { join, resolve } from "node:path";
 const REPO_ROOT = resolve(import.meta.dir, "../..");
 const VERSION = "1.17.0";
 
+/** Overlay environment values without retaining duplicate names on case-insensitive platforms. */
+function mergeEnvironment(base: NodeJS.ProcessEnv, overrides: Record<string, string | undefined>): NodeJS.ProcessEnv {
+  const environment = { ...base };
+  for (const [key, value] of Object.entries(overrides)) {
+    for (const existing of Object.keys(environment)) {
+      if (existing.toLowerCase() === key.toLowerCase()) delete environment[existing];
+    }
+    environment[key] = value;
+  }
+  return environment;
+}
+
 /** Run a child process with a bounded wait and captured output. */
 async function run(command: string[], options: { cwd: string; env: Record<string, string | undefined>; timeoutMs?: number }) {
-  const child = Bun.spawn(command, { cwd: options.cwd, env: { ...process.env, ...options.env }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(command, { cwd: options.cwd, env: mergeEnvironment(process.env, options.env), stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const timer = setTimeout(() => child.kill(), options.timeoutMs ?? 30_000);
   try {
     const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     return { exitCode, stdout, stderr };
   } finally { clearTimeout(timer); }
 }
+
+test("Windows E2E environment overlays replace keys without regard to case", () => {
+  const merged = mergeEnvironment({ Path: "original", Other: "kept" }, { PATH: "shim", OTHER: "changed" });
+  expect(Object.keys(merged).filter((key) => key.toLowerCase() === "path")).toEqual(["PATH"]);
+  expect(merged.PATH).toBe("shim");
+  expect(Object.keys(merged).filter((key) => key.toLowerCase() === "other")).toEqual(["OTHER"]);
+  expect(merged.OTHER).toBe("changed");
+});
 
 /** Build a localhost release containing the package, common gatekeepers, node pointer and manifest. */
 async function buildRelease(output: string): Promise<void> {
@@ -122,6 +142,8 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     const pathEnvKeys = Object.keys({ ...process.env, ...probeEnv }).filter((key) => key.toLowerCase() === "path");
     const resolvedNode = await run(["cmd.exe", "/d", "/c", "where node"], { cwd: root, env: probeEnv });
     logStage(`node probe environment ${JSON.stringify({ pathEnvKeys, whereNode: resolvedNode.stdout.trim(), error: resolvedNode.stderr.trim() })}`);
+    expect(resolvedNode.exitCode, resolvedNode.stderr).toBe(0);
+    expect(resolvedNode.stdout.split(/\r?\n/)[0]).toBe(join(fakeNodeDir, "node.cmd"));
     for (const exitCode of [0, 1, 2, 130]) {
       const forwarded = await commandLine(["argument with spaces", 'value with "embedded quotes"'], root, {
         ...probeEnv,
