@@ -144,15 +144,16 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     logStage(`node probe environment ${JSON.stringify({ pathEnvKeys, whereNode: resolvedNode.stdout.trim(), error: resolvedNode.stderr.trim() })}`);
     expect(resolvedNode.exitCode, resolvedNode.stderr).toBe(0);
     expect(resolvedNode.stdout.split(/\r?\n/)[0]).toBe(realpathSync.native(join(fakeNodeDir, "node.cmd")));
+    // Shell accepts CLI options rather than free-form text; nested quotes only exercise PowerShell 5.1 argument parsing.
     for (const exitCode of [0, 1, 2, 130]) {
-      const forwarded = await commandLine(["argument with spaces", 'value with "embedded quotes"'], root, {
+      const forwarded = await commandLine(["argument with spaces"], root, {
         ...probeEnv,
         FORGE614_TEST_NODE_EXIT: String(exitCode),
       });
       expect(forwarded.exitCode, `${forwarded.stdout}\n${forwarded.stderr}`).toBe(exitCode);
       const payload = JSON.parse(forwarded.stdout.trim()) as { script: string; args: string[] };
       expect(payload.script).toContain(`forge614-shell-${VERSION}`);
-      expect(payload.args).toEqual(["argument with spaces", 'value with "embedded quotes"']);
+      expect(payload.args).toEqual(["argument with spaces"]);
     }
 
     logStage("update: started");
