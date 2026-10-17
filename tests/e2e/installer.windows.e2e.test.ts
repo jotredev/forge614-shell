@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -139,11 +139,11 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
       PATHEXT: ".CMD;.EXE;.BAT",
       FORGE614_TEST_NODE_EXIT: "0",
     };
-    const pathEnvKeys = Object.keys({ ...process.env, ...probeEnv }).filter((key) => key.toLowerCase() === "path");
+    const pathEnvKeys = Object.keys(mergeEnvironment(process.env, probeEnv)).filter((key) => key.toLowerCase() === "path");
     const resolvedNode = await run(["cmd.exe", "/d", "/c", "where node"], { cwd: root, env: probeEnv });
     logStage(`node probe environment ${JSON.stringify({ pathEnvKeys, whereNode: resolvedNode.stdout.trim(), error: resolvedNode.stderr.trim() })}`);
     expect(resolvedNode.exitCode, resolvedNode.stderr).toBe(0);
-    expect(resolvedNode.stdout.split(/\r?\n/)[0]).toBe(join(fakeNodeDir, "node.cmd"));
+    expect(resolvedNode.stdout.split(/\r?\n/)[0]).toBe(realpathSync.native(join(fakeNodeDir, "node.cmd")));
     for (const exitCode of [0, 1, 2, 130]) {
       const forwarded = await commandLine(["argument with spaces", 'value with "embedded quotes"'], root, {
         ...probeEnv,
