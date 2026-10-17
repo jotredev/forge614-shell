@@ -83,7 +83,7 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     logStage("install: completed");
     const launcher = join(forgeHome, "shell", "bin", "forge614-shell.cmd");
     expect(existsSync(launcher)).toBe(true);
-    const commandLine = (args: string[]) => run(["cmd.exe", "/d", "/c", `"${launcher}" ${args.join(" ")}`], { cwd: root, env });
+    const commandLine = (args: string[]) => run(["cmd.exe", "/d", "/s", "/c", `""${launcher}" ${args.join(" ")}"`], { cwd: root, env });
     const version = await commandLine(["--version"]);
     expect(version.exitCode, `${version.stdout}\n${version.stderr}`).toBe(0);
     expect(version.stdout.trim()).toBe(`forge614-shell ${VERSION}`);
