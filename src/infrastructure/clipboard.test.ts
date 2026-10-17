@@ -49,9 +49,6 @@ test("saveNewFile() writes a new file and never overwrites an existing one", asy
 
 // ── The text selected with the mouse in the chat ────────────────────────────────────────────
 
-/** The OSC 52 sequence a terminal that understands it copies from: the exact bytes the fallback writes. */
-const osc52 = (text: string) => `\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`;
-
 /** A stand-in for the system's clipboard programs: records each call and answers with what `answers` says for that program (`null` = the program is not there). */
 function clipboardDouble(answers: Record<string, number | null>) {
   const calls: [string, string[], string][] = [];
@@ -60,14 +57,22 @@ function clipboardDouble(answers: Record<string, number | null>) {
   return { calls, written, options: (platform: NodeJS.Platform) => ({ platform, run, write: (data: string) => { written.push(data); } }) };
 }
 
+/** The OSC 52 sequence the manual selection path writes when the system clipboard program is unavailable. */
+const osc52 = (text: string) => `\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`;
+
 /**
- * On macOS the selected text goes to `pbcopy` as its input, with no arguments, and nothing else is written: macOS Terminal does not understand OSC 52, so the sequence alone would show «Copied»
- * and leave the clipboard empty. It exists because that was the bug: Shell gave pi-tui no clipboard of its own.
+ * On macOS the selected text goes to the system `pbcopy` as its input, with no arguments.
  */
-test("copySelectionText() copies with pbcopy on macOS and writes no OSC 52 when it worked", async () => {
-  const double = clipboardDouble({ pbcopy: 0 });
+test("copySelectionText() copies with the system pbcopy on macOS", async () => {
+  const double = clipboardDouble({ "/usr/bin/pbcopy": 0 });
   expect(await copySelectionText("line one\nline 'two' & $three", double.options("darwin"))).toBe(true);
-  expect(double.calls).toEqual([["pbcopy", [], "line one\nline 'two' & $three"]]);
+  expect(double.calls).toEqual([["/usr/bin/pbcopy", [], "line one\nline 'two' & $three"]]);
+  expect(double.written).toEqual([]);
+});
+
+test("copySelectionText() reports failure when no system clipboard program confirms the copy", async () => {
+  const double = clipboardDouble({ "/usr/bin/pbcopy": 1 });
+  expect(await copySelectionText("texto", { ...double.options("darwin"), fallback: false })).toBe(false);
   expect(double.written).toEqual([]);
 });
 
@@ -103,10 +108,9 @@ test("copySelectionText() tries wl-copy then xclip on Linux, and powershell.exe 
 });
 
 /**
- * With a program that ends in an error, or no program at all, the exact OSC 52 sequence (the text in base64) is written and the answer is still true: a terminal that does understand it
- * (Orca, a remote session) keeps copying. A program that cannot even be run (it rejects) is the same, and nothing ever throws.
+ * Manual text selection can still use OSC 52 when the native clipboard program is unavailable. A program that cannot even be run (it rejects) follows the same fallback, and nothing ever throws.
  */
-test("copySelectionText() falls back to the exact OSC 52 sequence and still answers true", async () => {
+test("copySelectionText() falls back to OSC 52 for manual text selection", async () => {
   const text = "ñandú → 日本\nsegunda línea";
   const failing = clipboardDouble({ pbcopy: 1 });
   expect(await copySelectionText(text, failing.options("darwin"))).toBe(true);
@@ -124,7 +128,7 @@ test("copySelectionText() falls back to the exact OSC 52 sequence and still answ
   expect(rejected).toEqual([osc52(text)]);
 });
 
-/** Never throws, even when the fallback's own write does: the answer is then false (the person is told the copy failed), not an exception. */
+/** Never throws, even when starting the clipboard program and writing OSC 52 both fail. */
 test("copySelectionText() never throws", async () => {
   const answer = await copySelectionText("x", { platform: "darwin", run: async () => { throw new Error("boom"); }, write: () => { throw new Error("terminal closed"); } });
   expect(answer).toBe(false);
@@ -137,7 +141,7 @@ test("copySelectionText() never uses a shell", async () => {
     const double = clipboardDouble({});
     await copySelectionText(text, double.options(platform));
     for (const [command, args, input] of double.calls) {
-      expect(command).toMatch(/^[a-z.-]+$/);
+      expect(command).toMatch(/^(?:[a-z.-]+|\/usr\/bin\/pbcopy)$/);
       expect(args.some(arg => arg.includes(text))).toBe(false);
       expect(input).toBe(text);
     }
