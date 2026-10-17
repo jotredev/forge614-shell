@@ -119,6 +119,14 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     expect(version.exitCode, `${version.stdout}\n${version.stderr}`).toBe(0);
     expect(version.stdout.trim()).toBe(`forge614-shell ${VERSION}`);
 
+    const environmentIsolation = await run([
+      "powershell.exe",
+      "-NoProfile",
+      "-Command",
+      `$names=@('activeVersionFile','activeVersion','cliPath'); $before=@{}; foreach($name in $names){$before[$name]=[Environment]::GetEnvironmentVariable($name,'Process')}; & ${quoteForPowerShell(launcher)} --version | Out-Null; $launchCode=$LASTEXITCODE; foreach($name in $names){if([Environment]::GetEnvironmentVariable($name,'Process') -cne $before[$name]){exit 91}}; exit $launchCode`,
+    ], { cwd: root, env });
+    expect(environmentIsolation.exitCode, `${environmentIsolation.stdout}\n${environmentIsolation.stderr}`).toBe(0);
+
     const shellHome = join(forgeHome, "shell");
     const activeVersionFile = join(shellHome, ".active-version");
     const activeVersionBytes = await readFile(activeVersionFile);

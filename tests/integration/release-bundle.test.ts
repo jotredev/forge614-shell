@@ -22,7 +22,7 @@ test.skipIf(process.platform === "win32")("release bundle installs outside the r
     const packagedWindowsLauncher = join(unpacked, `forge614-shell-${version}`, "forge614-shell.cmd");
     const windowsLauncherSource = await readFile(packagedWindowsLauncher, "utf8");
     expect(windowsLauncherSource).toContain(".active-version");
-    expect(windowsLauncherSource.trim().split(/\r?\n/)[0]).toStartWith("@(goto) 2>nul & @echo off &");
+    expect(windowsLauncherSource.trim().split(/\r?\n/).at(-1)).toBe('@(goto) 2>nul & node "%cliPath%" %* & @exit /b');
     expect(windowsLauncherSource).toContain("if not defined activeVersion goto missingVersion");
     expect(windowsLauncherSource).toContain("exit /b 1");
 
