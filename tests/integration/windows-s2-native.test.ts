@@ -60,7 +60,11 @@ describe("Windows S2 native verifications", () => {
         Write-Output "ok-from-fixture"
         exit 0
       `);
-      await expect(updateInstalledShell({ installer: ps1File })).resolves.toBeUndefined();
+      await expect(updateInstalledShell({ installer: ps1File })).resolves.toEqual({
+        updated: true,
+        previousVersion: "0.0.0",
+        installedVersion: "1.17.0",
+      });
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
