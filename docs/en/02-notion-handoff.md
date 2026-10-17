@@ -6,7 +6,7 @@ Canonical documentation is maintained in local Markdown and published to Notion 
 
 ## Synchronization rule
 
-`docs/notion-map.json` records each local file's language, exact Notion URL, reviewed version, and content fingerprint (a short hash used to detect change). A fingerprint changes only after the local file and its Notion page have both been updated.
+`docs/notion-map.json` records each local file's language, exact Notion URL, reviewed version, and SHA-256 fingerprint of the current local Markdown. Refresh the fingerprint when that file changes; `notionSyncPending: true` means the Notion page still needs the local changes. Clear that flag only after the page is synchronized.
 
 ## Review
 
