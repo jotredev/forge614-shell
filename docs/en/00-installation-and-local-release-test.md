@@ -50,7 +50,7 @@ forge614-shell uninstall --self   # reports Shell has no integrations of its own
 forge614-shell init --product engram
 ```
 
-`forge614-shell update` verifies the selected release's `install.sh` against strict `SHA256SUMS` and always passes the resolved `vX.Y.Z` tag to the gatekeeper. It also refreshes Forge614 Engines, and Forge614 Engram if installed; each outcome is reported independently and failures do not appear as successes. Invalid command input exits with 2; update or uninstall failures exit with 1; cancelling the interactive uninstall exits with 130.
+`forge614-shell update` verifies the selected release's `install.sh` against strict `SHA256SUMS` and always passes the resolved `vX.Y.Z` tag to the gatekeeper. It also refreshes Forge614 Engines, and Forge614 Engram if installed; each outcome is reported independently and failures do not appear as successes. Run `uninstall` from outside `FORGE614_HOME/shell`; on Windows the command waits for the gatekeeper to finish and reports removal only after that directory is gone. Invalid command input exits with 2; update or uninstall failures exit with 1; cancelling the interactive uninstall exits with 130.
 
 Shell releases use `vX.Y.Z` tags. Version 1.17.0 additionally publishes `forge614-shell-1.17.0.tar.gz.sha256` once so the bundled 1.16.0 updater can verify and download the new package; the following release removes that compatibility sidecar.
 
