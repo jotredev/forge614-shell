@@ -114,10 +114,17 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     const captureScript = join(fakeNodeDir, "capture.mjs");
     await writeFile(captureScript, "process.stdout.write(JSON.stringify({ script: process.argv[2], args: process.argv.slice(3) })); process.exitCode = Number(process.env.FORGE614_TEST_NODE_EXIT ?? 0);\n");
     await writeFile(join(fakeNodeDir, "node.cmd"), `@echo off\r\n@"${realNode.stdout.trim()}" "%~dp0capture.mjs" %*\r\n@exit /b %ERRORLEVEL%\r\n`);
+    const probeEnv = {
+      PATH: `${fakeNodeDir};${process.env.PATH ?? ""}`,
+      PATHEXT: ".CMD;.EXE;.BAT",
+      FORGE614_TEST_NODE_EXIT: "0",
+    };
+    const pathEnvKeys = Object.keys({ ...process.env, ...probeEnv }).filter((key) => key.toLowerCase() === "path");
+    const resolvedNode = await run(["cmd.exe", "/d", "/c", "where node"], { cwd: root, env: probeEnv });
+    logStage(`node probe environment ${JSON.stringify({ pathEnvKeys, whereNode: resolvedNode.stdout.trim(), error: resolvedNode.stderr.trim() })}`);
     for (const exitCode of [0, 1, 2, 130]) {
       const forwarded = await commandLine(["argument with spaces", 'value with "embedded quotes"'], root, {
-        PATH: `${fakeNodeDir};${process.env.PATH ?? ""}`,
-        PATHEXT: ".CMD;.EXE;.BAT",
+        ...probeEnv,
         FORGE614_TEST_NODE_EXIT: String(exitCode),
       });
       expect(forwarded.exitCode, `${forwarded.stdout}\n${forwarded.stderr}`).toBe(exitCode);
