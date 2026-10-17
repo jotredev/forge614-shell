@@ -109,7 +109,8 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     const deadline = Date.now() + 10_000;
     while (existsSync(join(forgeHome, "shell")) && Date.now() < deadline) await new Promise(resolvePromise => setTimeout(resolvePromise, 100));
     const workerOutput = await readFile(uninstallLog, "utf8").catch(() => "(worker did not write a log)");
-    expect(existsSync(join(forgeHome, "shell")), workerOutput).toBe(false);
+    const workerError = await readFile(`${uninstallLog}.stderr`, "utf8").catch(() => "(worker did not write stderr)");
+    expect(existsSync(join(forgeHome, "shell")), `${workerOutput}\nworker stderr:\n${workerError}`).toBe(false);
     logStage("uninstall: shell directory removed");
     const pathRead = await run(["powershell.exe", "-NoProfile", "-Command", `$key='HKCU:\\${registryKey}'; (Get-ItemProperty -Path $key -Name Path).Path`], { cwd: root, env });
     expect(pathRead.stdout).not.toContain(join(forgeHome, "shell", "bin"));
