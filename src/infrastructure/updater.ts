@@ -48,7 +48,12 @@ function pathIsInside(parent: string, child: string): boolean {
 }
 
 function ensureUninstallStartsOutsideShell(env: NodeJS.ProcessEnv, cwd = process.cwd()): void {
-  if (pathIsInside(shellHome(env), resolve(cwd))) throw new ShellError("updater-uninstall-from-shell");
+  const directory = shellHome(env);
+  const workingDirectory = resolve(cwd);
+  if (env.FORGE614_TEST_UNINSTALL_CWD_DIAGNOSTIC === "1") {
+    process.stderr.write(`[uninstall CWD diagnostic] ${JSON.stringify({ cwd: workingDirectory, shellHome: directory })}\n`);
+  }
+  if (pathIsInside(directory, workingDirectory)) throw new ShellError("updater-uninstall-from-shell");
 }
 
 function ensureShellWasRemoved(env: NodeJS.ProcessEnv): void {

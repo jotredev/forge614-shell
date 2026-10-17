@@ -83,18 +83,18 @@ test.skipIf(process.platform !== "win32")("Windows .cmd update and uninstall wai
     logStage("install: completed");
     const launcher = join(forgeHome, "shell", "bin", "forge614-shell.cmd");
     expect(existsSync(launcher)).toBe(true);
-    const commandLine = (args: string[], cwd = root) => run([
+  const commandLine = (args: string[], cwd = root, extraEnv: Record<string, string> = {}) => run([
       "powershell.exe",
       "-NoProfile",
       "-Command",
       `& '${launcher.replaceAll("'", "''")}' ${args.join(" ")}`,
-    ], { cwd, env });
+    ], { cwd, env: { ...env, ...extraEnv } });
     const version = await commandLine(["--version"]);
     expect(version.exitCode, `${version.stdout}\n${version.stderr}`).toBe(0);
     expect(version.stdout.trim()).toBe(`forge614-shell ${VERSION}`);
 
     const shellHome = join(forgeHome, "shell");
-    const blockedUninstall = await commandLine(["uninstall", "--json"], shellHome);
+    const blockedUninstall = await commandLine(["uninstall", "--json"], shellHome, { FORGE614_TEST_UNINSTALL_CWD_DIAGNOSTIC: "1" });
     expect(blockedUninstall.exitCode, `${blockedUninstall.stdout}\n${blockedUninstall.stderr}`).toBe(1);
     const blockedOutput = `${blockedUninstall.stdout}\n${blockedUninstall.stderr}`;
     expect(blockedOutput).toContain('"code":"UNINSTALL_FAILED"');
