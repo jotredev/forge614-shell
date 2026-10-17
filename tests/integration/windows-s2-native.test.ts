@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
@@ -60,10 +60,13 @@ describe("Windows S2 native verifications", () => {
         Write-Output "ok-from-fixture"
         exit 0
       `);
-      await expect(updateInstalledShell({ installer: ps1File })).resolves.toEqual({
-        updated: true,
-        previousVersion: "0.0.0",
-        installedVersion: "1.17.0",
+      const forgeHome = join(tempDir, "forge614-home");
+      mkdirSync(join(forgeHome, "shell"), { recursive: true });
+      writeFileSync(join(forgeHome, "shell", ".active-version"), "1.16.0\n");
+      await expect(updateInstalledShell({ installer: ps1File, env: { FORGE614_HOME: forgeHome } as NodeJS.ProcessEnv, currentVersion: "1.16.0" })).resolves.toEqual({
+        updated: false,
+        previousVersion: "1.16.0",
+        installedVersion: "1.16.0",
       });
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
