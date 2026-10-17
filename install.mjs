@@ -968,7 +968,10 @@ async function main(argv) {
     const stagedLauncher = await prepareAsset(install, asset, name, node, stage, platform);
     const smokeTest = install.smokeTest ?? ["--version"];
     const smoke = await run(stagedLauncher, smokeTest, { allowFailure: true });
-    if (smoke.code !== 0 || smoke.stdout.trim() !== `forge614-${node} ${version}`) throw new Error("staged launcher smoke test failed");
+    if (smoke.code !== 0 || smoke.stdout.trim() !== `forge614-${node} ${version}`) {
+      const details = `exit ${smoke.code}; stdout: ${smoke.stdout.trim() || "<empty>"}; stderr: ${smoke.stderr.trim() || "<empty>"}`;
+      throw new Error(`staged launcher smoke test failed (${details})`);
+    }
     const selectedBinDir = options.binDir ? resolve(options.binDir) : join(nodeHome, "bin");
     const pathWarning = await activate(node, version, nodeHome, stage, stagedLauncher, selectedBinDir, platform, install.path?.modify === true, process.env.HOME || process.env.USERPROFILE || "", smokeTest);
     process.stdout.write(`${pathWarning
