@@ -869,12 +869,7 @@ async function activate(nodeName, version, nodeHome, stagedDir, stagedLauncher, 
     pointerWritten = true;
     const smoke = await run(launcher, smokeTest, { allowFailure: true });
     if (smoke.code !== 0 || smoke.stdout.trim() !== `forge614-${nodeName} ${version}`) {
-      const details = [
-        `exit code: ${smoke.code ?? "unknown"}`,
-        smoke.stdout.trim() ? `stdout: ${smoke.stdout.trim()}` : "",
-        smoke.stderr.trim() ? `stderr: ${smoke.stderr.trim()}` : "",
-      ].filter(Boolean).join("; ");
-      throw new Error(`published launcher smoke test failed (${details})`);
+      throw new Error("published launcher smoke test failed");
     }
     if (launcherBackup) {
       await rm(launcherBackup, { force: true });
@@ -968,10 +963,7 @@ async function main(argv) {
     const stagedLauncher = await prepareAsset(install, asset, name, node, stage, platform);
     const smokeTest = install.smokeTest ?? ["--version"];
     const smoke = await run(stagedLauncher, smokeTest, { allowFailure: true });
-    if (smoke.code !== 0 || smoke.stdout.trim() !== `forge614-${node} ${version}`) {
-      const details = `exit ${smoke.code}; stdout: ${smoke.stdout.trim() || "<empty>"}; stderr: ${smoke.stderr.trim() || "<empty>"}`;
-      throw new Error(`staged launcher smoke test failed (${details})`);
-    }
+    if (smoke.code !== 0 || smoke.stdout.trim() !== `forge614-${node} ${version}`) throw new Error("staged launcher smoke test failed");
     const selectedBinDir = options.binDir ? resolve(options.binDir) : join(nodeHome, "bin");
     const pathWarning = await activate(node, version, nodeHome, stage, stagedLauncher, selectedBinDir, platform, install.path?.modify === true, process.env.HOME || process.env.USERPROFILE || "", smokeTest);
     process.stdout.write(`${pathWarning
