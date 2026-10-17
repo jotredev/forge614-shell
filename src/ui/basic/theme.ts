@@ -294,7 +294,6 @@ export class ChatText extends Markdown {
    */
   constructor(text: string, baseColor: (text: string) => string = foreground, links?: ChatLinks, paddingY = 1, codeUi?: CodeBlockUi) {
     super(text, ...chatMarkdown(baseColor, links, paddingY, codeUi));
-    // Not a parameter property: Pi loads this file with Node's type stripping, which does not support them.
     this.codeUi = codeUi;
     if (links) this.linkView = links.view();
     // The highlight of a button under the pointer is turned off by the links' mouse watching (see `ChatLinks.watchPointer`), which also redraws the screen when it changes.
@@ -305,6 +304,7 @@ export class ChatText extends Markdown {
   }
 
   private readonly pointerClient?: PointerClient;
+  private copyPressActive = false;
 
   /** Lights (or turns off) the button of block `index`; the drawn rows are cached, so they are drawn again. */
   private setHovered(index: number | undefined): void {
@@ -321,13 +321,27 @@ export class ChatText extends Markdown {
 
   /**
    * The pointer over one of the text's links lights it (it never takes that event); over a code block's «Copy» pill it lights the pill; a left click on the pill — any column of it — is taken and reported to
-   * `onCopyBlock`.
+   * `onCopyBlock`. Copy on press: pi-tui treats a release outside the exact pressed cell, a drag, or a second quick click as text selection. Taking the press both prevents that selection and fixes the block's
+   * content to the screen state at the moment the person chose it; movement, scrolling, and streaming before release cannot change what gets copied.
    */
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     this.linkView?.pointer(event);
     if (!this.codeUi) return undefined;
+    if (event.type === "press") this.copyPressActive = false;
     const index = this.buttonAt(event);
     if (event.type === "move" || event.type === "press" || event.type === "release") this.setHovered(index);
+    if (event.type === "press" && event.button === "left" && index !== undefined && this.onCopyBlock) {
+      this.copyPressActive = true;
+      this.onCopyBlock(index, this.codeUi.blocks[index]!.code);
+      return { handled: true, render: true };
+    }
+    if (this.copyPressActive && event.button === "left" && (event.type === "drag" || event.type === "release")) {
+      return { handled: true, render: false };
+    }
+    if (this.copyPressActive && event.type === "click" && event.button === "left") {
+      this.copyPressActive = false;
+      return { handled: true, render: false };
+    }
     if (index === undefined || event.type !== "click" || event.button !== "left" || !this.onCopyBlock) return undefined;
     this.onCopyBlock(index, this.codeUi.blocks[index]!.code);
     return { handled: true, render: true };
