@@ -70,26 +70,26 @@ const runClipboardProgram: ClipboardRunner = (command, args, input) => new Promi
 
 /** The programs that put text on the clipboard of each system, in the order they are tried; no shell is involved in any of them. */
 function clipboardPrograms(platform: NodeJS.Platform): [string, string[]][] {
-  if (platform === "darwin") return [["pbcopy", []]];
+  if (platform === "darwin") return [["/usr/bin/pbcopy", []]];
   if (platform === "linux") return [["wl-copy", []], ["xclip", ["-selection", "clipboard"]]];
   if (platform === "win32") return [[WINDOWS_CLIPBOARD_COMMAND, [...WINDOWS_CLIPBOARD_ARGS]]];
   return [];
 }
 
 /**
- * Copies the text selected with the mouse in the chat to the system's clipboard — the `copySelection` pi-tui's screen asks the app for: `pbcopy` on macOS, `wl-copy` and then
- * `xclip -selection clipboard` on Linux, `powershell.exe` on Windows; the text goes in as the program's input, never through a shell. It answers `true` only when a program ended with status 0. Without
- * a program, or when every one fails, it writes the OSC 52 sequence through `write` (what pi-tui did on its own, and what a terminal that understands it — Orca, a remote session — copies from)
- * and still answers `true`. Never throws: it answers `false` only when even that write fails.
+ * Copies text selected with the mouse, or a code block button, through the system clipboard — `pbcopy` on macOS, `wl-copy` and then `xclip -selection clipboard` on Linux, `powershell.exe` on Windows. The text goes in as
+ * the program's input, never through a shell. With `fallback` enabled (the default for mouse selection), it also writes OSC 52 to the terminal when no system program confirms the copy. A code block button disables that fallback because a
+ * successful terminal write does not prove the system clipboard changed. Never throws: it answers `false` when no enabled method confirms the copy.
  */
 export async function copySelectionText(
   text: string,
-  options: { write: (data: string) => void; platform?: NodeJS.Platform; run?: ClipboardRunner },
+  options: { write: (data: string) => void; platform?: NodeJS.Platform; run?: ClipboardRunner; fallback?: boolean },
 ): Promise<boolean> {
   const run = options.run ?? runClipboardProgram;
   for (const [command, args] of clipboardPrograms(options.platform ?? process.platform)) {
     try { if (await run(command, args, text) === 0) return true; } catch { /* try the next way of copying */ }
   }
+  if (options.fallback === false) return false;
   try {
     options.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
     return true;
@@ -210,14 +210,16 @@ export const WINDOWS_PASTE_SCRIPT = [
 /** The image types a clipboard may offer that Photon can turn into a PNG when there is no `image/png`. */
 const CONVERTIBLE = ["image/jpeg", "image/webp", "image/gif", "image/bmp"];
 
-/** `bytes` as a PNG: as they are when they already are one, converted with Photon (`convertToPng` of pi-coding-agent) when they are another image type; undefined when that cannot be done. */
+/** `bytes` as a PNG: as they are when they already are one, converted with Photon when they are another image type; undefined when that cannot be done. */
 async function asPng(bytes: Buffer, mime: string): Promise<Buffer | undefined> {
   if (bytes.subarray(0, 8).equals(PNG_SIGNATURE)) return bytes;
   if (!CONVERTIBLE.includes(mime)) return undefined;
   try {
-    const { convertToPng } = await import("@earendil-works/pi-coding-agent");
-    const png = await convertToPng(bytes.toString("base64"), mime);
-    const converted = png ? Buffer.from(png.data, "base64") : undefined;
+    const { PhotonImage } = await import("@silvia-odwyer/photon-node");
+    const image = PhotonImage.new_from_byteslice(bytes);
+    let converted: Buffer;
+    try { converted = Buffer.from(image.get_bytes()); }
+    finally { image.free(); }
     return converted?.subarray(0, 8).equals(PNG_SIGNATURE) ? converted : undefined;
   } catch { return undefined; }
 }
