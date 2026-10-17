@@ -61,14 +61,6 @@ export class UserBubble implements Component {
   }
 }
 
-/** Draws `child` at the chat's full width and forwards mouse events at that width. */
-class MouseForwarder implements Component {
-  constructor(private readonly child: ChatText) {}
-  invalidate(): void { this.child.invalidate(); }
-  render(width: number): string[] { return this.child.render(width); }
-  handleMouse(event: TuiMouseEvent) { return this.child.handleMouse(event); }
-}
-
 /** The grey line over an answer with the agent's name and the time, one blank row above it. */
 class MessageStamp implements Component {
   constructor(private readonly stamp: string) {}
@@ -111,7 +103,7 @@ export class AssistantMessage extends Container {
     this.body = new ChatText("", options.baseColor, options.links, 0, this.ui);
     this.body.onCopyBlock = (index, code) => void this.copyBlock(index, code);
     this.addChild(new MessageStamp(messageStamp(options.agent, options.at)));
-    this.addChild(new MouseForwarder(this.body));
+    this.addChild(this.body);
   }
 
   /** The answer as it is now, replacing what was there; `text` is exactly what the agent sent (the caller has only removed terminal control codes). */

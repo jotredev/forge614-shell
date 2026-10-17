@@ -336,6 +336,28 @@ test("el clic en cada botón copia exactamente el contenido original de su bloqu
   void second;
 });
 
+test("AssistantMessage entrega al mismo ChatText el clic de Copiar y el puntero sobre un enlace", async () => {
+  setCapabilityOverrides({ trueColor: true, hyperlinks: true });
+  try {
+    const copied: string[] = [];
+    const links = new ChatLinks({ cwd: process.cwd(), tools: { openWeb: async () => true, openPath: async () => true }, nonce: "message-events" });
+    const message = new AssistantMessage({ agent: "Claude", locale: "es", links, copy: async text => { copied.push(text); return true; }, onChange: () => {} });
+    message.setText("[enlace](https://example.com)\n\n```sh\nbun test\n```");
+    message.complete();
+    const root = new Container();
+    root.addChild(message);
+    const rows = plain(root.render(80));
+    const linkRow = rows.findIndex(row => row.includes("enlace"));
+    const button = buttonsOf(message)[0]!;
+    const move: TuiMouseEvent = { ...click(linkRow, rows[linkRow]!.indexOf("enlace")), type: "move", button: "none" };
+    root.handleMouse(move);
+    expect(message.render(80)[linkRow]).toContain("\x1b[38;2;150;245;247m");
+    expect(root.handleMouse(click(button.y, button.x))?.handled).toBe(true);
+    await Bun.sleep(0);
+    expect(copied).toEqual(["bun test"]);
+  } finally { resetCapabilitiesCache(); }
+});
+
 test("entre la fila del botón y el contenido hay una fila en blanco con el fondo del bloque, y el contenido lleva 2 columnas de relleno a cada lado", () => {
   const { message } = assistant(TWO_BLOCKS);
   const raw = message.render(80);
