@@ -1,1 +1,1 @@
-@echo off & @if exist "%~dp0dist\cli.js" (node "%~dp0dist\cli.js" %*) else (for /f "usebackq delims=" %%V in ("%~dp0..\.active-version") do node "%~dp0..\%%V\forge614-shell-%%V\dist\cli.js" %*) & @exit /b
+(goto) 2>nul & @echo off & @if exist "%~dp0dist\cli.js" (node "%~dp0dist\cli.js" %*) else (for /f "usebackq delims=" %%V in ("%~dp0..\.active-version") do node "%~dp0..\%%V\forge614-shell-%%V\dist\cli.js" %*) & @exit /b
