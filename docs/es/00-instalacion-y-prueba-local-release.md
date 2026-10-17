@@ -50,7 +50,7 @@ forge614-shell uninstall --self   # informa que Shell no tiene integraciones pro
 forge614-shell init --product engram
 ```
 
-`forge614-shell update` verifica el `install.sh` de la versión elegida contra `SHA256SUMS` estricto y siempre pasa al portero la etiqueta `vX.Y.Z` ya resuelta. También actualiza Forge614 Engines y, si está instalado, Forge614 Engram; cada resultado se reporta por separado y los fallos no se presentan como éxitos. Entrada inválida: código 2; error de actualización o desinstalación: código 1; cancelar el uninstall interactivo: código 130.
+`forge614-shell update` verifica el `install.sh` de la versión elegida contra `SHA256SUMS` estricto y siempre pasa al portero la etiqueta `vX.Y.Z` ya resuelta. También actualiza Forge614 Engines y, si está instalado, Forge614 Engram; cada resultado se reporta por separado y los fallos no se presentan como éxitos. Ejecuta `uninstall` desde fuera de `FORGE614_HOME/shell`; en Windows la orden espera a que termine el portero y solo informa que se eliminó cuando esa carpeta ya no existe. Entrada inválida: código 2; error de actualización o desinstalación: código 1; cancelar el uninstall interactivo: código 130.
 
 Los releases de Shell usan etiquetas `vX.Y.Z`. La versión 1.17.0 también publica una sola vez `forge614-shell-1.17.0.tar.gz.sha256` para que el updater incluido en 1.16.0 pueda verificar y descargar el paquete nuevo; el release siguiente elimina ese sidecar de compatibilidad.
 
