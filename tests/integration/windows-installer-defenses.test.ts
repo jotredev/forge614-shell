@@ -6,7 +6,7 @@ test("Windows launcher resolves the active version from bin and finishes its one
   const launcher = await readFile(join(process.cwd(), "scripts", "forge614-shell.cmd"), "utf8");
   const lines = launcher.trim().split(/\r?\n/);
   expect(lines).toHaveLength(1);
-  expect(lines[0]).toStartWith("(goto) 2>nul & @echo off &");
+  expect(lines[0]).toStartWith("@(goto) 2>nul & @echo off &");
   expect(lines[0]).toContain(".active-version");
   expect(lines[0]).toContain('"%~dp0..\\%%V\\forge614-shell-%%V\\dist\\cli.js"');
   expect(lines[0]).toContain("%*");
