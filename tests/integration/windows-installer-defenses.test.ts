@@ -5,10 +5,14 @@ import { join } from "node:path";
 test("Windows launcher resolves the active version from bin and rejects a missing pointer", async () => {
   const launcher = await readFile(join(process.cwd(), "scripts", "forge614-shell.cmd"), "utf8");
   const lines = launcher.trim().split(/\r?\n/);
-  expect(lines[0]).toStartWith("@(goto) 2>nul & @echo off &");
+  expect(lines.at(-1)).toBe('@(goto) 2>nul & node "%cliPath%" %* & @exit /b');
+  expect(launcher.match(/\(goto\) 2>nul/g)).toHaveLength(1);
+  expect(launcher).toContain("@echo off");
+  expect(launcher).toContain("setlocal");
   expect(launcher).toContain(".active-version");
-  expect(launcher).toContain('if exist "%~dp0dist\\cli.js" (');
-  expect(launcher).toContain('"%~dp0..\\%activeVersion%\\forge614-shell-%activeVersion%\\dist\\cli.js"');
+  expect(launcher).toContain('if exist "%~dp0dist\\cli.js" goto useLocalCli');
+  expect(launcher).toContain('set "cliPath=%~dp0..\\%activeVersion%\\forge614-shell-%activeVersion%\\dist\\cli.js"');
+  expect(launcher).toContain('set "cliPath=%~dp0dist\\cli.js"');
   expect(launcher).toContain("if not exist \"%activeVersionFile%\" goto missingVersion");
   expect(launcher).toContain('set "activeVersion="');
   expect(launcher).toContain("if not defined activeVersion goto missingVersion");
