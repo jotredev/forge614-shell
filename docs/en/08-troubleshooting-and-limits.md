@@ -6,6 +6,7 @@ Like a car fault list, this document connects each symptom to the component that
 | --- | --- |
 | Engines absent or schema incompatible | Reinstall Forge614 Shell to repair its dependency; Shell does not search for another executable itself. |
 | No chat assistants | Install and authenticate Claude Code or Codex; Shell lists only assistants Engines reports as fully supported. |
+| `engine-not-fully-supported` | Shell cannot open that id because Engines does not report it as fully supported, or Shell has no adapter for it. Use `claude` or `codex` only when Engines confirms full support. |
 | `init` without an interactive terminal | Run the command in a real terminal; the flow requires selection and confirmation. |
 | No assistants for Engram setup | No installed assistant returned `fullySupported: true`; Engram may still be initialized. |
 | Engines needs to be updated | The installed Engines does not report `fullySupported` (older than 1.14.0). Run `forge614-shell update`. |

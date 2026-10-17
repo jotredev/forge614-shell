@@ -40,6 +40,7 @@ export type ShellErrorCode =
   | "engines-invalid-detection"
   | "engines-incompatible-schema"
   | "engines-unavailable"
+  | "engine-not-fully-supported"
   | "engines-unavailable-at-path"
   | "engines-command-failed"
   | "engines-invalid-plan"

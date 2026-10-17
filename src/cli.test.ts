@@ -23,7 +23,7 @@ test("the init branch's own error catch reports in the locale the person just se
 });
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +45,29 @@ const testEnv = (home: string, locale: string) => ({
   XDG_STATE_HOME: join(home, ".local", "state"),
   FORGE614_HOME: join(home, "forge614"),
   FORGE614_SHELL_LOCALE: locale,
+});
+
+test("explicit unsupported engines fail before startup and leave both temporary homes empty", () => {
+  const home = mkdtempSync(join(tmpdir(), "forge614-shell-cli-engine-preflight-"));
+  const xdg = mkdtempSync(join(tmpdir(), "forge614-shell-cli-engine-xdg-"));
+  try {
+    for (const [engine, message] of [
+      ["pi", "Shell can't open \"pi\": Forge614 Engines does not report it as fully supported."],
+      ["foo", "Shell can't open \"foo\": Forge614 Engines does not report it as fully supported."],
+      ["claude", "Forge614 Engines is unavailable."],
+    ] as const) {
+      const result = spawnSync(process.execPath, [cliPath, "--engine", engine], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000,
+        env: { ...testEnv(home, "en"), XDG_CONFIG_HOME: join(xdg, "config"), XDG_DATA_HOME: join(xdg, "data"), XDG_CACHE_HOME: join(xdg, "cache"), XDG_STATE_HOME: join(xdg, "state") },
+      });
+      expect(result.status, engine).toBe(1);
+      expect(result.stderr, engine).toContain(message);
+      expect(readdirSync(home), engine).toEqual([]);
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(xdg, { recursive: true, force: true });
+  }
 });
 
 /** Idea 7: startup hands the picker the assistant used last time and remembers the one chosen now, both through Shell's preferences file. */

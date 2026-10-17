@@ -152,6 +152,33 @@ export async function discoverSelectableEngines(options: {
   return supported;
 }
 
+/** Checks one explicit chat adapter before terminal setup and returns the executable Engines detected for it. */
+export async function requireFullySupportedEngine(
+  engine: string,
+  options: { home?: string; env?: NodeJS.ProcessEnv; run?: DetectRun; platform?: NodeJS.Platform } = {},
+): Promise<AvailableEngine> {
+  const agentId = Object.keys(supportedShellAdapters).find(id => supportedShellAdapters[id] === engine);
+  if (!agentId) throw new ShellError("engine-not-fully-supported", { engine });
+
+  const binary = enginesBinary(options.home ?? homedir(), options.env, options.platform);
+  const run = options.run ?? defaultRun;
+  const installed = await runDetect(binary, run);
+  const agent = installed.find(item => item.id === agentId);
+  const available = agent && toSelectableAgent(agent);
+  if (!available) throw new ShellError("engine-not-fully-supported", { engine });
+
+  const result = await run(binary, ["capabilities", "--agent", agentId]);
+  if (result.status !== 0) throw new ShellError("engine-not-fully-supported", { engine });
+  let capabilities: unknown;
+  try { capabilities = JSON.parse(result.stdout); }
+  catch { throw new ShellError("engine-not-fully-supported", { engine }); }
+  const fullySupported = capabilities && typeof capabilities === "object"
+    ? (capabilities as { fullySupported?: unknown }).fullySupported
+    : undefined;
+  if (fullySupported !== true) throw new ShellError("engine-not-fully-supported", { engine });
+  return available;
+}
+
 /**
  * `detect` never reports how well an agent is supported — that is a separate per-agent call. This
  * function calls `detect` for the installed agents, then `capabilities --agent <id>` for each one,
