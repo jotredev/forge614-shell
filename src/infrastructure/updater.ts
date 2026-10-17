@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn as spawnAsync, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -157,6 +157,10 @@ async function runPublishedInstaller(action: "update" | "uninstall", options: Ru
         FORGE614_SHELL_GATEKEEPER: gate.installer,
         FORGE614_SHELL_GATEKEEPER_DIR: gate.directory,
       };
+      const workerLog = env.FORGE614_TEST_WINDOWS_UNINSTALL_LOG;
+      if (workerLog) {
+        appendFileSync(workerLog, "parent: launching worker\n");
+      }
       const child = spawnAsync(resolvePowerShellCommand(options.powerShellCommand, env, platform), ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", worker], {
         cwd: env.TEMP || env.TMP || tmpdir(),
         detached: true,
@@ -164,6 +168,10 @@ async function runPublishedInstaller(action: "update" | "uninstall", options: Ru
         windowsHide: true,
         env: workerEnv,
       });
+      if (workerLog) {
+        child.once("spawn", () => appendFileSync(workerLog, "parent: worker process spawned\n"));
+        child.once("error", error => appendFileSync(workerLog, `parent: spawn failed: ${error.message}\n`));
+      }
       child.unref();
       cleanupByWorker = true;
       return { tag };
