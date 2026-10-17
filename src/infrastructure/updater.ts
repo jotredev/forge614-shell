@@ -172,7 +172,8 @@ async function runPublishedInstaller(action: "update" | "uninstall", options: Ru
       });
       if (workerErrorFd !== undefined) closeSync(workerErrorFd);
       if (workerLog) {
-        child.once("spawn", () => appendFileSync(workerLog, "parent: worker process spawned\n"));
+        child.once("spawn", () => appendFileSync(workerLog, `parent: worker process spawned (pid ${child.pid ?? "unknown"})\n`));
+        child.once("exit", (code, signal) => appendFileSync(workerLog, `parent: worker process exited (code ${code ?? "null"}, signal ${signal ?? "none"})\n`));
         child.once("error", error => appendFileSync(workerLog, `parent: spawn failed: ${error.message}\n`));
       }
       child.unref();
