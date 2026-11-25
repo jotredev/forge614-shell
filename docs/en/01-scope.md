@@ -6,7 +6,7 @@ Forge614-Shell is Forge614's terminal workspace with AI-assisted programming cha
 
 ## Current responsibilities
 
-- Starts a chat interface for Claude Code or Codex, two locally installed AI clients.
+- Starts a chat interface for Claude Code, Codex, or Antigravity CLI (`agy`), three locally installed AI clients.
 - Asks Forge614 Engines (the internal dependency that detects assistants and prepares changes) for available assistants.
 - Can initialize Forge614 Engram (the separate persistent-memory engine) through its public CLI and then offer its MCP connection (a protocol that lets an AI client use a local tool).
 - Preserves the sessions and permissions supplied by each native client; it does not invent models, quotas, or permissions.
@@ -16,8 +16,8 @@ Forge614-Shell is Forge614's terminal workspace with AI-assisted programming cha
 - Shell is not a sandbox (an environment that independently prevents dangerous changes); permissions come from the selected client.
 - Shell is not a project, tab, or worktree manager (a Git-separated working copy manager). Each instance works from its own directory.
 - Shell does not store subscription credentials or revoke external accounts. `/logout` disconnects only the Shell session.
-- Gemini and Antigravity are unsupported.
-- Shell lists only the assistants Forge614 Engines reports as fully supported — today Claude Code and Codex. Assistants Engines does not fully support are not offered, neither for chat nor for Engram setup.
+- Gemini CLI is unsupported.
+- Shell lists only the assistants Forge614 Engines reports as fully supported — today Claude Code, Codex, and Antigravity. Assistants Engines does not fully support are not offered, neither for chat nor for Engram setup.
 
 ## Ecosystem relationship
 

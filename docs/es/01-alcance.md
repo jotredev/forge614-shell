@@ -6,7 +6,7 @@ Forge614-Shell es el espacio de terminal con chat para programación asistida po
 
 ## Responsabilidades actuales
 
-- Inicia una interfaz de chat para Claude Code o Codex, dos clientes de IA instalados localmente.
+- Inicia una interfaz de chat para Claude Code, Codex o Antigravity CLI (`agy`), tres clientes de IA instalados localmente.
 - Pide a Forge614 Engines (dependencia interna que detecta asistentes y prepara cambios) la lista de asistentes disponibles.
 - Puede inicializar Forge614 Engram (motor independiente de memoria persistente) mediante su CLI público y, después, ofrecer su conexión MCP (protocolo para que un cliente de IA use una herramienta local).
 - Mantiene las sesiones y permisos que cada cliente nativo proporciona; no inventa modelos, cuotas ni permisos.
@@ -16,8 +16,8 @@ Forge614-Shell es el espacio de terminal con chat para programación asistida po
 - Shell no es un sandbox (entorno que impide por sí mismo cambios peligrosos); los permisos dependen del cliente seleccionado.
 - Shell no es un gestor de proyectos, pestañas o worktrees (copias de trabajo Git separadas). Cada instancia trabaja desde su propio directorio.
 - Shell no almacena credenciales de suscripción ni revoca cuentas externas. `/logout` solo desconecta la sesión de Shell.
-- Gemini y Antigravity no tienen soporte.
-- Shell muestra solo los asistentes que Forge614 Engines informa como de soporte completo — hoy Claude Code y Codex. Los asistentes que Engines no soporta por completo no se ofrecen, ni para chat ni para configurar Engram.
+- Gemini CLI no tiene soporte.
+- Shell muestra solo los asistentes que Forge614 Engines informa como de soporte completo — hoy Claude Code, Codex y Antigravity. Los asistentes que Engines no soporta por completo no se ofrecen, ni para chat ni para configurar Engram.
 
 ## Relación con el ecosistema
 

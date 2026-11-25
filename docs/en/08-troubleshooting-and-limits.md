@@ -5,8 +5,8 @@ Like a car fault list, this document connects each symptom to the component that
 | Symptom | Meaning and action |
 | --- | --- |
 | Engines absent or schema incompatible | Reinstall Forge614 Shell to repair its dependency; Shell does not search for another executable itself. |
-| No chat assistants | Install and authenticate Claude Code or Codex; Shell lists only assistants Engines reports as fully supported. |
-| `engine-not-fully-supported` | Shell cannot open that id because Engines does not report it as fully supported, or Shell has no adapter for it. Use `claude` or `codex` only when Engines confirms full support. |
+| No chat assistants | Install and authenticate Claude Code, Codex, or Antigravity; Shell lists only assistants Engines reports as fully supported. |
+| `engine-not-fully-supported` | Shell cannot open that id because Engines does not report it as fully supported, or Shell has no adapter for it. Use `claude`, `codex`, or `antigravity` only when Engines confirms full support. |
 | `init` without an interactive terminal | Run the command in a real terminal; the flow requires selection and confirmation. |
 | No assistants for Engram setup | No installed assistant returned `fullySupported: true`; Engram may still be initialized. |
 | Engines needs to be updated | The installed Engines does not report `fullySupported` (older than 1.14.0). Run `forge614-shell update`. |
@@ -34,7 +34,7 @@ Like a car fault list, this document connects each symptom to the component that
 
 ## Known limits
 
-Windows x64 has an official installer (`install.ps1`) and native launcher (`forge614-shell.cmd`), continuously verified in native CI (`windows-latest`) alongside macOS and Linux. However, interactive chat with real assistant accounts (Claude Code, Codex) and specific terminal emulators still requires manual verification with external accounts. Shell does not include a worktree manager, local engines, or an MCP-removal UI. `forge614-ai` does not own `forge614 init` yet.
+Windows x64 has an official installer (`install.ps1`) and native launcher (`forge614-shell.cmd`), continuously verified in native CI (`windows-latest`) alongside macOS and Linux. However, interactive chat with real assistant accounts (Claude Code, Codex, Antigravity) and specific terminal emulators still requires manual verification with external accounts. Antigravity CLI (`agy acp`) does not emit background-task lifecycle events, so Shell honestly displays "This engine doesn't report background activity.". Shell does not include a worktree manager, local engines, or an MCP-removal UI. `forge614-ai` does not own `forge614 init` yet.
 
 ## Maintenance verification
 

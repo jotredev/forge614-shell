@@ -1,6 +1,6 @@
 import type { McpServerState } from "./mcp-status.ts";
 
-export type NativeId = "codex";
+export type NativeId = "codex" | "antigravity";
 export interface NativeModel { id: string; name: string; efforts?: string[]; defaultEffort?: string }
 /**
  * How a work mode is drawn (color and help line), chosen by the adapter that lists it. It is a coarse

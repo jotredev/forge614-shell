@@ -37,6 +37,16 @@ export type ShellErrorCode =
   | "codex-requires-login-no-fallback"
   | "codex-unexpected-provider"
   | "codex-unsupported-request"
+  | "antigravity-env-conflict"
+  | "antigravity-subscription-required"
+  | "antigravity-login-exit-code"
+  | "antigravity-requires-login-to-send"
+  | "antigravity-turn-busy"
+  | "antigravity-model-unknown"
+  | "antigravity-effort-unknown"
+  | "antigravity-mode-unknown"
+  | "antigravity-mode-rejected"
+  | "antigravity-turn-failed"
   | "engines-invalid-detection"
   | "engines-incompatible-schema"
   | "engines-unavailable"
@@ -1077,5 +1087,34 @@ export interface Catalog {
     waitForCurrentOperationToFinish: string;
     toolFallbackTitle: string;
     toolFallbackDetail: string;
+  };
+  /** Antigravity's own session layer (`src/engines/antigravity/session.ts`) — status lines, login flow narration, and stop outcomes. */
+  antigravitySession: {
+    notLoggedIn: string;
+    tokensNotReported: string;
+    googleAccount: (params: { plan: string }) => string;
+    planNotReported: string;
+    loginRequired: string;
+    connectedExistingAccount: string;
+    openingOfficialLogin: string;
+    loginCompleted: string;
+    loginNotVerified: string;
+    loginFailed: (params: { detail: string }) => string;
+    logoutCancelled: string;
+    disconnectedLocally: string;
+    disconnectedShort: string;
+    disconnectedStatus: string;
+    modelEffortLine: (params: { model: string; effort: string }) => string;
+    engineDefault: string;
+    costNotReported: string;
+    sessionTokensLine: (params: { input: string; cached: string; output: string; lastContext: string; window: string }) => string;
+    folderLine: (params: { path: string }) => string;
+    workModeLine: (params: { mode: string }) => string;
+    conversationLine: (params: { id: string }) => string;
+    conversationNotStarted: string;
+    stopNoAnswer: string;
+    stopReconnected: string;
+    stopNoActiveTurn: string;
+    stopNotFinished: string;
   };
 }

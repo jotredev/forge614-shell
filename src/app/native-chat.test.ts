@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { codexStartupContext, createCodexSession } from "./native-chat.ts";
+import { antigravityStartupContext, codexStartupContext, createAntigravitySession, createCodexSession } from "./native-chat.ts";
 import { FixtureRpc } from "../../tests/support/rpc-fixture.ts";
 import { ShellError } from "../shell-error.ts";
 
@@ -118,4 +118,48 @@ test("createCodexSession opens the app-server again after a stop Codex never ans
   expect(started).toEqual([{ id: "codex", executable: "/bin/codex", cwd: "/project" }, { id: "codex", executable: "/bin/codex", cwd: "/project" }]);
   expect(second.calls.find(call => call.method === "thread/resume")!.params).toMatchObject({ threadId: "t" });
   expect(events.filter(event => event.type === "text").map(event => event.text)).toEqual([expect.stringContaining("reconnected to Codex")]);
+}));
+
+/**
+ * Verifies Antigravity's composition root forwards Shell's real `process.env` (respecting a custom
+ * `FORGE614_HOME`) to `getStartupContext` and wires `createAntigravitySession` with the process
+ * starter and TUI-suspending login runner.
+ */
+test("antigravityStartupContext respects custom FORGE614_HOME and createAntigravitySession wires start and login suspension", () => withEnvVar("FORGE614_HOME", "/custom/forge-for-agy-test", async () => {
+  const calls: string[] = [];
+  const result = await antigravityStartupContext("/some/project", {
+    run: async command => { calls.push(command); return { status: 0, stdout: unboundPayload, stderr: "" }; },
+  });
+  expect(calls).toEqual([join("/custom/forge-for-agy-test", "engram", "bin", expectedEngramBinaryName)]);
+  expect(result.available).toBe(true);
+
+  const started: { id: string; executable: string; cwd: string }[] = [];
+  const rpc = new FixtureRpc();
+  let signedIn = false;
+  rpc.replies.set("initialize", { protocolVersion: 1, agentCapabilities: {} });
+  rpc.handler = async method => {
+    if (method === "session/new") {
+      if (!signedIn) throw new Error("Authentication required");
+      return { sessionId: "agy-1", models: { availableModels: [] }, configOptions: [] };
+    }
+    return rpc.replies.get(method);
+  };
+  let suspended = 0;
+  let loggedIn = 0;
+  const session = createAntigravitySession(
+    "/usr/local/bin/agy",
+    "/project",
+    () => {},
+    async () => false,
+    "en",
+    (id, executable, cwd) => { started.push({ id, executable, cwd }); return rpc; },
+    async work => { suspended++; return work(); },
+    async () => { loggedIn++; signedIn = true; },
+  );
+  expect(started).toEqual([{ id: "antigravity", executable: "/usr/local/bin/agy", cwd: "/project" }]);
+  await session.initialize();
+  await session.login();
+  expect(suspended).toBe(1);
+  expect(loggedIn).toBe(1);
+  expect(session.sessionId).toBe("agy-1");
 }));

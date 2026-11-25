@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { JsonRpcPeer } from "../infrastructure/rpc.ts";
+import { antigravityEnvironment, checkAntigravitySettings } from "./antigravity/auth.ts";
+import type { NativeId } from "./types.ts";
 
 export function nativeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const pattern = /^(OPENAI_API_KEY|CODEX_API_KEY|CODEX_ACCESS_TOKEN|OPENAI_BASE_URL|OPENAI_CUSTOM_HEADERS|CODEX_AUTH_JSON|CODEX_AUTH_TOKEN)$/i;
@@ -8,11 +10,28 @@ export function nativeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return { ...env };
 }
 
-export function startNativeProcess(id: "codex", executable: string, cwd: string, env: NodeJS.ProcessEnv, diagnostic: (text: string) => void) {
-  const args = ["app-server", "-c", 'model_provider="openai"', "-c", 'forced_login_method="chatgpt"'];
+/**
+ * Starts the native stdio JSON-RPC server for a Shell-supported native engine:
+ * - `"codex"`: `codex app-server` (unversioned JSON-RPC) with OpenAI/ChatGPT subscription checks.
+ * - `"antigravity"`: `agy acp` (JSON-RPC 2.0) with Antigravity Google subscription checks.
+ */
+export function startNativeProcess(id: NativeId, executable: string, cwd: string, env: NodeJS.ProcessEnv, diagnostic: (text: string) => void) {
+  let cleanEnv: NodeJS.ProcessEnv;
+  let args: string[];
+  let jsonRpcVersion: boolean;
+  if (id === "antigravity") {
+    cleanEnv = antigravityEnvironment(env);
+    checkAntigravitySettings({ env: cleanEnv });
+    args = ["acp"];
+    jsonRpcVersion = true;
+  } else {
+    cleanEnv = nativeEnvironment(env);
+    args = ["app-server", "-c", 'model_provider="openai"', "-c", 'forced_login_method="chatgpt"'];
+    jsonRpcVersion = false;
+  }
   const nodeEntry = /\.m?js$/i.test(executable);
-  const child = spawn(nodeEntry ? process.execPath : executable, nodeEntry ? [executable, ...args] : args, { cwd, env: nativeEnvironment(env), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-  const rpc = new JsonRpcPeer(child.stdout, child.stdin, false);
+  const child = spawn(nodeEntry ? process.execPath : executable, nodeEntry ? [executable, ...args] : args, { cwd, env: cleanEnv, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  const rpc = new JsonRpcPeer(child.stdout, child.stdin, jsonRpcVersion);
   // Do not print raw engine logs: they can contain private settings or credentials.
   child.stderr.resume();
   child.once("error", () => { diagnostic(`Could not launch ${id}. Check its installation.`); rpc.close(); });

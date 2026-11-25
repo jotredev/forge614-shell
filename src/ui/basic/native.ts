@@ -54,7 +54,7 @@ const realLocalTools: CodexLocalTools = {
 };
 
 export async function runNativeUI(
-  id: NativeId, cwd: string, createSession: (emit: Emit, approve: Approve, askQuestions: AskAgentQuestions) => NativeSession,
+  id: NativeId, cwd: string, createSession: (emit: Emit, approve: Approve, askQuestions: AskAgentQuestions, runInteractive?: <T>(work: () => Promise<T>) => Promise<T>) => NativeSession,
   terminal: Terminal = new ProcessTerminal(),
   version?: string,
   locale: Locale = "en",
@@ -92,8 +92,8 @@ export async function runNativeUI(
   const { input } = composer;
   // ↑/↓ bring back what the person sent, kept between runs for this project folder; `rememberInput` is called with each message or command sent (never with the answer to a question).
   const rememberInput = attachInputHistory(input, cwd, { env: process.env });
-  const engineLabel = "Codex";
-  // Codex has no `/login`: Shell's own `/f614:login` connects the account, and it is the command every «not connected» text names.
+  const engineLabel = id === "antigravity" ? "Antigravity" : "Codex";
+  // Codex and Antigravity have no bare `/login`: Shell's own `/f614:login` connects the account, and it is the command every «not connected» text names.
   const shellState = new ShellState(engineLabel, "/f614:login");
   const sidebar = new ShellSidebar(() => shellState.snapshot(), cwd, process.env.HOME, locale);
   // The sidebar's width and whether it is hidden come back from the preferences and are saved when the person lets go of the grip or clicks a button; the footer takes the sidebar's data while it is not drawn.
@@ -105,10 +105,21 @@ export async function runNativeUI(
   attachStatusPanels(tui, panels, { chatWidth: () => sidebarLayout.chatWidth() });
   tui.setFocus(input);
   // With Codex the menu is Codex's own list (names, descriptions and order as its terminal shows them on macOS);
-  // what is Shell's own sits apart under FORGE614, every one of them with the `/f614:` prefix (a command without it is Codex's).
-  // `/f614:stop` cancels the answer in progress (`/stop` is Codex's) and `/f614:quit` leaves Shell, asking first if work is running (`/quit` is Codex's).
+  // with Antigravity it lists Antigravity's native session controls. What is Shell's own sits apart under FORGE614,
+  // every one of them with the `/f614:` prefix.
+  const engineCommands = id === "antigravity"
+    ? [
+        { value: "/model", label: t.commandSelectModel },
+        { value: "/effort", label: t.commandSelectReasoning },
+        { value: "/resume", label: t.commandChatHistory },
+        { value: "/new", label: t.commandNewConversation },
+        { value: "/status", label: t.commandShowStatus },
+        { value: "/logout", label: t.commandDisconnectLocally },
+        { value: "/exit", label: t.commandExitShell },
+      ]
+    : codexMenuCommands();
   input.setCommandGroups([
-    { title: engineLabel.toUpperCase(), items: codexMenuCommands() },
+    { title: engineLabel.toUpperCase(), items: engineCommands },
     { title: "FORGE614", items: [
       { value: "/f614:login", label: t.commandConnectAccount }, { value: "/f614:refresh", label: t.commandRefreshPlanUsage },
       { value: "/f614:commands", label: t.commandBrowseCommands }, { value: "/f614:stop", label: t.commandCancelActiveTurn },
@@ -302,9 +313,8 @@ export async function runNativeUI(
   // Remembers the person's own /model and /effort picks across Shell restarts — see claude.ts for
   // why this lives in Shell's own preferences file rather than the native CLI's config.
   const persistPreference = () => {
-    if (id !== "codex") return;
     const visual = session.visual?.();
-    saveEnginePreference("codex", { model: visual?.model, effort: visual?.reasoning }, { env: process.env });
+    saveEnginePreference(id, { model: visual?.model, effort: visual?.reasoning }, { env: process.env });
   };
   /** The session seen only as far as work modes go, so the shared cycle/restore steps know nothing about Codex. */
   const workModeControl = (): WorkModeControl | undefined => session.workModes && session.setWorkMode
@@ -360,13 +370,23 @@ export async function runNativeUI(
     await session.setModel(selected);
     persistPreference();
     const model = session.models.find(item => item.id === selected);
-    if (id === "codex" && model?.efforts?.length) {
+    if ((id === "codex" || id === "antigravity") && model?.efforts?.length) {
       const effort = await input.choose(t.commandSelectReasoning, model.efforts.map(value => ({
         value, display: effortLabel(value, locale), label: effortDescription(value, locale),
-      })), model.defaultEffort);
+      })), session.visual?.().reasoning ?? model.defaultEffort);
       if (effort) { await session.setEffort(effort); persistPreference(); }
     }
     applies();
+  };
+  /** `/effort`: picks or sets the thinking/reasoning effort for the active model (Antigravity). */
+  const chooseEffort = async (argument: string) => {
+    if (argument) { await session.setEffort(argument); persistPreference(); return; }
+    const activeModel = session.models.find(item => item.id === session.visual?.().model);
+    if (!activeModel?.efforts?.length) { write(getCatalog(locale).claudeChat.noReasoningOptions); return; }
+    const selected = await input.choose(t.commandSelectReasoning, activeModel.efforts.map(value => ({
+      value, display: effortLabel(value, locale), label: effortDescription(value, locale),
+    })), session.visual?.().reasoning ?? activeModel.defaultEffort);
+    if (selected) { await session.setEffort(selected); persistPreference(); }
   };
   /** `/resume`: also allowed while Codex works (`available_during_task`); the view moves to the chosen conversation. */
   const chooseSession = async (argument: string) => {
@@ -405,7 +425,7 @@ export async function runNativeUI(
   };
   const command = async (value: string) => {
     const [name, ...parts] = value.trim().split(/\s+/); const argument = parts.join(" ");
-    const official = findCodexCommand((name ?? "").slice(1));
+    const official = id === "codex" ? findCodexCommand((name ?? "").slice(1)) : undefined;
     // With a side conversation on screen only the commands Codex keeps there work (`available_in_side_conversation`); the others answer honestly, and Ctrl+C returns to the main thread.
     // A watched subagent follows the same rule, and `/subagents` is how the person goes back or to another one. Shell's own `/f614:` commands are not Codex's and are never held back.
     const detour = session.detour?.();
@@ -439,9 +459,9 @@ export async function runNativeUI(
     // Codex's own commands that Shell has connected: Codex says which of them may run while it works.
     // A command of Codex's own screen (keyboard, window, desktop, debug) has no app-server method: say exactly that.
     if (official?.screenOnly) { write(getCatalog(locale).codexCommands.screenOnly({ name: name ?? "" })); return; }
-    if (name === "/model" || name === "/resume") {
+    if (name === "/model" || name === "/resume" || (id === "antigravity" && name === "/effort")) {
       if (!ready) throw new Error(tc.waitForEngine);
-      await (name === "/model" ? chooseModel(argument) : chooseSession(argument));
+      await (name === "/model" ? chooseModel(argument) : name === "/effort" ? chooseEffort(argument) : chooseSession(argument));
       refresh();
       return;
     }
@@ -477,7 +497,12 @@ export async function runNativeUI(
       else throw new Error(t.unknownCommand({ name: name ?? "" }));
     } finally { commandBusy = false; refresh(); }
   };
-  session = createSession(emit, approve, (questions, signal) => askAgentQuestions(input, questions, signal, locale));
+  const runInteractive = async <T>(work: () => Promise<T>): Promise<T> => {
+    tui.stop({ preserveScreen: true });
+    try { return await work(); }
+    finally { if (!closed) { tui.start(); tui.setFocus(input); } }
+  };
+  session = createSession(emit, approve, (questions, signal) => askAgentQuestions(input, questions, signal, locale), runInteractive);
   const handlers = codexCommandHandlers({
     session, cwd, locale, local,
     write: text => { write(text); },
@@ -527,10 +552,10 @@ export async function runNativeUI(
     const control = collaboration ?? workModeControl();
     const result = control ? await cycleWorkMode(control) : undefined;
     if (!result) return;
-    if (collaboration) saveEngineCollaborationMode("codex", result.mode.id, { env: process.env });
+    if (collaboration) saveEngineCollaborationMode(id, result.mode.id, { env: process.env });
     else {
       const modeId = session.workMode?.();
-      if (modeId) saveEngineMode("codex", modeId, { env: process.env });
+      if (modeId) saveEngineMode(id, modeId, { env: process.env });
     }
     if (result.change === "next-turn") write(t.workModeNextTurn({ mode: result.mode.label }));
     refresh();
@@ -560,29 +585,29 @@ export async function runNativeUI(
   try {
     refresh(); tui.start();
     void session.initialize().then(async () => {
-      if (id === "codex") {
-        const saved = loadEnginePreference("codex", { env: process.env });
-        const model = saved?.model && session.models.some(item => item.id === saved.model) ? saved.model : undefined;
-        if (model) {
-          try {
-            await session.setModel(model);
-            if (saved?.effort) await session.setEffort(saved.effort);
-          } catch { /* stale preference from an older catalog — ignore, keep the engine's own default */ }
-        }
-        // The last work mode comes back without asking. One Codex no longer offers (Read Only on macOS) comes back as
-        // «Ask for approval», said once: the replacement is saved, so the next opening restores it silently.
-        const control = workModeControl();
-        if (control && !await restoreWorkMode(control, saved?.mode) && saved?.mode) {
-          const fallback = session.fallbackWorkMode?.();
-          if (fallback && await restoreWorkMode(control, fallback)) {
-            saveEngineMode("codex", fallback, { env: process.env });
-            write(getCatalog(locale).codexCommands.retiredModeReplaced({ mode: control.workModes().find(mode => mode.id === fallback)?.label ?? fallback }));
-          }
-        }
-        // The collaboration mode (Plan / Default) comes back too; one Codex no longer lists leaves Default.
-        const collaboration = collaborationControl();
-        if (collaboration) await restoreWorkMode(collaboration, saved?.collaborationMode);
+      const saved = loadEnginePreference(id, { env: process.env });
+      const model = saved?.model && session.models.some(item => item.id === saved.model) ? saved.model : undefined;
+      if (model) {
+        try {
+          await session.setModel(model);
+          if (saved?.effort) await session.setEffort(saved.effort);
+        } catch { /* stale preference from an older catalog — ignore, keep the engine's own default */ }
+      } else if (saved?.effort && id === "antigravity") {
+        try { await session.setEffort(saved.effort); } catch { /* ignore unsupported saved effort */ }
       }
+      // The last work mode comes back without asking. One Codex no longer offers (Read Only on macOS) comes back as
+      // «Ask for approval», said once: the replacement is saved, so the next opening restores it silently.
+      const control = workModeControl();
+      if (control && !await restoreWorkMode(control, saved?.mode) && saved?.mode) {
+        const fallback = session.fallbackWorkMode?.();
+        if (fallback && await restoreWorkMode(control, fallback)) {
+          saveEngineMode(id, fallback, { env: process.env });
+          write(getCatalog(locale).codexCommands.retiredModeReplaced({ mode: control.workModes().find(mode => mode.id === fallback)?.label ?? fallback }));
+        }
+      }
+      // The collaboration mode (Plan / Default) comes back too; one Codex no longer lists leaves Default.
+      const collaboration = collaborationControl();
+      if (collaboration) await restoreWorkMode(collaboration, saved?.collaborationMode);
       ready = true; refresh(); loadSkillChoices();
       // The conversation opens in the background first (Codex only starts its MCP servers then), and the MCP servers' states for the bottom bar are read once right after, with its id; after that only the assistant's own
       // notices change them (never after each message). When it cannot be opened the list is asked the same, without a conversation.

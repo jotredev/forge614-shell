@@ -5,8 +5,8 @@ Como una lista de averías de automóvil, este documento conecta cada síntoma c
 | Síntoma | Significado y acción |
 | --- | --- |
 | Engines ausente o esquema incompatible | Reinstala Forge614 Shell para reparar su dependencia; Shell no busca otro ejecutable por su cuenta. |
-| No hay asistentes de chat | Instala y autentica Claude Code o Codex; Shell lista solo los asistentes que Engines informa como de soporte completo. |
-| `engine-not-fully-supported` | Shell no puede abrir ese id porque Engines no lo informa como compatible en su totalidad o Shell no tiene un adaptador para él. Usa `claude` o `codex` solo si Engines confirma el soporte completo. |
+| No hay asistentes de chat | Instala y autentica Claude Code, Codex o Antigravity; Shell lista solo los asistentes que Engines informa como de soporte completo. |
+| `engine-not-fully-supported` | Shell no puede abrir ese id porque Engines no lo informa como compatible en su totalidad o Shell no tiene un adaptador para él. Usa `claude`, `codex` o `antigravity` solo si Engines confirma el soporte completo. |
 | `init` sin terminal interactivo | Ejecuta el comando en una terminal real; el flujo requiere selección y confirmación. |
 | No hay asistentes para configurar Engram | Ningún asistente instalado respondió `fullySupported: true`; Engram ya puede estar inicializado. |
 | Engines necesita actualizarse | El Engines instalado no informa `fullySupported` (anterior a 1.14.0). Ejecuta `forge614-shell update`. |
@@ -34,7 +34,7 @@ Como una lista de averías de automóvil, este documento conecta cada síntoma c
 
 ## Límites conocidos
 
-Windows x64 cuenta con instalador oficial (`install.ps1`) y lanzador nativo (`forge614-shell.cmd`), verificados de forma continua en CI nativa (`windows-latest`) junto con macOS y Linux. No obstante, el chat interactivo con cuentas reales de asistentes (Claude Code, Codex) y emuladores de terminal concretos aún requiere comprobación manual con cuentas externas. Shell no incluye gestor de worktrees, motores locales ni interfaz de eliminación MCP. `forge614-ai` aún no posee `forge614 init`.
+Windows x64 cuenta con instalador oficial (`install.ps1`) y lanzador nativo (`forge614-shell.cmd`), verificados de forma continua en CI nativa (`windows-latest`) junto con macOS y Linux. No obstante, el chat interactivo con cuentas reales de asistentes (Claude Code, Codex, Antigravity) y emuladores de terminal concretos aún requiere comprobación manual con cuentas externas. Antigravity CLI (`agy acp`) no emite eventos de ciclo de vida de tareas en segundo plano, por lo que Shell muestra el aviso «Este motor no informa actividad en segundo plano.». Shell no incluye gestor de worktrees, motores locales ni interfaz de eliminación MCP. `forge614-ai` aún no posee `forge614 init`.
 
 ## Verificación de mantenimiento
 

@@ -136,7 +136,7 @@ const en: Catalog = {
     startFailed: ({ message }) => `forge614-shell init could not start the interactive terminal session: ${message}`,
   },
   options: {
-    engineInvalidValue: "--engine must be claude or codex.",
+    engineInvalidValue: "--engine must be claude, codex, or antigravity.",
     engineSpecifiedTwice: "Specify --engine only once.",
   },
   logout: {
@@ -176,6 +176,16 @@ const en: Catalog = {
     "codex-requires-login-no-fallback": () => "Use /f614:login with ChatGPT before sending a message. No API fallback was used.",
     "codex-unexpected-provider": () => "Expected the official OpenAI provider; refusing to send a prompt.",
     "codex-unsupported-request": () => "Unsupported engine request.",
+    "antigravity-env-conflict": ({ keys }) => `Subscription mode cannot start with these overrides: ${keys}. Use a clean terminal; no account settings were changed.`,
+    "antigravity-subscription-required": () => "This connector requires a native Antigravity Google subscription account, not Gemini API key mode (modelProvider). Check ~/.gemini/antigravity-cli/settings.json and use /f614:login.",
+    "antigravity-login-exit-code": ({ code }) => `Antigravity login exited with code ${code}.`,
+    "antigravity-requires-login-to-send": () => "Use /f614:login to connect your Google subscription account before sending a message. No API key fallback was used.",
+    "antigravity-turn-busy": () => "Finish or /f614:stop the active turn first.",
+    "antigravity-model-unknown": () => "Choose an available model from /model.",
+    "antigravity-effort-unknown": () => "Choose a supported reasoning level for the active model.",
+    "antigravity-mode-unknown": () => "Choose a mode reported by Antigravity.",
+    "antigravity-mode-rejected": () => "Antigravity did not accept that work mode. The previous one stays.",
+    "antigravity-turn-failed": () => "Antigravity turn failed.",
     "engines-invalid-detection": () => "Forge614 Engines returned an invalid detection result.",
     "engines-incompatible-schema": () => "Forge614 Engines is incompatible with this Shell version. Reinstall Forge614 Shell to repair its required dependency.",
     "engines-unavailable": () => "Forge614 Engines is unavailable. Reinstall Forge614 Shell to repair its required dependency.",
@@ -215,12 +225,12 @@ const en: Catalog = {
     engineNotOnPath: ({ engine }) => `${engine} is not installed on PATH.`,
     help: ({ version }) => `Forge614-Shell ${version}
 
-Usage: forge614-shell [--engine claude|codex]
+Usage: forge614-shell [--engine claude|codex|antigravity]
 
 Every interactive startup asks for visual interface, then installed AI engine.
 Basic is available; Full — Coming later is disabled.
 Shell remembers the assistant you used last (it comes highlighted) and each assistant's model, reasoning and work mode. It still asks every time: even a single available option waits for confirmation.
-The selected native CLI must already be installed. Sign-in (/login in Claude Code, /f614:login in Codex) uses its official account flow.
+The selected native CLI must already be installed. Sign-in (/login in Claude Code, /f614:login in Codex and Antigravity) uses its official account flow.
 Shell does not store subscription credentials or manage billing.
 
   --engine <name>      Legacy option; does not bypass interactive selectors
@@ -236,11 +246,12 @@ The first interactive run asks for a language (Español/English) and remembers i
 without saving. --help, --version, update, and uninstall never open the selector, but they
 do use a saved or overridden language for their own text when one is already known.
 
-Native chat: a command without a prefix is the selected assistant's own and works as in its terminal (/model, /resume, /new, /status, /logout, /quit, /exit; in Claude Code also /login and /effort).
-Shell's own commands start with /f614: — /f614:login (Codex), /f614:status (Claude Code), /f614:refresh, /f614:stop, /f614:quit, /f614:commands, /f614:help, /f614:yes, /f614:no.
+Native chat: a command without a prefix is the selected assistant's own and works as in its terminal (/model, /resume, /new, /status, /logout, /quit, /exit; in Claude Code also /login and /effort; in Antigravity also /effort).
+Shell's own commands start with /f614: — /f614:login (Codex, Antigravity), /f614:status (Claude Code), /f614:refresh, /f614:stop, /f614:quit, /f614:commands, /f614:help, /f614:yes, /f614:no.
 /logout disconnects only the current Shell session; native accounts and other apps are unchanged.
 Claude sessions: managed by Claude Code, shared with its native history.
 Codex: native history, model catalog, reasoning and reported account limits.
+Antigravity: native ACP sessions, model catalog, reasoning levels and work modes.
 Login reuses existing accounts.
 Starting a chat needs an interactive terminal; without one Shell refuses to start.
 
@@ -259,7 +270,7 @@ The selected engine's project settings and permissions apply. This is not a sand
   enginePicker: {
     title: "Choose your AI engine",
     lastUsed: "last used",
-    noEnginesFound: "Forge614 Engines found no Shell-compatible AI engines. Install Claude Code or Codex, then restart Forge614-Shell.",
+    noEnginesFound: "Forge614 Engines found no Shell-compatible AI engines. Install Claude Code, Codex, or Antigravity, then restart Forge614-Shell.",
   },
   chat: {
     genericCommandLabel: "Claude Code command",
@@ -1008,6 +1019,34 @@ The selected engine's project settings and permissions apply. This is not a sand
     waitForCurrentOperationToFinish: "Wait for the current operation to finish, or use /f614:stop.",
     toolFallbackTitle: "Tool",
     toolFallbackDetail: "Working",
+  },
+  antigravitySession: {
+    notLoggedIn: "Not logged in. Use /f614:login.",
+    tokensNotReported: "Tokens / context: not reported",
+    googleAccount: ({ plan }) => `Google account · ${plan}`,
+    planNotReported: "plan not reported",
+    loginRequired: "Google subscription login required; API-key mode is not used. Type /f614:login.",
+    connectedExistingAccount: "Connected to Antigravity in Shell using your existing Google account. No new login is needed.",
+    openingOfficialLogin: "Antigravity sign-in is required. Opening the official Google login flow; return here after completing it.",
+    loginCompleted: "Antigravity Google login completed. Account and billing remain managed by Google.",
+    loginNotVerified: "Login was not verified. Use /f614:login to retry.",
+    loginFailed: ({ detail }) => `Login failed: ${detail}`,
+    logoutCancelled: "Logout cancelled. No account changes were requested.",
+    disconnectedLocally: "Disconnected locally from Antigravity in this Shell session. Your native account and other applications are unchanged. Use /f614:login to reconnect.",
+    disconnectedShort: "Disconnected locally · use /f614:login to reconnect Shell",
+    disconnectedStatus: "Disconnected locally · use /f614:login to reconnect Shell. Native account unchanged.",
+    modelEffortLine: ({ model, effort }) => `Model: ${model} · effort: ${effort}`,
+    engineDefault: "engine default",
+    costNotReported: "Cost: not reported by the engine; plan billing remains with Google.",
+    sessionTokensLine: ({ input, cached, output, lastContext, window }) => `Session tokens: input ${input} · cached ${cached} · output ${output}\nLast context: ${lastContext} / ${window}`,
+    folderLine: ({ path }) => `Folder: ${path}`,
+    workModeLine: ({ mode }) => `Work mode: ${mode}`,
+    conversationLine: ({ id }) => `Conversation: ${id}`,
+    conversationNotStarted: "not started yet",
+    stopNoAnswer: "Antigravity did not answer the stop request, so Shell ended the turn on its side and closed the connection. Restart Shell to keep working.",
+    stopReconnected: "Antigravity did not answer the stop request, so Shell ended the turn on its side and reconnected to Antigravity. Your conversation is still here.",
+    stopNoActiveTurn: "Antigravity says no turn was running, so Shell ended the turn on its side.",
+    stopNotFinished: "Antigravity accepted the stop request but did not finish the turn, so Shell ended the turn on its side.",
   },
 };
 

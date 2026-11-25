@@ -35,6 +35,7 @@ interface McpApplyPayload {
 const supportedShellAdapters: Record<string, AvailableEngine["id"]> = {
   "claude-code": "claude",
   codex: "codex",
+  antigravity: "antigravity",
 };
 
 const execFileAsync = promisify(execFile);

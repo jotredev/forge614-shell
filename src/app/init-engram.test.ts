@@ -1199,6 +1199,75 @@ test("evidence-expired for an already-fully-configured Claude Code is reported r
   expect(terminal.output).toContain("Claude Code: ready — Claude Code memory integration is ready. It finishes confirming itself the next time you use Claude Code normally.");
 });
 
+/**
+ * Verifies `init --product engram` handles Antigravity end-to-end without assuming Claude Code or
+ * Codex: detects it from Engines (`fullySupported: true`), plans/applies/verifies once, never
+ * exposes `writes[].afterContent`, and reports `ready` when runtime evidence is not yet observed.
+ */
+test("Antigravity is detected, configured, verified once without launching agy or exposing afterContent", async () => {
+  const terminal = new TestTerminal();
+  let verifyCalls = 0;
+  const run = runInitCommand(["--product", "engram"], {
+    terminal, home: "/Users/tester",
+    run: async () => ({ status: 0, stdout: "{}", stderr: "" }),
+    enginesRun: async (_command, args) => {
+      if (args[0] === "detect") {
+        return {
+          status: 0,
+          stdout: JSON.stringify(detectPayload([{ id: "antigravity", label: "Antigravity", executable: "/Users/tester/.local/bin/agy" }])),
+          stderr: "",
+        };
+      }
+      if (args[0] === "capabilities") return { status: 0, stdout: JSON.stringify(capabilitiesPayload("antigravity")), stderr: "" };
+      if (args[0] === "plan") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            schemaVersion: 1,
+            plan: {
+              planId: "plan-antigravity",
+              agentId: "antigravity",
+              action: "memory-install",
+              noop: false,
+              writes: [{ path: "/Users/tester/.gemini/config/mcp_config.json", beforeHash: "h1", afterContent: "PRIVATE_TOKEN_MUST_NOT_APPEAR" }],
+              metadata: {
+                mcp: { path: "/Users/tester/.gemini/config/mcp_config.json", status: { kind: "write" } },
+                instructions: { paths: ["/Users/tester/.gemini/config/AGENTS.md"], status: { kind: "write" } },
+                hook: { path: "/Users/tester/.gemini/config/hooks.json", status: { kind: "write" }, runtimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } },
+                overallStatus: "complete",
+              },
+            },
+          }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "apply") return { status: 0, stdout: JSON.stringify(applyPayload("plan-antigravity")), stderr: "" };
+      verifyCalls += 1;
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          schemaVersion: 1,
+          verification: {
+            agentId: "antigravity",
+            mcp: { path: "/Users/tester/.gemini/config/mcp_config.json", present: true },
+            instructions: { supported: true, paths: ["/Users/tester/.gemini/config/AGENTS.md"], present: true },
+            hook: { supported: true, path: "/Users/tester/.gemini/config/hooks.json", present: true, dryRunOk: true, runtimeStatus: { kind: "pending-runtime-verification", reason: "no-evidence" } },
+            overallStatus: "complete",
+          },
+        }),
+        stderr: "",
+      };
+    },
+  });
+  await driveEngramScreens(terminal);
+  await submitPicker(terminal);
+  await confirmPreview(terminal);
+  await run;
+  expect(verifyCalls).toBe(1);
+  expect(terminal.output).toContain("Antigravity: ready — Antigravity memory integration is ready.");
+  expect(terminal.output).not.toContain("PRIVATE_TOKEN_MUST_NOT_APPEAR");
+});
+
 test("Codex's expired evidence is never reported or worded as a lack of trust — needs-user-trust stays its own distinct phrasing", async () => {
   const terminal = new TestTerminal();
   const run = runInitCommand(["--product", "engram"], {

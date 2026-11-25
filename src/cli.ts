@@ -169,7 +169,7 @@ if (args[0] === "update") {
       const { startClaudeUI } = await import("./ui/basic/claude.ts");
       const { readEcosystemVersions } = await import("./infrastructure/ecosystem-versions.ts");
       await startClaudeUI(selected.args, selectedExecutable, undefined, metadata.version, effectiveLocale, undefined, () => readEcosystemVersions({ env: process.env }));
-    } else if (selected.engine === "codex") {
+    } else if (selected.engine === "codex" || selected.engine === "antigravity") {
       const executable = selectedExecutable;
       if (!executable) throw new Error(getCatalog(effectiveLocale).cli.engineNotOnPath({ engine: selected.engine }));
       const { startNativeUI } = await import("./app/native-chat.ts");
