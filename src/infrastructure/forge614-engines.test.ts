@@ -68,6 +68,29 @@ test("explicit adapter validation checks Engines before startup and returns its 
   expect(calls).toEqual([[BIN, "detect"], [BIN, "capabilities", "--agent", "claude-code"]]);
 });
 
+/**
+ * Antigravity is a registered Shell chat adapter and an automatically discovered MCP-capable agent
+ * whenever Engines reports it installed with `fullySupported: true`. Exists to guard both the chat
+ * engine picker and `init --product engram` discovery against regressions.
+ */
+test("antigravity is selectable in chat, validated explicitly, and offered by discoverMcpCapableAgents when fullySupported", async () => {
+  const withAntigravity = {
+    schemaVersion: 1,
+    agents: [
+      ...report.agents,
+      { id: "antigravity", label: "Antigravity", installed: true, executable: "/Users/tester/.local/bin/agy" },
+    ],
+  };
+  const chatEngines = await discoverSelectableEngines({ home: "/Users/tester", run: enginesDouble(withAntigravity, fullySupportedToday) });
+  expect(chatEngines).toContainEqual({ id: "antigravity", label: "Antigravity", executable: "/Users/tester/.local/bin/agy" });
+
+  const explicit = await requireFullySupportedEngine("antigravity", { home: "/Users/tester", run: enginesDouble(withAntigravity, fullySupportedToday) });
+  expect(explicit).toEqual({ id: "antigravity", label: "Antigravity", executable: "/Users/tester/.local/bin/agy" });
+
+  const mcpAgents = await discoverMcpCapableAgents({ home: "/Users/tester", run: enginesDouble(withAntigravity, fullySupportedToday) });
+  expect(mcpAgents).toContainEqual({ id: "antigravity", label: "Antigravity", executable: "/Users/tester/.local/bin/agy" });
+});
+
 test("explicit validation rejects unknown ids without consulting Engines, and maps unsupported capabilities to the stable error", async () => {
   const calls: string[][] = [];
   for (const engine of ["pi", "foo"]) {

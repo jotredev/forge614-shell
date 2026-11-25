@@ -136,7 +136,7 @@ const es: Catalog = {
     startFailed: ({ message }) => `forge614-shell init no pudo iniciar la sesión interactiva de terminal: ${message}`,
   },
   options: {
-    engineInvalidValue: "--engine debe ser claude o codex.",
+    engineInvalidValue: "--engine debe ser claude, codex o antigravity.",
     engineSpecifiedTwice: "Especifica --engine solo una vez.",
   },
   logout: {
@@ -176,6 +176,16 @@ const es: Catalog = {
     "codex-requires-login-no-fallback": () => "Usa /f614:login con ChatGPT antes de enviar un mensaje. No se usó ningún respaldo de API.",
     "codex-unexpected-provider": () => "Se esperaba el proveedor oficial de OpenAI; se rechaza enviar el mensaje.",
     "codex-unsupported-request": () => "Solicitud del motor no compatible.",
+    "antigravity-env-conflict": ({ keys }) => `El modo de suscripción no puede iniciar con estas variables definidas: ${keys}. Usa una terminal limpia; no se cambió ninguna configuración de cuenta.`,
+    "antigravity-subscription-required": () => "Este conector requiere una cuenta nativa de suscripción de Google en Antigravity, no el modo por API key de Gemini (modelProvider). Revisa ~/.gemini/antigravity-cli/settings.json y usa /f614:login.",
+    "antigravity-login-exit-code": ({ code }) => `El inicio de sesión de Antigravity terminó con código ${code}.`,
+    "antigravity-requires-login-to-send": () => "Usa /f614:login para conectar tu cuenta de suscripción de Google antes de enviar un mensaje. No se usó ningún respaldo de API.",
+    "antigravity-turn-busy": () => "Termina o usa /f614:stop en el turno activo primero.",
+    "antigravity-model-unknown": () => "Elige un modelo disponible desde /model.",
+    "antigravity-effort-unknown": () => "Elige un nivel de razonamiento compatible para el modelo activo.",
+    "antigravity-mode-unknown": () => "Elige un modo reportado por Antigravity.",
+    "antigravity-mode-rejected": () => "Antigravity no aceptó ese modo de trabajo. Se queda el anterior.",
+    "antigravity-turn-failed": () => "El turno de Antigravity falló.",
     "engines-invalid-detection": () => "Forge614 Engines devolvió un resultado de detección inválido.",
     "engines-incompatible-schema": () => "Forge614 Engines es incompatible con esta versión de Shell. Reinstala Forge614 Shell para reparar su dependencia requerida.",
     "engines-unavailable": () => "Forge614 Engines no está disponible. Reinstala Forge614 Shell para reparar su dependencia requerida.",
@@ -215,12 +225,12 @@ const es: Catalog = {
     engineNotOnPath: ({ engine }) => `${engine} no está instalado en el PATH.`,
     help: ({ version }) => `Forge614-Shell ${version}
 
-Uso: forge614-shell [--engine claude|codex]
+Uso: forge614-shell [--engine claude|codex|antigravity]
 
 Cada arranque interactivo pregunta primero por la interfaz visual y luego por el motor de IA instalado.
 Basic está disponible; Full — Próximamente está deshabilitado.
 Shell recuerda el último asistente que usaste (aparece resaltado) y el modelo, el razonamiento y el modo de trabajo de cada uno. Aun así pregunta cada vez: incluso con una sola opción disponible se espera confirmación.
-El CLI nativo seleccionado debe estar ya instalado. El inicio de sesión (/login en Claude Code, /f614:login en Codex) usa su flujo oficial de cuenta.
+El CLI nativo seleccionado debe estar ya instalado. El inicio de sesión (/login en Claude Code, /f614:login en Codex y Antigravity) usa su flujo oficial de cuenta.
 Shell no guarda credenciales de suscripción ni administra facturación.
 
   --engine <nombre>    Opción heredada; no evita los selectores interactivos
@@ -236,11 +246,12 @@ El primer arranque interactivo pregunta el idioma (Español/English) y lo recuer
 ejecución sin guardarlo. --help, --version, update y uninstall nunca abren el selector, pero
 sí usan un idioma guardado o forzado para su propio texto cuando ya se conoce.
 
-Chat nativo: un comando sin prefijo es del asistente elegido y funciona como en su terminal (/model, /resume, /new, /status, /logout, /quit, /exit; en Claude Code también /login y /effort).
-Los comandos propios de Shell empiezan con /f614: — /f614:login (Codex), /f614:status (Claude Code), /f614:refresh, /f614:stop, /f614:quit, /f614:commands, /f614:help, /f614:yes, /f614:no.
+Chat nativo: un comando sin prefijo es del asistente elegido y funciona como en su terminal (/model, /resume, /new, /status, /logout, /quit, /exit; en Claude Code también /login y /effort; en Antigravity también /effort).
+Los comandos propios de Shell empiezan con /f614: — /f614:login (Codex, Antigravity), /f614:status (Claude Code), /f614:refresh, /f614:stop, /f614:quit, /f614:commands, /f614:help, /f614:yes, /f614:no.
 /logout desconecta solo la sesión actual de Shell; las cuentas nativas y otras apps no cambian.
 Sesiones de Claude: administradas por Claude Code, compartidas con su historial nativo.
 Codex: historial nativo, catálogo de modelos, razonamiento y límites de cuenta reportados.
+Antigravity: sesiones ACP nativas, catálogo de modelos, niveles de razonamiento y modos de trabajo.
 El login reutiliza cuentas existentes.
 Abrir un chat necesita una terminal interactiva; sin ella Shell no arranca.
 
@@ -259,7 +270,7 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
   enginePicker: {
     title: "Elige tu motor de IA",
     lastUsed: "último usado",
-    noEnginesFound: "Forge614 Engines no encontró motores de IA compatibles con Shell. Instala Claude Code o Codex y reinicia Forge614-Shell.",
+    noEnginesFound: "Forge614 Engines no encontró motores de IA compatibles con Shell. Instala Claude Code, Codex o Antigravity y reinicia Forge614-Shell.",
   },
   chat: {
     genericCommandLabel: "Comando de Claude Code",
@@ -1008,6 +1019,34 @@ Se aplican la configuración y los permisos del proyecto del motor seleccionado.
     waitForCurrentOperationToFinish: "Espera a que termine la operación actual, o usa /f614:stop.",
     toolFallbackTitle: "Herramienta",
     toolFallbackDetail: "Trabajando",
+  },
+  antigravitySession: {
+    notLoggedIn: "No has iniciado sesión. Usa /f614:login.",
+    tokensNotReported: "Tokens / contexto: no reportado",
+    googleAccount: ({ plan }) => `Cuenta de Google · ${plan}`,
+    planNotReported: "plan no reportado",
+    loginRequired: "Se requiere iniciar sesión con suscripción de Google; el modo de clave de API no se usa. Escribe /f614:login.",
+    connectedExistingAccount: "Conectado a Antigravity en Shell usando tu cuenta existente de Google. No se necesita un nuevo inicio de sesión.",
+    openingOfficialLogin: "Se requiere iniciar sesión en Antigravity. Abriendo el flujo oficial de Google; regresa aquí al terminar.",
+    loginCompleted: "Inicio de sesión de Google en Antigravity completado. La cuenta y la facturación siguen siendo administradas por Google.",
+    loginNotVerified: "No se pudo verificar el inicio de sesión. Usa /f614:login para reintentar.",
+    loginFailed: ({ detail }) => `Falló el inicio de sesión: ${detail}`,
+    logoutCancelled: "Se canceló el cierre de sesión. No se solicitó ningún cambio de cuenta.",
+    disconnectedLocally: "Se desconectó localmente de Antigravity en esta sesión de Shell. Tu cuenta nativa y otras aplicaciones no cambiaron. Usa /f614:login para reconectar.",
+    disconnectedShort: "Desconectado localmente · usa /f614:login para reconectar Shell",
+    disconnectedStatus: "Desconectado localmente · usa /f614:login para reconectar Shell. La cuenta nativa no cambió.",
+    modelEffortLine: ({ model, effort }) => `Modelo: ${model} · razonamiento: ${effort}`,
+    engineDefault: "predeterminado del motor",
+    costNotReported: "Costo: no reportado por el motor; la facturación del plan sigue con Google.",
+    sessionTokensLine: ({ input, cached, output, lastContext, window }) => `Tokens de la sesión: entrada ${input} · en caché ${cached} · salida ${output}\nÚltimo contexto: ${lastContext} / ${window}`,
+    folderLine: ({ path }) => `Carpeta: ${path}`,
+    workModeLine: ({ mode }) => `Modo de trabajo: ${mode}`,
+    conversationLine: ({ id }) => `Conversación: ${id}`,
+    conversationNotStarted: "todavía no iniciada",
+    stopNoAnswer: "Antigravity no respondió a la petición de detener, así que Shell dio el turno por terminado de su lado y cerró la conexión. Reinicia Shell para seguir trabajando.",
+    stopReconnected: "Antigravity no respondió a la petición de detener, así que Shell dio el turno por terminado de su lado y se reconectó con Antigravity. Tu conversación sigue aquí.",
+    stopNoActiveTurn: "Antigravity dice que no había ningún turno en marcha, así que Shell dio el turno por terminado de su lado.",
+    stopNotFinished: "Antigravity aceptó la petición de detener pero no terminó el turno, así que Shell dio el turno por terminado de su lado.",
   },
 };
 

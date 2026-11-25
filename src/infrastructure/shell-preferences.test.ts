@@ -179,6 +179,11 @@ test("the last used engine round-trips, and nothing is remembered before the fir
     expect(loadLastEngine({ home })).toBe("codex");
     saveLastEngine("claude", { home });
     expect(loadLastEngine({ home })).toBe("claude");
+    saveLastEngine("antigravity", { home });
+    expect(loadLastEngine({ home })).toBe("antigravity");
+    saveEnginePreference("antigravity", { model: "gemini-4-neon", effort: "high" }, { home });
+    saveEngineMode("antigravity", "accept-edits", { home });
+    expect(loadEnginePreference("antigravity", { home })).toEqual({ model: "gemini-4-neon", effort: "high", mode: "accept-edits" });
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -229,6 +234,11 @@ test("saving the last engine and the mode keeps the saved language and model cho
     expect(loadLocale({ home })).toBe("es");
     expect(loadEnginePreference("claude", { home })).toEqual({ model: "sonnet", mode: "plan" });
     expect(loadLastEngine({ home })).toBe("claude");
+    saveLastEngine("antigravity", { home });
+    expect(loadLastEngine({ home })).toBe("antigravity");
+    saveEnginePreference("antigravity", { model: "gemini-4-neon", effort: "high" }, { home });
+    saveEngineMode("antigravity", "accept-edits", { home });
+    expect(loadEnginePreference("antigravity", { home })).toEqual({ model: "gemini-4-neon", effort: "high", mode: "accept-edits" });
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 

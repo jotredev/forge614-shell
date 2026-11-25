@@ -126,3 +126,41 @@ export function formatCodexPermission(method: string, params: Record<string, unk
   }
   return sections(what(t.genericTool({ tool: method })));
 }
+
+/**
+ * An Antigravity ACP permission request (`session/request_permission`) in plain words: what the
+ * assistant wants to do (command, file edit/write/read, MCP tool, or generic tool), where, and
+ * any command in its own indented block. Never exposes raw JSON payloads.
+ */
+export function formatAntigravityPermission(toolCall: Record<string, unknown>, locale: Locale, cwd?: string): string {
+  const t = getCatalog(locale).permission;
+  const name = text(toolCall.name) ?? "";
+  const title = text(toolCall.title);
+  const input = ((toolCall.args && typeof toolCall.args === "object" ? toolCall.args : undefined)
+    ?? (toolCall.rawInput && typeof toolCall.rawInput === "object" ? toolCall.rawInput : undefined)
+    ?? {}) as Record<string, unknown>;
+  const filePath = (path: unknown) => text(path) ? `${t.file}: ${clip(text(path)!, DESCRIPTION_LIMIT)}` : undefined;
+  const where = (path?: string) => (path ?? cwd) ? `${t.inPlace}: ${clip(path ?? cwd!, DESCRIPTION_LIMIT)}` : undefined;
+
+  if (name === "call_mcp_tool") {
+    const server = text(input.ServerName) ?? "mcp";
+    const tool = text(input.ToolName) ?? name;
+    const args = input.Arguments && typeof input.Arguments === "object" ? input.Arguments as Record<string, unknown> : {};
+    return sections(t.mcpTool({ server, tool }), fieldLines(args));
+  }
+  if (name === "run_command") {
+    const summary = text(input.toolSummary) ?? title;
+    const cmdCwd = text(input.Cwd) ?? cwd;
+    return sections(
+      summary ? clip(oneLine(summary), DESCRIPTION_LIMIT) : t.runCommand,
+      cmdCwd ? `${t.folder}: ${clipFolder(cmdCwd)}` : undefined,
+      commandBlock(text(input.CommandLine)),
+    );
+  }
+  if (name === "edit_file") return sections(t.editFile, filePath(input.Path));
+  if (name === "write_file") return sections(t.writeFile, filePath(input.Path));
+  if (name === "read_file") return sections(t.readFile, filePath(input.Path));
+  if (name === "search_web") return sections(t.searchWeb, text(input.query) ? `${t.search}: ${clip(oneLine(text(input.query)!), DESCRIPTION_LIMIT)}` : undefined);
+  if (name === "find_by_name" || name === "glob") return sections(t.findFiles, where(text(input.SearchDirectory) ?? text(input.path)));
+  return sections(title ? clip(oneLine(title), DESCRIPTION_LIMIT) : t.genericTool({ tool: name || "tool" }), fieldLines(input));
+}

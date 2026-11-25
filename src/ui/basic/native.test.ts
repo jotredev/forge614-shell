@@ -8,6 +8,7 @@ import type { Terminal } from "@earendil-works/pi-tui";
 import type { Approve } from "../../engines/types.ts";
 import { runNativeUI } from "./native.ts";
 import { CodexSession } from "../../engines/codex/session.ts";
+import { AntigravitySession } from "../../engines/antigravity/session.ts";
 import { FixtureRpc } from "../../../tests/support/rpc-fixture.ts";
 import { getCatalog } from "../../i18n/index.ts";
 import { ShellError, describeError } from "../../shell-error.ts";
@@ -2750,4 +2751,119 @@ test("Codex UI: a history file that cannot be used never breaks the chat or show
     expect(h.sentTexts()).toEqual(["sigue funcionando", "sigue funcionando"]);
     expect(h.plain()).not.toContain("EISDIR");
   } finally { await h.finish(); }
+});
+
+/**
+ * End-to-end UI check for Antigravity inside `runNativeUI`: verifies sidebar displays Antigravity
+ * and friendly model names, `/model` and `/effort` persist preferences under `antigravity`,
+ * Shift+Tab cycles ACP work modes, Engram MCP calls draw `🧠 memory search`, and background
+ * activity honestly reports that the engine does not report it.
+ */
+test("Antigravity UI: renders friendly model, persists /model and /effort, cycles work modes, shows Engram MCP card, and honestly reports no background activity", async () => {
+  const terminal = new TestTerminal();
+  const rpc = new FixtureRpc();
+  rpc.replies.set("initialize", {
+    protocolVersion: 1,
+    agentInfo: { name: "Antigravity ACP Server", version: "1.5.17" },
+    agentCapabilities: { loadSession: true, _meta: { antigravity: { systemPrompt: { append: true } } } },
+  });
+  rpc.replies.set("session/new", {
+    sessionId: "agy-ui-1",
+    models: {
+      currentModelId: "gemini-4-neon-high",
+      availableModels: [
+        { modelId: "gemini-4-neon-high", name: "Gemini 4 Neon (High)" },
+        { modelId: "gemini-3.8-flash-low", name: "Gemini 3.8 Flash (Low)" },
+        { modelId: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)" },
+      ],
+    },
+    modes: {
+      currentModeId: "default",
+      availableModes: [
+        { id: "default", name: "Default", description: "Ask before edits" },
+        { id: "accept-edits", name: "Accept edits", description: "Auto-approve edits" },
+      ],
+    },
+    configOptions: [
+      {
+        id: "model", category: "model", currentValue: "gemini-4-neon",
+        options: [
+          { value: "gemini-4-neon", name: "Gemini 4 Neon" },
+          { value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+        ],
+      },
+      {
+        id: "thought_level", category: "thought_level", currentValue: "high",
+        options: [{ value: "low", name: "Low" }, { value: "high", name: "High" }],
+      },
+    ],
+    _meta: { antigravity: { tier: { name: "Google AI Pro" } } },
+  });
+  rpc.replies.set("session/set_mode", {});
+  rpc.handler = async (method, params) => {
+    if (method === "session/set_config_option" && params.configId === "model") {
+      return {
+        configOptions: [
+          { id: "model", category: "model", currentValue: params.value, options: [{ value: "gemini-4-neon", name: "Gemini 4 Neon" }, { value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }] },
+          { id: "thought_level", category: "thought_level", currentValue: "high", options: [{ value: "low", name: "Low" }, { value: "high", name: "High" }] },
+        ],
+      };
+    }
+    if (method === "session/set_config_option" && params.configId === "thought_level") {
+      return {
+        configOptions: [
+          { id: "thought_level", category: "thought_level", currentValue: params.value, options: [{ value: "low", name: "Low" }, { value: "high", name: "High" }] },
+        ],
+      };
+    }
+    if (method === "session/prompt") {
+      rpc.onNotification("session/update", {
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "t1",
+          name: "call_mcp_tool",
+          args: { ServerName: "forge614-engram", ToolName: "memory_search", Arguments: { query: "shell" } },
+          status: "completed",
+        },
+      });
+      rpc.onNotification("session/update", {
+        sessionId: params.sessionId,
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } },
+      });
+      return { stopReason: "end_turn" };
+    }
+    return rpc.replies.get(method);
+  };
+
+  let session!: AntigravitySession;
+  const ui = runNativeUI("antigravity", "/project", (emit, approve) => session = new AntigravitySession(rpc, "/project", emit, approve), terminal);
+  const enter = (value: string) => { terminal.input(value); terminal.input("\r"); };
+  try {
+    await until(() => stripVTControlCharacters(terminal.output).includes("Gemini 4 Neon"));
+    const initial = stripVTControlCharacters(terminal.output);
+    expect(initial).toContain("Antigravity");
+    expect(initial).toContain("Gemini 4 Neon");
+    expect(initial).toContain("This engine doesn't report");
+
+    // Switch model + effort via /model and /effort and confirm preferences persistence.
+    enter("/model gemini-3.8-flash");
+    await until(() => session.visual().model === "gemini-3.8-flash");
+    enter("/effort low");
+    await until(() => session.visual().reasoning === "low");
+
+    const prefs = JSON.parse(readFileSync(join(forgeHome, "shell", "preferences.json"), "utf8"));
+    expect(prefs.antigravity).toMatchObject({ model: "gemini-3.8-flash", effort: "low" });
+
+    // Cycle work mode via Shift+Tab.
+    terminal.input("\x1b[Z");
+    await until(() => session.workMode() === "accept-edits");
+
+    // Send a turn that emits an Engram MCP tool call and streams a reply.
+    enter("check memory");
+    await until(() => stripVTControlCharacters(terminal.output).includes("Done."));
+    const finalText = stripVTControlCharacters(terminal.output);
+    expect(finalText).toContain("🧠 memory search");
+    expect(finalText).toContain("Done.");
+  } finally { enter("/f614:quit"); await ui; }
 });

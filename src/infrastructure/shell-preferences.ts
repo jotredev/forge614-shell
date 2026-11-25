@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-export type EngineId = "claude" | "codex";
+export type EngineId = "claude" | "codex" | "antigravity";
 export interface EnginePreference {
   model?: string;
   effort?: string;
@@ -12,7 +12,7 @@ export interface EnginePreference {
   /** The id of the last collaboration mode used with this assistant (Codex: `plan` or `default`), as its adapter lists it. */
   collaborationMode?: string;
 }
-const ENGINE_IDS: readonly EngineId[] = ["claude", "codex"];
+const ENGINE_IDS: readonly EngineId[] = ["claude", "codex", "antigravity"];
 
 /** The only locale values Shell's i18n layer currently ships a catalog for. */
 export type Locale = "es" | "en";
@@ -32,6 +32,7 @@ interface PreferencesFile {
   sidebarHidden?: unknown;
   claude?: EnginePreference;
   codex?: EnginePreference;
+  antigravity?: EnginePreference;
 }
 
 function isSupportedLocale(value: unknown): value is Locale {
