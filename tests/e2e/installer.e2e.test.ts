@@ -1,12 +1,12 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const REPO_ROOT = resolve(import.meta.dir, "../..");
-const VERSION = "1.17.0";
+const VERSION = (JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as { version: string }).version;
 
 /** Run an asynchronous child process while a localhost release server remains available. */
 async function run(command: string[], options: { cwd: string; env: Record<string, string | undefined>; timeoutMs?: number }) {
@@ -82,9 +82,9 @@ esac
   await chmod(executable, 0o755);
 }
 
-test.skipIf(process.platform === "win32")("1.16 legacy update, 1.17 migration, new update and uninstall run against a localhost release", async () => {
+test.skipIf(process.platform === "win32")("1.16 legacy update, migration to current release, new update and uninstall run against a localhost release", async () => {
   const root = await mkdtemp(join(tmpdir(), "forge614 shell installer e2e-"));
-  const releaseDir = join(root, "release-1.17.0");
+  const releaseDir = join(root, `release-${VERSION}`);
   const home = join(root, "user home");
   const forgeHome = join(home, ".forge614");
   await mkdir(home, { recursive: true });
