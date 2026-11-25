@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const REPO_ROOT = resolve(import.meta.dir, "../..");
-const VERSION = "1.17.0";
+const VERSION = (JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as { version: string }).version;
 
 /** Overlay environment values without retaining duplicate names on case-insensitive platforms. */
 function mergeEnvironment(base: NodeJS.ProcessEnv, overrides: Record<string, string | undefined>): NodeJS.ProcessEnv {
